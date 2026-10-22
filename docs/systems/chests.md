@@ -86,6 +86,9 @@ The source of each rule is in brackets: game data, client code, live check (the 
   LootTracker of the client: a repeated actor hides a different chest) [code review of stage 3.5b.1, finding CH-R4]. The loot file of
   format 2 must have a container floor for each level of its gear score ranges: else the loader refuses it (a level with no floor gave
   weaker gear) [finding CH-R8].
+- Stage 1.8e ([Quests](quests.md)): the LootTracker state of a character also has the entries of its destroyed quest objects
+  (`Entity::questObjectTracker`: the managed actor of the placement, the state Looted, the kind 0); `encode_loot_tracker_state` adds them
+  to the claims of the chests. The client removes the object for that entry [live I0 of stage 1.8e].
 - The claims are values of the world with the character id as their key (MP-1): each character has its own claims on one chest, and
   only the owner gets its Gathering state and its LootTracker [research; live check L2]. A second session of the character gives no
   second open [stage 2.5a].

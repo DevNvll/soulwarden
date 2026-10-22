@@ -123,6 +123,12 @@ public:
     [[nodiscard]] std::size_t npc_count() const {
         return m_npcs.size();
     }
+    /** Stage 1.8e: the NPC row of an index (the support manifest reads each offer). */
+    [[nodiscard]] const ConversationNpc& npc_at(std::uint32_t index) const {
+        return m_npcs[index];
+    }
+    /** Stage 1.8e: @return The index of the state of an id (any case), or no value (TaskConversationState of the support manifest). */
+    [[nodiscard]] std::optional<std::uint32_t> state_index(std::string_view id) const;
     [[nodiscard]] std::size_t state_count() const {
         return m_states.size();
     }

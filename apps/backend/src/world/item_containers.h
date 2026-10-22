@@ -38,6 +38,11 @@ enum class OpenError : std::uint8_t {
     notContainer,
     /** The roll gave no item (a table with conditions that the character does not meet): the container stays. */
     emptyRoll,
+    /**
+     * Code review of stage 1.8d, finding QR8D-R5: the roll gave a loot container that cannot open (no loot table of it in the loot data): the
+     * whole open is refused, as a hand-in refuses such a reward, and the container stays.
+     */
+    innerNotOpenable,
 };
 
 [[nodiscard]] const char* open_error_text(OpenError error);

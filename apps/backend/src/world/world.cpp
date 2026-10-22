@@ -84,6 +84,7 @@ World::World(const WorldClock& clock,
       m_gathering(*this, options.gatheringData),
       m_crafting(*this, options.craftingData),
       m_quests(*this, store, options.questData),
+      m_questObjects(*this, options.questObjectData),
       m_persons(*this, options.conversationData),
       m_presets(*this, project_presets()) {
     m_random = options.randomSeed;

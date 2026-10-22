@@ -401,6 +401,15 @@ backend. The tool of each system is also in the document of that system.
   loot table Empty is not a refusal for it), and its game event with no row of the event tables (the event of the quests). The format stays
   1: a file of before has no quest object (each one is refused, as before). The build: 1,634 quest capitals, 707 quest rows (341 with a
   different refusal).
+- `quest-objects.json` (stage 1.8e, `tools/gamedata/quest-objects.sh`, [Quests](../systems/quests.md)): format 1. The destructible quest
+  objects: each placement of the layers (the capital placements of `gathering.py`) whose slice has a variation of the table
+  `Gatherable_Quest_Damageable`, with its key (the placement UUID), its managed actor (the UUID rule of a capital node), its asset, its
+  position, the slot of its GatherableController, its variation (InteractTag, InteractOnlyOnQuest), and the index of its gatherable row;
+  `rows` has each row with BaseGatherTime (`time`), MinRespawnRate and MaxRespawnRate (`respawn`), FinalLootTable (`loot`), and
+  GameEventID (`event`). The build: 169 objects of 85,430 capital placements, 69 rows, 16 variant names with no row (counted in
+  `unknownVariants`; their placements are left out). The tool stops when a source is not there or not complete. Without the file the
+  backend starts, and no quest object can be destroyed. `gathering.py` reads the same variation table (`DAMAGEABLE_TABLES`) and does not
+  change its output for it.
 - `interaction-data.json` format 4 (stage 2.5c, [Persons](../systems/persons.md)): the persons. A person child (the child of a
   PrefabSpawner of a level placement with m_isClientAuthoratative false and m_spawnOnInitialize true whose slice has an NPC component)
   is an object with the client id of its place, yaw, and slice asset (`child_group`: client 0x6160B60), the actor G and 8 zero bytes, the
@@ -447,6 +456,7 @@ tools/gamedata/crafting.sh           # one time: the recipes, the station rows, 
 tools/gamedata/quests.sh             # one time: the quest data for the backend (objectives, compiled task trees, achievement table, territory starts, backstories; 9 MB, 10 s); needs an Oodle source
 tools/gamedata/pois.sh               # one time: the shapes of the points of interest (the quest tasks of a place; 15 s); needs an Oodle source
 tools/gamedata/triggers.sh           # one time, after quests.sh: the trigger volumes of the quests (0.2 MB, 22 s with the pak index of navigation.sh); needs an Oodle source
+tools/gamedata/quest-objects.sh      # one time: the destructible quest objects (0.1 MB); needs an Oodle source
 tools/gamedata/conversations.sh      # one time: the conversation data of the persons (NPC rows, states, topics; 1.5 MB, 10 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source

@@ -32,6 +32,8 @@ const char* open_error_text(OpenError error) {
         return "the item is not a loot container with a loot table of the loot data";
     case OpenError::emptyRoll:
         return "the roll of the loot table gave no item: the container stays";
+    case OpenError::innerNotOpenable:
+        return "the roll gave a loot container that cannot open (no loot table): the container stays";
     }
     return "?";
 }
@@ -75,10 +77,13 @@ OpenResult ItemContainers::open(Entity& character, std::uint32_t slot, const Ins
         return refuse(OpenError::itemRefused, ItemError::badQuantity);
     }
     // One roll of the table for each unit, with the level of the character (the content level of the roll: the item row of the supported
-    // build has no ContainerLevel for a quest container; a decision of an agent).
+    // build has no ContainerLevel for a quest container; a decision of an agent). Code review of stage 1.8d, finding QR8D-R2: the roll is the
+    // roll of a loot container (the numeric container tags, and the container floor ContainerLootGSFloor of the game data for a table with
+    // UseLevelGS), not the roll of a creature (AILootGSCeiling).
     LootContext context;
     context.characterLevel = character.progression.level;
     context.creatureLevel = character.progression.level;
+    context.container = true;
     std::vector<LootDrop> drops;
     for (std::uint32_t unit = 0; unit < quantity; ++unit) {
         ++m_counts.rolls;
@@ -88,6 +93,14 @@ OpenResult ItemContainers::open(Entity& character, std::uint32_t slot, const Ins
     }
     if (drops.empty()) {
         return refuse(OpenError::emptyRoll);
+    }
+    // Finding QR8D-R5: each rolled loot container must open, before the take (the rule of a hand-in reward: Quests::reward_join).
+    for (const LootDrop& drop : drops) {
+        const gamedata::ItemDefinition* rolled = catalog->find(drop.itemId);
+        if (rolled != nullptr && is_container(*rolled) && !openable(rolled->id)) {
+            log::write("world: the roll of %s gave the loot container %s, which has no loot table", item.itemId.c_str(), rolled->id.c_str());
+            return refuse(OpenError::innerNotOpenable);
+        }
     }
     const std::vector<GrantItem> items = m_world.rewards().grant_items(drops, character.progression.level);
     Inventory& inventory = m_world.inventory();

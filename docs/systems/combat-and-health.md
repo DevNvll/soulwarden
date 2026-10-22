@@ -255,6 +255,9 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   (`Combat::run_event`). The start of a fragment that waited for a buffered window is an item too (`SequenceEvent::Kind::start`: the
   spells of its action, finding M2-R5), and the start of a fragment at the step of the press too (finding M2b-R1, case RX5: the
   spells of the action wait for the due time of the visit). The block press (bit 484) is a bit of the step (`AttackBits::block`).
+  Stage 1.8e: the strike items come for the visits of a basic attack too (before: only for an ability); `Combat::run_event` gives each
+  strike to the destructible quest objects (`QuestObjects::strike`, [Quests](quests.md)): the client reports no contact on such an object.
+  A strike of a basic attack does nothing else (the hit of a creature stays the claim of the client).
 - The damage of an attack is computed in one function (`Combat::damage`), from the combat
   tables (game data) and the entity of the attacker: the weapon of the item, its gear score,
   the damage row of the light or of the heavy attack, the attributes and the level of the

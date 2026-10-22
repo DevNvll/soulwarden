@@ -33,6 +33,7 @@
 #include "support/check.h"
 #include "support/chest_fixture.h"
 #include "support/person_fixture.h"
+#include "support/procedural_fixture.h"
 #include "support/quest_person_fixture.h"
 #include "support/shop_fixture.h"
 #include "support/test_progression.h"
@@ -461,6 +462,7 @@ void two_sessions(const Options&) {
     world::Entity* b = shop.entity(kCharacterB);
     world::Quests& quests = shop.host.world.quests();
     const std::uint64_t coinB = b->wallet.coin;
+    const std::size_t fromA = shop.clientA.got.size();
     const std::size_t fromB = shop.clientB.got.size();
     check(quests.hand_in(*a, shop.ready(kCharacterA, "Qd_Full", 6)).ok() && quests.hand_in(*a, shop.ready(kCharacterA, "Qd_Daily")).ok(),
           "control: A completes a quest with standing and a daily repeat");
@@ -468,10 +470,25 @@ void two_sessions(const Options&) {
     check(b->wallet.coin == coinB + 100 && world::Skills::standing(b->skills, 6).points == 0 && b->quests.repeats.size() == 1
               && b->quests.repeats.count(gamedata::quest_crc("Qd_Weekly")) == 1 && a->quests.repeats.count(gamedata::quest_crc("Qd_Weekly")) == 0,
           "B has its own coin, no standing, and only its weekly repeat");
+    // Code review of stage 1.8d, finding QR8D-R7: the host sends the changed states only at its steps. The wire check runs after the steps:
+    // the owner state of A has the standing (territory 6, rank 0, 120 points), and B gets no categorical state of A.
+    shop.host.steps(3, {&shop.clientA, &shop.clientB});
+    bool own = false;
+    for (const Seen& seen : fragments_of(shop.clientA, 65, 911, fromA)) {
+        const auto& fields = seen.fragment.fields;
+        if (seen.interest != 1 || fields.count({0, 0}) == 0 || fields.count({0, 1}) == 0 || fields.count({0, 2}) == 0) {
+            continue;
+        }
+        const WireRanks decoded = read_ranks({fields.at({0, 0}), fields.at({0, 1}), fields.at({0, 2})});
+        for (const auto& row : decoded.entries) {
+            own = own || (decoded.ok && row.id == gamedata::progression_id("6") && row.rank == 0 && row.points == 120);
+        }
+    }
     bool foreign = false;
     for (const Seen& seen : fragments_of(shop.clientB, 65, 911, fromB)) {
         foreign = foreign || seen.interest != 1;
     }
+    check(own, "the owner state of A (slot 65) has its standing: territory 6, rank 0, 120 points");
     check(!foreign, "the categorical state of A (the standing) does not go to B");
     const std::uint64_t daily = a->quests.repeats.begin()->second.resetNs;
     shop.host.advance(std::chrono::milliseconds((daily - shop.now_ns()) / 1000000ULL + 1000));
@@ -492,8 +509,10 @@ void repeat_load(const Options&) {
     world::Quests& quests = shop.host.world.quests();
     // 2,000 dormant repeats of 200 characters that are not in the world (rows of the store: no deadline, no work), 400 repeats of A with no
     // deadline (the generation only), one due repeat of A (a daily completion), and one weekly repeat of B (not due).
+    // Code review of stage 1.8d (an examined note): 2,000 distinct rows (10 objectives of each of 200 characters), not 200 keys ten times.
     for (int index = 0; index < 2000; ++index) {
-        (void)shop.host.store.write_quest_repeat("dormant-" + std::to_string(index % 200), state::QuestRepeatRow{"Qd_Daily", 1, 1, 1});
+        (void)shop.host.store.write_quest_repeat("dormant-" + std::to_string(index / 10),
+                                                 state::QuestRepeatRow{"Qd_Dormant_" + std::to_string(index % 10), 1, 1, 1});
     }
     for (std::uint32_t index = 0; index < 400; ++index) {
         a->quests.repeats[index + 1] = state::QuestRepeatRow{"Qd_Daily", 1, 1, 0};
@@ -622,6 +641,90 @@ void ready_root_holds(const Options&) {
     check(quests.hand_in(*a, readyA->instance).ok(), "the hand-in of A after the conditional became false");
 }
 
+/** QF7 (stage 1.8e, I3): AzothReward goes into the Azoth balance (stage 3.7c); the cap; a blank chance; no cap data; two sessions. */
+void azoth_reward(const Options&) {
+    json document = reward_document();
+    document["events"]["qf_azoth_success"] = {{"id", "Qf_Azoth_Success"}, {"UniversalExpAmount", "20"}, {"AzothReward", "30"}, {"AzothRewardChance", "1"}};
+    document["events"]["qf_azoth_blank"] = {{"id", "Qf_Azoth_Blank"}, {"UniversalExpAmount", "20"}, {"AzothReward", "50"}};
+    for (const char* id : {"Qf_Azoth", "Qf_Azoth_Again"}) {
+        document["objectives"].push_back({{"id", id},
+                                          {"cells", {{"Type", "Journey"}, {"NpcDestinationId", "Test_Artificer"}, {"SuccessGameEventId", "Qf_Azoth_Success"}}},
+                                          {"tree", json::array({json::array({0, "qb_ready_unlock", json::array()})})}});
+    }
+    document["objectives"].push_back({{"id", "Qf_Azoth_Blank"},
+                                      {"cells", {{"Type", "Journey"}, {"NpcDestinationId", "Test_Artificer"}, {"SuccessGameEventId", "Qf_Azoth_Blank"}}},
+                                      {"tree", json::array({json::array({0, "qb_ready_unlock", json::array()})})}});
+    const auto load = [&](RewardShop& shop, bool crafting) {
+        if (!shop.host.quests.load_text(document.dump())) {
+            throw std::runtime_error("QF7: the quest data was not set: " + shop.host.quests.error());
+        }
+        if (crafting && !shop.host.crafting.set(procedural::procedural_document())) {
+            throw std::runtime_error("QF7: the crafting data was not set: " + shop.host.crafting.error());
+        }
+    };
+    RewardShop shop;
+    load(shop, true);
+    shop.enter();
+    world::Entity* a = shop.entity(kCharacterA);
+    world::Entity* b = shop.entity(kCharacterB);
+    world::Quests& quests = shop.host.world.quests();
+    const std::uint32_t azothId = gamedata::progression_id(world::kAzothCurrency);
+    const std::size_t fromA = shop.clientA.got.size();
+    const std::size_t fromB = shop.clientB.got.size();
+    world::RewardJoin join;
+    std::string detail;
+    check(quests.reward_join(*a, *shop.host.quests.objective("Qf_Azoth"), 0, join, detail) == world::QuestError::none && join.azoth == 30
+              && join.azothGain == 30 && join.azothCap == 2500,
+          "the join: AzothReward 30 with AzothRewardChance 1, the cap 2,500 of the crafting data");
+    const world::HandInResult paid = quests.hand_in(*a, shop.ready(kCharacterA, "Qf_Azoth"));
+    bool stored = false;
+    for (const auto& row : shop.host.store.list_skills(kCharacterA).ranks) {
+        stored = stored || (row.id == azothId && row.points == 30);
+    }
+    note("QF7 hand-in: " + std::string(world::quest_error_text(paid.error)) + " " + paid.detail + ", Azoth " + std::to_string(paid.azoth));
+    check(paid.ok() && paid.azoth == 30 && world::Skills::balance(a->skills, world::kAzothCurrency) == 30 && stored,
+          "the hand-in adds 30 to the Azoth balance of A (the entity and the row)");
+    check(world::Skills::balance(b->skills, world::kAzothCurrency) == 0, "B gets no Azoth");
+    // The cap: a gain stops at 2,500 (AllowOverflow 0), and the hand-in pays the rest.
+    (void)shop.host.world.skills().set_balance(kCharacterA, world::kAzothCurrency, 2490, 2500);
+    const world::HandInResult capped = quests.hand_in(*a, shop.ready(kCharacterA, "Qf_Azoth_Again"));
+    check(capped.ok() && capped.azoth == 10 && world::Skills::balance(a->skills, world::kAzothCurrency) == 2500,
+          "at 2,490 of 2,500 the hand-in gives 10: the balance stops at the cap");
+    // A blank AzothRewardChance: the default of the client loader is not read, the reward stays unpaid.
+    const std::uint64_t blank = shop.ready(kCharacterB, "Qf_Azoth_Blank");
+    const world::HandInResult refused = quests.hand_in(*b, blank);
+    check(refused.error == world::QuestError::cannotPay && refused.detail.find("AzothRewardChance blank") != std::string::npos
+              && world::Skills::balance(b->skills, world::kAzothCurrency) == 0 && questfix::quest_of(*b, "Qf_Azoth_Blank") != nullptr,
+          "AzothReward with a blank chance is refused: the quest of B stays ready");
+    // The owner view: the categorical state of A has its balance; B gets no state of A.
+    shop.host.steps(3, {&shop.clientA, &shop.clientB});
+    bool own = false;
+    for (const Seen& seen : fragments_of(shop.clientA, 65, 911, fromA)) {
+        const auto& fields = seen.fragment.fields;
+        if (seen.interest != 1 || fields.count({0, 0}) == 0 || fields.count({0, 1}) == 0 || fields.count({0, 2}) == 0) {
+            continue;
+        }
+        const WireRanks decoded = read_ranks({fields.at({0, 0}), fields.at({0, 1}), fields.at({0, 2})});
+        for (const auto& row : decoded.entries) {
+            own = own || (decoded.ok && row.id == azothId && row.points == 2500);
+        }
+    }
+    bool foreign = false;
+    for (const Seen& seen : fragments_of(shop.clientB, 65, 911, fromB)) {
+        foreign = foreign || seen.interest != 1;
+    }
+    check(own && !foreign, "the owner state of A (slot 65) has the balance 2,500; B gets no categorical state of A");
+    // With no cap in the crafting data the reward has no owner: refused, no change.
+    RewardShop bare;
+    load(bare, false);
+    bare.enter();
+    world::Entity* c = bare.entity(kCharacterA);
+    const world::HandInResult noCap = bare.host.world.quests().hand_in(*c, bare.ready(kCharacterA, "Qf_Azoth"));
+    check(noCap.error == world::QuestError::cannotPay && noCap.detail.find("no cap") != std::string::npos
+              && world::Skills::balance(c->skills, world::kAzothCurrency) == 0,
+          "with no cap of Azoth_Currency in the crafting data the hand-in is refused");
+}
+
 } // namespace
 
 std::vector<Case> quest_reward_cases() {
@@ -635,7 +738,8 @@ std::vector<Case> quest_reward_cases() {
             {"QD8", "quests 1.8d (I7): the load of the repeats: the work follows the due entries", repeat_load},
             {"QD9", "quests 1.8d (I6): a refine of a recipe with IsRefining counts for TaskCraftRecipe", refine_counts},
             {"QD10", "quests 1.8d: a new instance does not take the id of a completed instance of the same world entry", instance_start},
-            {"QD11", "quests 1.8d: a quest whose root is satisfied holds its StayActive tasks; a waiting quest regresses", ready_root_holds}};
+            {"QD11", "quests 1.8d: a quest whose root is satisfied holds its StayActive tasks; a waiting quest regresses", ready_root_holds},
+            {"QF7", "quests 1.8e (I3): AzothReward goes into the Azoth balance; the cap; a blank chance; no cap data; two sessions", azoth_reward}};
 }
 
 } // namespace soulwarden::backend::tests

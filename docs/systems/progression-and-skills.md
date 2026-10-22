@@ -97,7 +97,8 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   character (the table of the skills), and an entry of the state 911 with the trade skills (protocol notes 4.52). The rank-up rule of a
   trade skill does not apply: `Skills::add_balance` (a plan of a transaction with a cap) and `Skills::set_balance` change only the points,
   and `Skills::balance` reads them. A craft takes the Azoth of its perk upgrade and of its currency ingredients in the transaction of each
-  job. The command `set_currency` (the tool window, `tools/world azoth`) sets it; the world has no other source yet.
+  job. The command `set_currency` (the tool window, `tools/world azoth`) sets it. Stage 1.8e ([Quests](quests.md)): the AzothReward of a
+  quest (with AzothRewardChance 1) adds to it in the skills plan of the hand-in; a gain stops at the cap.
 - The territory standing (stage 1.8d, [Quests](quests.md)) [data: the rows of the territories in CategoricalProgressionData, the rank
   table `Territory_Standing`; live I0 of stage 1.8d]: the standing of a territory is the entry of the categorical progression whose
   name is the territory number ("6": CRC-32 `1DB87A14`) in the state 911, with its rank and its points in the rank (MaximumInfluence

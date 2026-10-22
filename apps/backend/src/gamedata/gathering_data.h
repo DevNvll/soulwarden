@@ -277,6 +277,14 @@ public:
     [[nodiscard]] std::uint64_t natural_count() const {
         return m_naturalCount;
     }
+    /** Stage 1.8e: the capital nodes and the quest objects by their placement key (the support manifest reads their rows and tags). */
+    [[nodiscard]] const std::unordered_map<std::string, GatheringLink>& capitals() const {
+        return m_capitals;
+    }
+    /** Stage 1.8e: the skinning links of the creature slices (the support manifest: the rows of a skinning). */
+    [[nodiscard]] const std::map<std::pair<std::array<std::uint8_t, 16>, std::uint32_t>, GatheringLink>& creature_links() const {
+        return m_creatures;
+    }
     [[nodiscard]] std::size_t capital_count() const {
         return m_capitals.size();
     }

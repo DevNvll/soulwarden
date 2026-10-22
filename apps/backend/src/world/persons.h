@@ -191,6 +191,12 @@ public:
     [[nodiscard]] bool present(const Entity& character, const gamedata::PersonBinding& person) const;
     /** @return The selection of a person for a character now (its state and its offer). No data: no state. */
     [[nodiscard]] PersonSelection select(const Entity& character, const gamedata::PersonBinding& person);
+    /**
+     * Stage 1.8e: @return The state of an NPC row that a character selects now (the states in reverse: the first one whose requirements pass,
+     * client 0x37AC710), or -1. The one rule of `select` and of the support manifest; `visits` counts the states that it looked at.
+     */
+    [[nodiscard]] std::int32_t selected_state(const Entity& character, const gamedata::ConversationNpc& npc,
+                                              std::uint64_t* visits = nullptr) const;
 
     /**
      * A topic of the client of a character: 3158 (`closing` false: the conversation must be open) or one topic of 5397 (`closing` true:

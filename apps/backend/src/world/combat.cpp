@@ -389,12 +389,18 @@ void Combat::run_event(const std::string& characterId, SessionId session, const 
             if (own != nullptr && !own->life.dead && m_sequences.live_visit(characterId, event.visit)
                 && m_sequences.generation_of(characterId) == event.generation) {
                 m_world.abilities().fragment_event(*own, event);
+                if (event.kind == SequenceEvent::Kind::strike) {
+                    m_world.quest_objects().strike(*own, event.visit, event.index); // Stage 1.8e: the destructible quest objects.
+                }
             }
         });
         return;
     }
     if (Entity* own = m_world.entity_of(session)) {
         m_world.abilities().fragment_event(*own, event);
+        if (event.kind == SequenceEvent::Kind::strike) {
+            m_world.quest_objects().strike(*own, event.visit, event.index); // Stage 1.8e: the destructible quest objects.
+        }
     }
 }
 

@@ -247,6 +247,23 @@ bool Persons::passes(const Entity& character, const gamedata::ConversationRequir
     return true;
 }
 
+std::int32_t Persons::selected_state(const Entity& character, const gamedata::ConversationNpc& npc, std::uint64_t* visits) const {
+    const gamedata::ConversationData* catalog = data();
+    if (catalog == nullptr) {
+        return -1;
+    }
+    // The states in reverse: the first state whose requirements pass (client 0x37AC710).
+    for (auto state = npc.states.rbegin(); state != npc.states.rend(); ++state) {
+        if (visits != nullptr) {
+            ++*visits;
+        }
+        if (passes(character, catalog->state(*state).requirements, false)) {
+            return static_cast<std::int32_t>(*state);
+        }
+    }
+    return -1;
+}
+
 PersonSelection Persons::select(const Entity& character, const gamedata::PersonBinding& person) {
     PersonSelection selection;
     const gamedata::ConversationData* catalog = data();
@@ -258,14 +275,7 @@ PersonSelection Persons::select(const Entity& character, const gamedata::PersonB
         return selection;
     }
     ++m_counts.selections;
-    // The states in reverse: the first state whose requirements pass (client 0x37AC710).
-    for (auto state = selection.npc->states.rbegin(); state != selection.npc->states.rend(); ++state) {
-        ++m_counts.stateVisits;
-        if (passes(character, catalog->state(*state).requirements, false)) {
-            selection.state = static_cast<std::int32_t>(*state);
-            break;
-        }
-    }
+    selection.state = selected_state(character, *selection.npc, &m_counts.stateVisits);
     if (selection.state < 0) {
         return selection;
     }

@@ -31,6 +31,7 @@
 #include "gamedata/navigation_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/poi_data.h"
+#include "gamedata/quest_object_data.h"
 #include "gamedata/trigger_data.h"
 #include "gamedata/conversation_data.h"
 #include "gamedata/quest_data.h"
@@ -679,6 +680,18 @@ int main(int argc, char** argv) {
                    "tools/gamedata/pois.sh",
                    poiDataPath.c_str(), poiData.error().c_str());
     }
+    // The destructible quest objects (stage 1.8e): the corruption nodules and the monolith of the beach chain. Without the file no quest
+    // object can be destroyed.
+    const std::string questObjectDataPath = (gameDataDirectory / gamedata::kQuestObjectDataFile).string();
+    gamedata::QuestObjectData questObjectData;
+    if (questObjectData.load(questObjectDataPath)) {
+        log::write("backend: quest object data %s: %zu destructible quest objects, %zu gatherable rows", questObjectDataPath.c_str(),
+                   questObjectData.objects().size(), questObjectData.rows().size());
+    } else {
+        log::write("backend: no quest object data at %s (%s): no quest object can be destroyed. Make the file with "
+                   "tools/gamedata/quest-objects.sh",
+                   questObjectDataPath.c_str(), questObjectData.error().c_str());
+    }
     // The trigger volumes of the quests (stage 1.8b): the volumes of the tags of TaskTriggerArea. Without the file a task of a trigger area
     // waits.
     const std::string triggerDataPath = (gameDataDirectory / gamedata::kTriggerDataFile).string();
@@ -775,6 +788,7 @@ int main(int argc, char** argv) {
     worldOptions.craftingData = &craftingData;
     worldOptions.questData = &questData;
     worldOptions.poiData = &poiData;
+    worldOptions.questObjectData = &questObjectData;
     worldOptions.triggerData = &triggerData;
     worldOptions.conversationData = &conversationData;
     worldOptions.chestData = &chestData;

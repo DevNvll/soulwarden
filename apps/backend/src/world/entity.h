@@ -354,6 +354,20 @@ struct LootTrackerEntry {
 };
 
 /**
+ * Stage 1.8e: one destructible quest object of a character (world/quest_objects.h): the strikes that hit it, the last strike, and its
+ * destruction. A value of the world: the store has none.
+ */
+struct QuestObjectHits {
+    std::uint32_t hits{0};
+    /** The visit and the strike of the attack graph of the last hit (one strike hits an object one time). */
+    std::uint32_t visit{0};
+    std::uint32_t strike{0};
+    bool destroyed{false};
+    /** The generation of the destruction (an old respawn timer changes nothing). */
+    std::uint64_t generation{0};
+};
+
+/**
  * Health, stamina, and mana of a character. The progress system sets the maximum of the health
  * from the level and from the constitution of the character (world/progress.h). These are the
  * values of a backend with no progression tables.
@@ -1856,6 +1870,10 @@ struct Entity {
     std::vector<LootTrackerEntry> lootTracker;
     /** The LootTracker entries of the loot bags of the character (stage 3.5b.2): a copy of the values of the loot bag system. */
     std::vector<LootTrackerEntry> bagTracker;
+    /** Stage 1.8e: the destructible quest objects of the character by their index in the data (world/quest_objects.h). */
+    std::map<std::uint32_t, QuestObjectHits> questObjects;
+    /** Stage 1.8e: the LootTracker entries (Looted) of the destroyed quest objects of the character: a copy of the values of the system. */
+    std::vector<LootTrackerEntry> questObjectTracker;
     /** The items of the loot bag that the character opened (stage 3.5b.2, slot 76): the loot bag system sets them. */
     Bag selectedContainer;
     /** The items of each loot bag of the character (stage 3.5b.2, slot 77): the loot bag system sets them. */

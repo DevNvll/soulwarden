@@ -7227,6 +7227,51 @@ shows a red 00:00:00 (live F: "Basic Needs" and "Amidst the Wreckage"; `T1-05-hu
 with its fraction (live T1: 25.415 s, then Aelstrom 03 shows). No server field that sets the published value is known: open (research
 quests-18d timer U5).
 
+### 4.58 The destructible quest objects, the cinematic TempestRising, the countdown row of a timer (live proof of stage 1.8e; static proof for the client code and the game data; the strike rule and the work of an object are project rules with the values of the game data)
+
+Research: `~/Games/soulwarden/work/research/scratch/quests-18e/` (`destructible/ANSWERS.md`, `cinematic/ANSWERS.md`,
+`timer/ANSWERS.md`). The systems: [Quests](systems/quests.md), [Chests](systems/chests.md). Live checks of stage 1.8e:
+`~/Games/soulwarden/work/evidence/quests/18e/implement/live/`, `live-final/`, and `RESULT.md`. Client build 1.400.6031.6004151; all
+addresses are image-relative.
+
+**A destructible quest object** (the corruption nodules of `06_survivors`, the monolith of `06_demonstorm2`: the variation table
+`Gatherable_Quest_Damageable`) [data; static]: the client makes the object from its level data (a managed actor of the placement:
+G = the XOR of the big-endian halves of the placement UUID, the low 3 bits 3; the actor id is G little-endian and 8 zero bytes). Its slice
+has a DamageReceiver (slot 1), the VariationData (slot 2), the PositionInTheWorld (slot 3), the GatherableController (slot 4, with
+`m_isDamageableGatherable`), Interact (slots 5 and 6), and a Marker (slot 7); it has no Vitals and no HitVolume. The melee contact collector
+of the client (0x485FBA0, the append at 0x4861DFA) takes only an entity with a HitVolume: the input report of a swing names no contact on
+the object, and the key E has no option ("DESTROY CORRUPTION NODULE" is the marker text). The append (0x4861B7E to 0x4861DFA) needs
+the HitVolume and the DamageReceiver (0x3FC4660) of the target [client]; the branch that each swing of live I0 took was not traced. The
+ranged reports (list 1, list 2) do not use this gate (their query filters accept a target with no HitVolume) [client 0x256C980,
+0x48633C0, 0x4863760; no live check]. The health bar of the marker is a fallback of
+`marker.luac` (HealthPercent 1). The object shows only while an active task has its InteractTag (InteractOnlyOnQuest, 0x8261FC0).
+
+**The destruction** [live I0 and F]: the object is an instanced object (InstancedLootType 4 of the data). The GatherableController state
+(type 12) has no effect for it: its apply (0x3371590) returns when the instanced reference is valid (live I0: Depleted in slot 4 changed
+nothing). The LootTracker state of the player (slot 33, type 982, owner only, 4.41) with an entry of the managed actor of the object, the
+state Looted (2), the kind 0, and the position of the placement removes the object, its marker, and its corruption; a map with no entry
+brings it back (live I0: `I0-07-looted-claim-destroys-nodule.mp4`, `I0-08-restore-crops.png`). The server finds the hit itself (each strike
+window of the attack graph of the server, 5.0 m and 90 degrees of the look) and counts one unit for each strike; at the last unit it sends
+the entry (live F: four single strikes destroy each nodule, `F-97-nodule-destroyed.mp4`; the fourth nodule starts the outro cutscene
+`2b76de11`, `F-98-last-nodule-and-outro.mp4`; one strike destroys the monolith, `F-146-monolith-destroyed.mp4`). The game event of the row
+(`MSQ_CorruptedNodule_1_interact`) counts for TaskGameEvent in the server; the client gets the new task state in the Objectives state.
+
+**6606 and 6542 of TempestRising** [static: the cinematic facet trigger 0x2CC7A90, 0x2CC8260, the start 0x2CC7E70; the Bink play
+0x6506CB0; the senders 0x2EDA180 (6606) and 0x2ED9F90 (6542) through 0x2EF9A00 and 0x2EF81F0; live C1 and F]: the timeline of the statue
+lead-in cutscene (`06_RaiseAlarm_MSQ_AncientStatueLeadin_WW_IGC`, layer `Trigger_Bink_Video` at 9.7 s) starts the cinematic; no server
+message starts it. The client plays `LyShineUI/Videos/TempestRising.bk2` (Bink 2, 106.7 s) and sends 6606 at the start event of the player
+and 6542 at its finished or stopped event (a hold of Escape of 2.25 s stops it: skipped). Each body is `target:u64 entity:u64
+cinematic:u32` (TempestRising: `40214776`). The play function returns before it opens the file when `sys_audio_disable` is above 0: a
+development run (no audio) shows a white screen with the subtitles, never ends the video, and sends neither message (live C1 and F:
+`F-150-statue-cutscene-and-cinematic.mp4`). No server answer to 6606 or 6542 is known; 6709 does not close the video screen. The play with
+audio has no live check (a development run must not make sound).
+
+**The countdown row of a timer** [static, research `timer/ANSWERS.md`; no live trace]: a new TaskTimer has the deadline 0; the objective
+initialization (0x3A551C0) binds the timers of the tree (0x3B2FD90) before the activation of the root, and the bind publishes the zero
+deadline to `MissionTimers.<instance>.TargetTime` (the key at 0x3B2FDCA, one node for each objective); the activation and the tick do not
+publish again; the task states, the parent transitions, a resend of the active list, and 5684 do not bind again. The UI data build
+0x3AD7BE0 reads the TimeLimit of the task (+0x1F4). No server field or message that makes the row count is known: open.
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are
@@ -7254,8 +7299,9 @@ quests-18d timer U5).
   status of the first record before the world entry of the client.
 - A conversation with a person (4.20, 4.55, 4.56): from stage 1.8b the backend accepts an
   offer (3772) and a hand-in (794), grants a cutscene (6707) and sends a whisper (5070). Open:
-  the cinematics 6606 and 6542 have no live check; the hand-in of a quest with a loot container
-  item, a territory standing, or a faction reward (1.8d); a repeated quest; the person of a
+  the cinematics 6606 and 6542 have no live check with audio (4.58: a development run has no
+  audio, and its client plays no video); a faction reward; a repeated quest (stage 1.8e: no
+  repeatable quest of the data is supported, research of the support manifest); the person of a
   later topic that no state of the data names (`01_GraceWW_00`).
 - Creatures (4.14) fight from stage 3.4b (4.17): a creature sees a character, goes to it,
   attacks it, and goes back to its home. Open for them:

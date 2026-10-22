@@ -60,6 +60,12 @@
 //                                                         interface)
 //   POST /v1/dev/quests/reset?character=ID&instance=HEX   the reset of a quest (stage 1.8c; the command reset_quest)
 //   GET  /v1/dev/quests/rewards?character=ID&objective=ID[&territory=N]  the reward join and the availability of an objective (stage 1.8d)
+//   POST /v1/dev/quests/cinematic?character=ID&id=ID&phase=start|end
+//                                                         the notice of the client messages 6606 and 6542 to the quest system (stage
+//                                                         1.8e, development only: a development run has no audio, and its client then
+//                                                         plays no video and sends neither message)
+//   GET  /v1/dev/quests/support                           the support manifest of the quest data (stage 1.8e; the command
+//                                                         list_quest_support of the admin interface)
 // tools/world sends these requests to the backend of a development run.
 
 namespace soulwarden::backend::server::http {
@@ -146,9 +152,17 @@ void register_dev_progress_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/quests/template", "dev.quest_template", command_route(services, commands::apply_backstory));
     router.add("POST", "", "/v1/dev/quests/grant", "dev.quest_grant", command_route(services, commands::grant_objective));
     router.add("POST", "", "/v1/dev/quests/achievement", "dev.quest_achievement", command_route(services, commands::set_achievement));
+    router.add("POST", "", "/v1/dev/quests/cinematic", "dev.quest_cinematic", command_route(services, commands::quest_cinematic));
     router.add("POST", "", "/v1/dev/quests/abandon", "dev.quest_abandon", command_route(services, commands::abandon_quest));
     router.add("POST", "", "/v1/dev/quests/reset", "dev.quest_reset", command_route(services, commands::reset_quest));
     router.add("GET", "", "/v1/dev/quests/rewards", "dev.quest_rewards", command_route(services, commands::quest_rewards));
+    router.add("GET", "", "/v1/dev/quests/support", "dev.quest_support", [&services](const RouteContext& context) {
+        if (!context.request.host.empty()) {
+            return message(403, "forbidden");
+        }
+        // Stage 1.8e: the support manifest (a reader of the world; some seconds with the whole quest data).
+        return in_world(services, [](world::World& target) { return json_reply(200, commands::quest_support_json(target).dump()); });
+    });
 }
 
 } // namespace soulwarden::backend::server::http

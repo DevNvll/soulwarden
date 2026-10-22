@@ -104,6 +104,9 @@
 //   GET  /admin/v1/catalog/backstories
 //        The backstory templates of the quest data (stage 1.8a): the id, the name, the purpose, the level of the
 //        template (not applied), and its start objectives with the mark "inData".
+//   GET  /admin/v1/catalog/quest-support
+//        The support manifest of the quests (stage 1.8e): each objective with its grants, gates, tasks, world content, rewards, and
+//        the reasons of a block, the mission templates apart, and the counts of each history (docs/systems/quests.md).
 // The state of a character that is in the world also has the creatures near it (the member
 // "creatures": each creature that is 150 m or less from the character, the nearest one first),
 // and its interactions (the member "interactions", stage 2.5a: its committed interaction and the
@@ -481,6 +484,15 @@ service::HttpResponse list_backstories(const Services& services, const AdminAcce
     return in_world(services, [](world::World& target) { return json_reply(200, commands::backstories_json(target).dump()); });
 }
 
+service::HttpResponse list_quest_support(const Services& services, const AdminAccess& access, const RouteContext& context) {
+    service::HttpResponse refusal;
+    if (!caller(access, context, refusal)) {
+        return refusal;
+    }
+    // Stage 1.8e: the support manifest of the quests (a reader).
+    return in_world(services, [](world::World& target) { return json_reply(200, commands::quest_support_json(target).dump()); });
+}
+
 } // namespace
 
 void register_admin_routes(Router& router, const Services& services, const AdminAccess& access) {
@@ -494,6 +506,7 @@ void register_admin_routes(Router& router, const Services& services, const Admin
     router.add("GET", "", "/admin/v1/catalog/places", kAdminPlaceCatalogRoute, bind(list_places));
     router.add("GET", "", "/admin/v1/catalog/presets", kAdminPresetCatalogRoute, bind(list_presets));
     router.add("GET", "", "/admin/v1/catalog/backstories", "admin.catalog_backstories", bind(list_backstories));
+    router.add("GET", "", "/admin/v1/catalog/quest-support", "admin.catalog_quest_support", bind(list_quest_support));
 }
 
 } // namespace soulwarden::backend::server::http

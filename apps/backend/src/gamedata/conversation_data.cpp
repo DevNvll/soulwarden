@@ -242,6 +242,17 @@ const ConversationNpc* ConversationData::npc(std::string_view id) const {
     return found != m_npcByLowerId.end() ? &m_npcs[found->second] : nullptr;
 }
 
+std::optional<std::uint32_t> ConversationData::state_index(std::string_view id) const {
+    // A reader of the support manifest (stage 1.8e): one pass over the states, not a rule of a request.
+    const std::string key = lower_ascii(id);
+    for (std::uint32_t index = 0; index < m_states.size(); ++index) {
+        if (lower_ascii(m_states[index].id) == key) {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<std::uint32_t> ConversationData::topic_of_crc(std::uint32_t crc) const {
     const auto found = m_topicByCrc.find(crc);
     return found != m_topicByCrc.end() ? std::optional<std::uint32_t>(found->second) : std::nullopt;

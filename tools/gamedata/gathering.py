@@ -146,6 +146,9 @@ ORDINARY_TABLES = ("Gatherable_Trees", "Gatherable_Bushes", "Gatherable_Minerals
 # capital entry gets the InteractTag and InteractOnlyOnQuest of the variation row (the client shows the object only during a task with the
 # tag: live check G1 of stage 1.8c). The other quest tables (proximity, glyphs, damageable objects) belong to later stages.
 QUEST_TABLES = ("Gatherable_Quest",)
+# Stage 1.8e (docs/systems/quests.md, quest_objects.py): the variation table of the destructible quest objects (the corruption nodules of
+# 06_survivors, the monolith of 06_demonstorm2). This tool reads its rows for quest_objects.py and writes no node of it.
+DAMAGEABLE_TABLES = ("Gatherable_Quest_Damageable",)
 # The cause of a loot container that a quest object does not have (its loot is the quest drops).
 LOOT_CONTAINER_CAUSE = "a loot container (a chest: stage 3.5b)"
 # The causes of a row that the backend refuses (a rule of the data that the backend has no predicate for).
@@ -286,16 +289,17 @@ class Tables:
                                                               if sheet.source(row, name) != ""})
 
     def _variations(self, sheet: Sheet, path: str) -> None:
-        if sheet.name not in ORDINARY_TABLES and sheet.name not in QUEST_TABLES:
+        tagged = sheet.name in QUEST_TABLES or sheet.name in DAMAGEABLE_TABLES
+        if sheet.name not in ORDINARY_TABLES and not tagged:
             return
-        need(sheet, path, ("VariantID", "GatherableEntryID") + (("InteractTag", "InteractOnlyOnQuest") if sheet.name in QUEST_TABLES else ()))
+        need(sheet, path, ("VariantID", "GatherableEntryID") + (("InteractTag", "InteractOnlyOnQuest") if tagged else ()))
         rows = self.variations.setdefault(sheet.name, {})
         for row in range(sheet.row_count):
             identifier = sheet.source(row, "VariantID").strip()
             if not identifier:
                 continue
             cells = {"row": row, "gatherable": sheet.source(row, "GatherableEntryID").strip()}
-            if sheet.name in QUEST_TABLES:
+            if tagged:
                 cells["tag"] = sheet.source(row, "InteractTag").strip()
                 cells["onlyOnQuest"] = flag(sheet.source(row, "InteractOnlyOnQuest"), f"{path}: InteractOnlyOnQuest of {identifier}")
             if identifier.lower() in rows and rows[identifier.lower()]["gatherable"] != cells["gatherable"]:

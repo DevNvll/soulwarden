@@ -64,12 +64,14 @@ std::vector<hub::Bytes> encode_gathering_state(const world::Entity& entity, View
 
 std::vector<hub::Bytes> encode_loot_tracker_state(const world::Entity& entity, View view, const PartsRequest& request) {
     std::vector<hub::Bytes> parts;
-    if (view != View::owner || (request.since == 0 && entity.lootTracker.empty() && entity.bagTracker.empty())) {
+    if (view != View::owner || (request.since == 0 && entity.lootTracker.empty() && entity.bagTracker.empty() && entity.questObjectTracker.empty())) {
         return parts;
     }
     // One map: the claims of the chests (world/chests.h) and the entries of the loot bags (stage 3.5b.2, world/loot_bags.h).
     std::vector<world::LootTrackerEntry> entries = entity.lootTracker;
     entries.insert(entries.end(), entity.bagTracker.begin(), entity.bagTracker.end());
+    // Stage 1.8e: the Looted entries of the destroyed quest objects of the character (world/quest_objects.h; live check I0).
+    entries.insert(entries.end(), entity.questObjectTracker.begin(), entity.questObjectTracker.end());
     StateWriter state(kTrackerGroups);
     hub::Writer& map = state.field(0, 0);
     map.size(0); // No change entries: the full form.

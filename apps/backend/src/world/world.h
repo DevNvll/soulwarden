@@ -53,6 +53,7 @@
 #include "world/skills.h"
 #include "world/projectiles.h"
 #include "world/persons.h"
+#include "world/quest_objects.h"
 #include "world/quests.h"
 #include "world/spells.h"
 #include "world/stamina.h"
@@ -312,6 +313,8 @@ struct WorldOptions {
     const gamedata::PoiData* poiData{nullptr};
     /** Stage 1.8b: the trigger volumes of the quests (game data trigger-data.json), or null: a task of a trigger area waits. */
     const gamedata::TriggerData* triggerData{nullptr};
+    /** Stage 1.8e: the destructible quest objects (game data quest-objects.json), or null: no quest object can be destroyed. */
+    const gamedata::QuestObjectData* questObjectData{nullptr};
     /**
      * Stage 2.5c: the conversation data of the persons (game data conversation-data.json), or null: a person keeps its conversation (3743
      * result 1), with no state selection, no topic, and no service.
@@ -875,6 +878,13 @@ public:
         return m_quests;
     }
     /** @return The person system (stage 2.5c): the use of a person, its conversation state for each character, its topics. */
+    /** Stage 1.8e: the destructible quest objects (world/quest_objects.h). */
+    [[nodiscard]] QuestObjects& quest_objects() {
+        return m_questObjects;
+    }
+    [[nodiscard]] const QuestObjects& quest_objects() const {
+        return m_questObjects;
+    }
     [[nodiscard]] Persons& persons() {
         return m_persons;
     }
@@ -1048,6 +1058,7 @@ private:
     /** The crafting (stage 3.7a): after the interactions (its handler of the station options wraps the handler of the base). */
     Crafting m_crafting;
     Quests m_quests;
+    QuestObjects m_questObjects;
     /** The persons (stage 2.5c): after the interactions (its handler of OpenConversation) and the quests (the conditionals, the tasks). */
     Persons m_persons;
     /** The build presets (stage B0): they use the inventory, the progress, the skill, and the ownership systems. */

@@ -6,6 +6,7 @@
 #include "core/logging/log.h"
 #include "server/http/character_commands.h"
 #include "server/http/router.h"
+#include "world/quest_support.h"
 #include "world/quests.h"
 #include "world/world.h"
 
@@ -135,6 +136,8 @@ WorldCommand quest_rewards(const std::string& character, const Arguments& argume
                                     {"completionAchievement", join.achievement},
                                     {"standing", join.standing},
                                     {"standingTerritory", join.standingTerritory},
+                                    {"azoth", join.azoth},
+                                    {"azothGain", join.azothGain},
                                     {"next", join.next != nullptr ? join.next->id : ""},
                                     {"repeat", join.schedule == gamedata::ScheduleKind::none ? "none"
                                                : join.schedule == gamedata::ScheduleKind::hourly ? "hourly"
@@ -165,6 +168,26 @@ WorldCommand set_achievement(const std::string& character, const Arguments& argu
         const bool ok = on ? target.ownership().unlock_achievement(*entity, id, *bit) : target.ownership().lock_achievement(*entity, id);
         return ok ? json_reply(200, json{{"message", "done"}, {"id", id}, {"bit", *bit}, {"on", on}}.dump())
                   : message(500, "the database did not take the change: nothing changed");
+    };
+}
+
+WorldCommand quest_cinematic(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    const auto id = id_argument(arguments, "id");
+    const auto phase = arguments.text("phase");
+    if (!id || !phase || (*phase != "start" && *phase != "end")) {
+        refusal = message(400, "give id=CINEMATIC (TempestRising) and phase=start or phase=end");
+        return {};
+    }
+    return [character, id = *id, ended = *phase == "end"](world::World& target) {
+        world::Entity* entity = target.find_character(character);
+        if (entity == nullptr) {
+            return message(409, "the character is not in the world");
+        }
+        const std::uint32_t crc = gamedata::quest_crc(id);
+        log::write("quests: DEVELOPMENT COMMAND: the cinematic %s (%08x) %s for character %s (in place of the client message %u)", id.c_str(), crc,
+                   ended ? "ended" : "started", character.c_str(), ended ? 6542U : 6606U);
+        const bool changed = target.quests().cinematic(*entity, crc, ended);
+        return json_reply(200, json{{"message", changed ? "a quest task changed" : "no quest change"}, {"id", id}, {"crc", crc}, {"ended", ended}}.dump());
     };
 }
 
@@ -276,6 +299,11 @@ std::optional<json> quests_view(world::World& target, const std::string& charact
                   {"gameEventsApplied", counts.gameEventsApplied},
                   {"triggerVisits", counts.triggerVisits},
                   {"topicEffects", counts.topicEffects}}}};
+}
+
+json quest_support_json(world::World& target) {
+    world::QuestSupport support(target);
+    return support.manifest(support.default_profiles());
 }
 
 json backstories_json(world::World& target) {

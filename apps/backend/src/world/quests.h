@@ -210,6 +210,8 @@ struct HandInResult {
     /** Stage 1.8d: the territory standing that the hand-in gave, and its territory (0: none). */
     std::uint64_t standing{0};
     std::uint16_t standingTerritory{0};
+    /** Stage 1.8e: the points of the Azoth balance that the hand-in gave (after the cap of the balance). */
+    std::uint64_t azoth{0};
     /** Stage 1.8d: the reset of a repeatable objective (Unix nanoseconds of the world clock; 0: no repeat). */
     std::uint64_t resetNs{0};
     [[nodiscard]] bool ok() const {
@@ -243,6 +245,13 @@ struct RewardJoin {
     /** TerritoryStanding and its territory (the origin territory of the instance: decision D3 option B). */
     std::uint64_t standing{0};
     std::uint16_t standingTerritory{0};
+    /**
+     * Stage 1.8e: AzothReward (the Azoth balance Azoth_Currency, stage 3.7c) and the cap of the balance (the crafting data). A gain stops at
+     * the cap (AllowOverflow 0, the rule of Skills::add_balance): `azoth` is the amount of the data, `azothGain` the part under the cap.
+     */
+    std::uint64_t azoth{0};
+    std::uint64_t azothGain{0};
+    std::uint64_t azothCap{0};
     /** ObjectiveReward (null: none). */
     const gamedata::QuestObjective* next{nullptr};
     /** A repeatable row: the kind of its schedule (none: not repeated, decision D4 of the user is open for a row with no schedule). */
@@ -505,6 +514,9 @@ public:
      */
     [[nodiscard]] QuestError reward_join(const Entity& entity, const gamedata::QuestObjective& objective, std::uint16_t originTerritory,
                                          RewardJoin& join, std::string& detail) const;
+    /** Stage 1.8e: the same join with the standing of a skill set (the support manifest: the history of a profile, no character). */
+    [[nodiscard]] QuestError reward_join(const SkillSet& skills, const gamedata::QuestObjective& objective, std::uint16_t originTerritory,
+                                         RewardJoin& join, std::string& detail) const;
     /**
      * A cutscene request of the client (6703): @return True (the grant 6707) when an Active TaskCutsceneComplete of the character waits for
      * this cutscene; it is the pending cutscene of the character then. Else false: no answer, nothing changes.
@@ -567,6 +579,9 @@ private:
     [[nodiscard]] bool repeated(std::uint64_t result) const;
     /** Keeps a result id as handled (code review of stage 1.8c, finding QR8C-R1: only after the commit of its plan). */
     void remember(std::uint64_t result);
+    /** The reward join of a character (`skills` null: the skills of the store) or of a skill set of a history (stage 1.8e). */
+    [[nodiscard]] QuestError reward_join_of(const std::string& characterId, const SkillSet* skills, const gamedata::QuestObjective& objective,
+                                            std::uint16_t originTerritory, RewardJoin& join, std::string& detail) const;
     /** @return The active quest of an instance id of a character (the index of the character; finding QR8C-R11), or null. */
     [[nodiscard]] const QuestInstance* instance_of(const Entity& entity, std::uint64_t instance);
 

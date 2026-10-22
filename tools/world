@@ -206,6 +206,12 @@ not, as for the items):
                                                 stage 1.8d: the reward join of a hand-in of the objective (what it pays, or the
                                                 reward that refuses it) and the availability of its offer (no change)
   tools/world quest grant CHARACTER OBJECTIVE   a new instance of an objective (development only)
+  tools/world quest cinematic CHARACTER ID start|end
+                                                stage 1.8e: the notice of the client messages 6606 and 6542 to the
+                                                quests (development only: a development run has no audio, and its
+                                                client plays no video and sends neither message)
+  tools/world quest support FILE                stage 1.8e: the support manifest of the quest data into FILE (keep
+                                                it outside the repository), and its counts
   tools/world quest abandon CHARACTER INSTANCE  the abandon of a quest (stage 1.8c: the rule of message 3836; an
                                                 objective with CanBeAbandoned 0 refuses it)
   tools/world quest reset CHARACTER INSTANCE    the reset of a quest (stage 1.8c: the rule of message 5600: a new
@@ -459,6 +465,19 @@ def world_time_text(time: dict) -> str:
             f"{cycle['dusk']}); {'stored position at the start' if counts['loaded'] else 'a new world at noon'}, "
             f"{counts['phaseChanges']} phase changes, {counts['sets']} commands, {counts['saves']} saves "
             f"({counts['failedSaves']} failed)")
+
+
+def save_quest_support(data_dir: Path, output: Path) -> None:
+    """Stage 1.8e: writes the support manifest of the quest data (some MB) to a file, then shows its counts."""
+    process, port = backend(data_dir)
+    command = ["nsenter", "-t", str(process), "-U", "-n", "--preserve-credentials", "curl", "--silent", "--max-time", "120",
+               "--output", str(output), "--write-out", "%{http_code}", f"http://127.0.0.1:{port}/v1/dev/quests/support"]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0 or result.stdout.strip() != "200":
+        fail(f"no manifest of the backend (status {result.returncode}, HTTP {result.stdout.strip()}): {result.stderr.strip()}")
+    counts = json.loads(output.read_text())["counts"]
+    print(f"world: the support manifest is in {output}: {counts['rows']} rows ({', '.join(f'{k} {v}' for k, v in counts['kinds'].items())}), "
+          f"{counts['supported']} supported, {counts['primaryCompletable']} completable in the history {counts['primaryProfile']}")
 
 
 def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filter_text: str = "") -> None:
@@ -1546,6 +1565,13 @@ def main() -> None:
             fail("the objective must be an id of the quest data")
         territory = f"&territory={whole(arguments[4], 'the territory')}" if len(arguments) == 5 else ""
         request(data_dir, "GET", f"/v1/dev/quests/rewards?character={character_id(data_dir, arguments[2])}&objective={arguments[3]}{territory}")
+    elif command == "quest" and len(arguments) == 5 and arguments[1] == "cinematic" and arguments[4] in ("start", "end"):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[3]):
+            fail("the cinematic must be an id of the cinematic data (TempestRising)")
+        request(data_dir, "POST", f"/v1/dev/quests/cinematic?character={character_id(data_dir, arguments[2])}"
+                                  f"&id={arguments[3]}&phase={arguments[4]}")
+    elif command == "quest" and len(arguments) == 3 and arguments[1] == "support":
+        save_quest_support(data_dir, Path(arguments[2]).expanduser())
     elif command == "achievement" and len(arguments) == 4 and arguments[3] in ("on", "off"):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[2]):
             fail("the achievement must be an id of the achievement table")

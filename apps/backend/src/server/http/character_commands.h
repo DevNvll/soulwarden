@@ -166,6 +166,11 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand apply_backstory(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand grant_objective(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand set_achievement(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+// Stage 1.8e: quest_cinematic (development only): `id` (a cinematic id, TempestRising) and `phase` (start or end): the notice of the client
+// messages 6606 and 6542 to the quest system (Quests::cinematic; an end needs the start of the same cinematic). A development run disables the
+// audio system of the client (-sys_audio_disable 1), and then the Bink player of the client returns before it opens the video (0x6506CB0):
+// the client sends neither message. The command does not close the video screen of the client.
+[[nodiscard]] WorldCommand quest_cinematic(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 // Stage 1.8d: quest_rewards (a reader): `objective` and maybe `territory` (the origin territory; default the ExclusiveTerritory of the row): the
 // one reward join of the hand-in (Quests::reward_join: what a hand-in pays, or the reward that refuses it) and the availability of the offer for
 // the character (Quests::available). No change.
@@ -179,6 +184,11 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] std::optional<nlohmann::json> quests_view(world::World& world, const std::string& character);
 /** @return The backstory templates of the quest data (world thread): each one with its start objectives (and if the data has each one). */
 [[nodiscard]] nlohmann::json backstories_json(world::World& world);
+/**
+ * Stage 1.8e: the support manifest of the quests (world thread; world/quest_support.h): one row for each objective with its grants, gates,
+ * tasks, world content, rewards, and the reasons of a block, and the counts of each history (a new character, decision D2). A reader.
+ */
+[[nodiscard]] nlohmann::json quest_support_json(world::World& world);
 
 // The build presets (stage B0, world/build_presets.h, server/http/preset_commands.cpp).
 // apply_preset: `preset` (the name of a preset, "bow-boltcaster") and, when necessary, `variant` (the name of a variant, "pve" or

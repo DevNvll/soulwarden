@@ -283,15 +283,17 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
                                            static_cast<std::uint32_t>(visit->paid), due(fragment.payments[visit->paid].time)});
             ++visit->paid;
         }
-        // The strikes, the spell casts, and the marks of the fragment of an ability that the clock passed (stage 3.3b-M2).
-        if (visit->cast != 0) {
-            for (std::uint32_t index = 0; index < fragment.strikes.size() && index < 64; ++index) {
-                if ((visit->strikesPassed & (1ULL << index)) == 0 && fragment.strikes[index].start <= t + kClockEpsilon) {
-                    visit->strikesPassed |= 1ULL << index;
-                    push_event(state, events, SequenceEvent{SequenceEvent::Kind::strike, visit->cast, visit->number, &fragment, index,
-                                                   due(fragment.strikes[index].start)});
-                }
+        // The strikes that the clock passed: of an ability (stage 3.3b-M2), and from stage 1.8e of a basic attack too (the destructible quest
+        // objects: the client reports no contact on them, world/quest_objects.h).
+        for (std::uint32_t index = 0; index < fragment.strikes.size() && index < 64; ++index) {
+            if ((visit->strikesPassed & (1ULL << index)) == 0 && fragment.strikes[index].start <= t + kClockEpsilon) {
+                visit->strikesPassed |= 1ULL << index;
+                push_event(state, events, SequenceEvent{SequenceEvent::Kind::strike, visit->cast, visit->number, &fragment, index,
+                                               due(fragment.strikes[index].start)});
             }
+        }
+        // The spell casts and the marks of the fragment of an ability (stage 3.3b-M2).
+        if (visit->cast != 0) {
             for (std::uint32_t index = 0; index < fragment.casts.size() && index < 32; ++index) {
                 if ((visit->castsPassed & (1U << index)) == 0 && fragment.casts[index].time <= t + kClockEpsilon) {
                     visit->castsPassed |= 1U << index;

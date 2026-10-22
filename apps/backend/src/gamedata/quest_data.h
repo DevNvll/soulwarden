@@ -93,6 +93,8 @@ struct QuestTask {
     std::uint32_t crc{0};
     /** The value of the client enum. */
     std::uint8_t type{0};
+    /** Stage 1.8e: the name of the type in the file ("taskgameevent"; the support manifest). Empty: a file with no name. */
+    std::string typeName;
     /** ItemName: the achievement of an achievement action, the conditional of TaskAchievement, an item, a cutscene. */
     std::string itemName;
     /** TargetQty. No value: a blank cell (research quest-engine.md Q1: blank and 0 are different rules). */
@@ -202,6 +204,8 @@ struct QuestObjective {
     std::uint32_t crc{0};
     /** Type (MainStoryQuest, Journey, ...). */
     std::string type;
+    /** Stage 1.8e: the path of the source table (the support manifest: the rows of the developer worlds). Empty: a file with no path. */
+    std::string table;
     /** The value of the objective type of the client (EObjectiveType, table 0x3AA4A00), for the auto-pin flags of message 2709. No value: not known. */
     std::optional<std::uint8_t> typeIndex;
     /** The nodes by index (a hole has task kNoTask). The last node is the root. */
@@ -270,14 +274,20 @@ struct QuestGameEvent {
     std::optional<std::pair<std::uint16_t, std::uint16_t>> gearScoreRange;
     /** Stage 1.8d: TerritoryStanding: the standing of the origin territory of the quest instance (decision D3 option B). */
     std::uint64_t standing{0};
+    /**
+     * Stage 1.8e: AzothReward: points of the Azoth balance (the categorical progression Azoth_Currency of stage 3.7c, research
+     * quest-engine-3.md Q4). Only with AzothRewardChance 1: the data has no other chance with an amount (672 events have 1; 4 mission
+     * events have a blank cell, and they stay unpaid: the default of the loader 0x31E70B0 for this column is not read).
+     */
+    std::uint64_t azoth{0};
     /** AchievementId: an achievement of the event. */
     std::string achievement;
     /** WhisperId or WhisperID: the whisper of the event (166 of 170 TaskTriggerGameEvent rows name an event with one). */
     std::string whisper;
     /**
-     * The rewards of the event that the backend cannot pay yet (stage 1.8d and later: TerritoryStanding, FactionReputation, FactionTokens,
-     * a categorical progression, Azoth, the other currencies, an entitlement, a status effect, GearScoreRange): "COLUMN VALUE" for each
-     * cell with a value that is not 0.
+     * The rewards of the event that the backend cannot pay yet (stage 1.8d and later: FactionReputation, FactionTokens, a categorical
+     * progression, an Azoth reward with a chance that is not 1, the other currencies, an entitlement, a status effect, a TerritoryStanding
+     * or a GearScoreRange that is not a whole number): "COLUMN VALUE" for each cell with a value that is not 0.
      */
     std::vector<std::string> unpaid;
 };

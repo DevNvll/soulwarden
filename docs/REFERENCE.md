@@ -895,6 +895,18 @@ button on "Confirm").
   `character_quest_repeats` (schema 17). A quest whose tasks are done keeps them done until its hand-in. In a development run `tools/world
   quest rewards NAME OBJECTIVE [TERRITORY]` (route `GET /v1/dev/quests/rewards`, admin command `quest_rewards`) prints what a hand-in of
   the objective pays, or the reward that refuses it, and the answer of an offer; it changes nothing.
+- Destructible quest objects, the Azoth reward, and the support manifest (stage 1.8e, [Quests](systems/quests.md), protocol notes 4.58).
+  The corruption nodules of `06_survivors`, the monolith of `06_demonstorm2`, and each other placement of the variation table
+  `Gatherable_Quest_Damageable` (`quest-objects.json` of `tools/gamedata/quest-objects.sh`) take the strikes of the melee swings and the
+  abilities of a character in front of them (5.0 m): each strike is one unit of the work of the object (BaseGatherTime: a nodule 4, the
+  monolith 1). At the last unit the object goes for that character only (its LootTracker entry), the game event of the object counts for
+  the quest, and the object comes back after the respawn time of the data. Each character has its own objects; a new world entry brings
+  them back. A TaskTriggerArea of the type Enter stays done when the character leaves the volume. AzothReward goes into the Azoth balance
+  (to its cap of 2,500). The support manifest says for each row of the quest data whether the backend runs it and why not, and what a new
+  character, a level 60 character, and each backstory template can complete: `tools/world quest support FILE`, route
+  `GET /v1/dev/quests/support`, admin route `GET /admin/v1/catalog/quest-support` (about 6 MB). In a development run (no audio) the
+  client plays no cinematic video: `tools/world quest cinematic NAME ID start|end` (route `POST /v1/dev/quests/cinematic`) gives the quest
+  system the notice of the messages 6606 and 6542.
 - Persons (stage 2.5c, [Persons](systems/persons.md), protocol notes 4.55). Each person of the game data is in the interaction data: the
   persons that the client makes for the PrefabSpawners of the level (Aelstrom, Urda, and Grace on the beach, the persons of the quests and of
   the settlements) with the client id of their place, yaw, and slice, and the direct persons. A person of a quest is there for a character

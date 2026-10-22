@@ -6,7 +6,9 @@
 #include <functional>
 
 #include "core/logging/log.h"
+#include "gamedata/crafting_data.h"
 #include "world/inventory.h"
+#include "world/skills.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -384,6 +386,9 @@ struct Quests::Plan {
     std::uint64_t coin{0};
     /** Stage 1.8d: the territory standing of the plan (the territory and the points; decision D3 option B). */
     std::vector<std::pair<std::uint16_t, std::uint64_t>> standing;
+    /** Stage 1.8e: the points of the Azoth balance of the plan (AzothReward) and the cap of the balance. */
+    std::uint64_t azoth{0};
+    std::uint64_t azothCap{0};
     /** Stage 1.8d: the repeat rows that the plan writes (a completion of a repeatable objective with a schedule) and removes (a reset). */
     std::vector<state::QuestRepeatRow> repeatWrites;
     std::vector<std::string> repeatDeletes;
@@ -818,6 +823,13 @@ struct Quests::Plan {
         }
         if (state.state == quest_state::kCompleteActive && value < node.target) {
             if (holds(quest)) {
+                return;
+            }
+            // Stage 1.8e: a TaskTriggerArea of the rule Enter is an entry: it stays satisfied when the character leaves the volume (the data
+            // has the rule Stay Inside, 3 rows, for a task that needs the character inside; live check M1 of stage 1.8e: the monolith of
+            // 06_demonstorm2 stands outside each volume of its StayActive Enter task TriggerVol_06_BeachCave). Stay Inside regresses.
+            if (const QuestTask* task = task_of(quest, index);
+                task != nullptr && task->type == task_type::kTriggerArea && task->areaRule == gamedata::AreaRule::enter) {
                 return;
             }
             // The regression of a StayActive task (client 0x3ADDEC0: a CompleteActive task whose progress falls below its target returns
@@ -1350,8 +1362,17 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     }
     // The territory standing (stage 1.8d): one plan of the skill system (the owner of the categorical progressions).
     std::optional<Skills::Plan> standing;
-    if (!plan.standing.empty()) {
+    if (!plan.standing.empty() || plan.azoth > 0) {
         standing = m_world.skills().plan_none(entity.characterId);
+        // Stage 1.8e: AzothReward goes into the same plan (the Azoth balance is a categorical progression too); a gain stops at the cap.
+        if (plan.azoth > 0) {
+            if (const ProgressError error = m_world.skills().add_balance(*standing, kAzothCurrency, static_cast<std::int64_t>(plan.azoth), plan.azothCap);
+                error != ProgressError::none) {
+                log::write("quests: the Azoth %llu for character %s cannot be given (%s): no change", static_cast<unsigned long long>(plan.azoth),
+                           entity.characterId.c_str(), progress_error_text(error));
+                return QuestError::cannotPay;
+            }
+        }
         for (const auto& [territory, amount] : plan.standing) {
             if (const ProgressError error = m_world.skills().add_standing(*standing, territory, amount); error != ProgressError::none) {
                 log::write("quests: the standing %llu of the territory %u for character %s cannot be given (%s): no change",
@@ -1497,7 +1518,7 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
         (void)m_world.progress().finish(*sheet, "the experience of a quest");
     }
     if (standing) {
-        (void)m_world.skills().finish(*standing, "the territory standing of a quest");
+        (void)m_world.skills().finish(*standing, "the territory standing and the Azoth of a quest");
     }
     // The repeats (stage 1.8d): the rows of the entity, and a deadline of the world clock for each new one.
     for (const std::string& objective : plan.repeatDeletes) {
@@ -2190,8 +2211,11 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
             if (event.kind == QuestEventKind::kill && !task.weapon.empty() && task.weapon != lower_text(event.weapon)) {
                 continue; // KillEnemyWeaponID (0x825E6B0): the item of the kill.
             }
-            if (event.kind == QuestEventKind::craft && task.minGearScore != 0 && event.gearScore < task.minGearScore) {
-                continue; // The smallest gear score of a crafted item (0x825DE70).
+            // The smallest gear score of a crafted item (0x825DE70). Code review of stage 1.8d, finding QR8D-R4: a refine that reaches a craft
+            // task (the rule of stage 1.8d above) has the same check.
+            if ((event.kind == QuestEventKind::craft || (event.kind == QuestEventKind::refine && task.type != task_type::kRefineRecipe))
+                && task.minGearScore != 0 && event.gearScore < task.minGearScore) {
+                continue;
             }
             if (task.type == task_type::kInteract && task.onInteractStart != event.started) {
                 continue; // OnInteractStart: the start or the end of the interaction (0x825E470).
@@ -2631,6 +2655,13 @@ QuestError Quests::available(const Entity& entity, const QuestObjective& objecti
             return repeat != entity.quests.repeats.end() && repeat->second.resetNs != 0 ? QuestError::onCooldown : QuestError::completedBefore;
         }
     }
+    // Finding QR8D-R3: a repeat of the current cycle (its row has a deadline) is on its cooldown also with no completion achievement.
+    if (objective.repeatable) {
+        const auto repeat = entity.quests.repeats.find(objective.crc);
+        if (repeat != entity.quests.repeats.end() && repeat->second.resetNs != 0) {
+            return QuestError::onCooldown;
+        }
+    }
     // The gates whose service rule the backend does not have: a game mode (no row has it), a quest arc (the query 0x2CE2150), the world tags
     // (the release status of the service, 0x3A48F40 and 0x3A8DB90), a categorical progression (no row has it). A decision of an agent: an
     // unknown rule is false, as an unknown achievement is (research U7).
@@ -2684,6 +2715,16 @@ bool Quests::ready(const QuestInstance& quest) const {
 
 QuestError Quests::reward_join(const Entity& entity, const QuestObjective& objective, std::uint16_t originTerritory, RewardJoin& join,
                                std::string& detail) const {
+    return reward_join_of(entity.characterId, nullptr, objective, originTerritory, join, detail);
+}
+
+QuestError Quests::reward_join(const SkillSet& skills, const QuestObjective& objective, std::uint16_t originTerritory, RewardJoin& join,
+                               std::string& detail) const {
+    return reward_join_of(std::string{}, &skills, objective, originTerritory, join, detail);
+}
+
+QuestError Quests::reward_join_of(const std::string& characterId, const SkillSet* skills, const QuestObjective& objective,
+                                  std::uint16_t originTerritory, RewardJoin& join, std::string& detail) const {
     join = RewardJoin{};
     // The rewards (research quest-engine.md Q6): the success event (UniversalExpAmount, CurrencyReward with CoinRewardChance, ItemReward with
     // ItemRewardQty and GearScoreRange, AchievementId, TerritoryStanding), the row (ExperienceReward, ItemRewardName with ItemRewardQty,
@@ -2748,7 +2789,12 @@ QuestError Quests::reward_join(const Entity& entity, const QuestObjective& objec
                 return refuse(QuestError::cannotPay, "the standing " + std::to_string(event->standing) + " of " + event->id
                                                          + " has no territory (the instance has no origin territory)");
             }
-            Skills::Plan trial = m_world.skills().plan_none(entity.characterId);
+            Skills::Plan trial;
+            if (skills != nullptr) {
+                trial.skills = *skills; // Stage 1.8e: the standing of a history of the support manifest.
+            } else {
+                trial = m_world.skills().plan_none(characterId);
+            }
             if (const ProgressError error = m_world.skills().add_standing(trial, originTerritory, event->standing); error != ProgressError::none) {
                 return refuse(QuestError::cannotPay, "the standing " + std::to_string(event->standing) + " of the territory "
                                                          + std::to_string(originTerritory) + ": " + progress_error_text(error));
@@ -2756,14 +2802,32 @@ QuestError Quests::reward_join(const Entity& entity, const QuestObjective& objec
             join.standing = event->standing;
             join.standingTerritory = originTerritory;
         }
+        // Stage 1.8e: AzothReward goes into the Azoth balance (stage 3.7c). The cap of the balance is the cap of the crafting data (2,500); the
+        // part above the cap is lost (AllowOverflow 0). With no cap in the crafting data the reward has no owner.
+        if (event->azoth > 0) {
+            const gamedata::CraftingData* crafting = m_world.options().craftingData;
+            const gamedata::CraftCurrency* currency = crafting != nullptr && crafting->loaded() ? crafting->currency(kAzothCurrency) : nullptr;
+            if (currency == nullptr || currency->cap == 0) {
+                return refuse(QuestError::cannotPay, "the reward AzothReward " + std::to_string(event->azoth) + " of " + event->id
+                                                         + " has no cap of the balance " + kAzothCurrency + " (the crafting data)");
+            }
+            const SkillSet* set = skills;
+            const Entity* character = set == nullptr ? m_world.find_character(characterId) : nullptr;
+            const std::uint64_t have = set != nullptr ? Skills::balance(*set, kAzothCurrency)
+                                       : character != nullptr ? Skills::balance(character->skills, kAzothCurrency)
+                                                              : 0;
+            join.azoth = event->azoth;
+            join.azothCap = currency->cap;
+            join.azothGain = have >= currency->cap ? 0 : std::min(event->azoth, currency->cap - have);
+        }
     }
     if (const std::optional<QuestError> error = add_item(objective.itemReward, objective.itemRewardQty, std::nullopt)) {
         return *error;
     }
     join.rowExperience = objective.experienceReward;
     join.achievement = objective.achievement;
-    if (objective.repeatable && !objective.achievement.empty()) {
-        join.schedule = m_data->schedule_kind(objective.schedule);
+    if (objective.repeatable) {
+        join.schedule = m_data->schedule_kind(objective.schedule); // Finding QR8D-R3: also with no completion achievement.
     }
     return QuestError::none;
 }
@@ -2793,12 +2857,28 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
     }
     // Code review of stage 1.8b, finding QR8B-R2 (research quest-engine.md Q3: the required items at the turn-in): each satisfied return task
     // (HaveAndReturnItems, GatherAndReturnItems) needs its target count in the bag now; the completion takes it. A shortage refuses the hand-in.
+    // Code review of stage 1.8d, finding QR8D-R1: the return tasks of one item take their counts one after the other, so the bag needs the
+    // sum of their targets (a reservation of each take against the rest of the stock), not the target of each task alone.
+    struct ReturnNeed {
+        std::string item;
+        std::uint64_t count{0};
+        std::string tasks;
+    };
+    std::map<std::string, ReturnNeed> returns;
     for (std::size_t index = 0; index < quest->tasks.size(); ++index) {
         const QuestTask* task = plan.task_of(*quest, static_cast<std::uint8_t>(index));
-        if (task != nullptr && gamedata::is_return(task->type) && done(quest->tasks[index].state)
-            && plan.item_count(task->itemName) < objective->nodes[index].target) {
-            return refuse(QuestError::missingReturnItems, "the task " + task->id + " needs " + std::to_string(objective->nodes[index].target) + " "
-                                                              + task->itemName + ", and the bag has " + std::to_string(plan.item_count(task->itemName)));
+        if (task != nullptr && gamedata::is_return(task->type) && done(quest->tasks[index].state)) {
+            ReturnNeed& need = returns[lower_text(task->itemName)];
+            need.item = task->itemName;
+            need.count += objective->nodes[index].target;
+            need.tasks += (need.tasks.empty() ? "" : ", ") + task->id;
+        }
+    }
+    for (const auto& [key, need] : returns) {
+        const std::uint64_t have = plan.item_count(need.item);
+        if (have < need.count) {
+            return refuse(QuestError::missingReturnItems, "the return tasks " + need.tasks + " need " + std::to_string(need.count) + " "
+                                                              + need.item + " together, and the bag has " + std::to_string(have));
         }
     }
     // The rewards: the one reward join of the data (Quests::reward_join), then the rolls of this hand-in (the coin chance, the gear score of
@@ -2842,6 +2922,11 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
         result.standing = join.standing;
         result.standingTerritory = join.standingTerritory;
     }
+    if (join.azoth > 0) {
+        plan.azoth += join.azoth;
+        plan.azothCap = join.azothCap;
+        result.azoth = join.azothGain;
+    }
     plan.experience += objective->experienceReward;
     result.experience = plan.experience;
     result.coin = plan.coin;
@@ -2855,7 +2940,9 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
     // Stage 1.8d: the repeat (research quests-18d rules Q4): a repeatable objective with a schedule of the data keeps its completion achievement
     // to the start of the next cycle of the schedule (the OnCooldown answer of the person, 0x37AE910); then the reset removes it. A repeat with
     // no schedule, or with a seasonal window, is not repeated (decision D4 of the user is open).
-    if (objective->repeatable && !objective->achievement.empty()) {
+    // Code review of stage 1.8d, finding QR8D-R3: the repeat row and its deadline do not need a completion achievement (196 scheduled repeat
+    // rows of the data have none): the row is the cooldown of the cycle, and the availability reads it.
+    if (objective->repeatable) {
         const std::uint64_t reset = next_cycle(m_data->schedule_kind(objective->schedule), plan.nowNs);
         if (reset != 0) {
             state::QuestRepeatRow row;
@@ -2892,9 +2979,10 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
     for (const std::string& item : result.items) {
         items += (items.empty() ? "" : ", ") + item;
     }
-    log::write("quests: character %s handed in %s (instance %016llx): %llu experience, %llu coin units, items [%s]%s%s",
+    log::write("quests: character %s handed in %s (instance %016llx): %llu experience, %llu coin units, items [%s], standing %llu, Azoth %llu%s%s",
                entity.characterId.c_str(), objective->id.c_str(), static_cast<unsigned long long>(instance),
                static_cast<unsigned long long>(result.experience), static_cast<unsigned long long>(result.coin), items.c_str(),
+               static_cast<unsigned long long>(result.standing), static_cast<unsigned long long>(result.azoth),
                result.next.empty() ? "" : ", next objective ", result.next.c_str());
     return result;
 }

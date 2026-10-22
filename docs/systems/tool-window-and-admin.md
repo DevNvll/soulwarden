@@ -114,7 +114,8 @@ protocol notes (section 6).
   `GET /admin/v1/catalog/backstories` (the templates with their start objectives and the mark `inData`), and the member `quests` of the
   state of a character (its quests with their tasks and pins, its one-time grants); the tool window has no control for them yet. The
   grant of an objective and the switch of an achievement are development routes only (`tools/world quest grant`, `tools/world
-  achievement`). The command that
+  achievement`). Stage 1.8e: the route `GET /admin/v1/catalog/quest-support` (the support manifest of the quests: a reader of about 6 MB);
+  the notice of a cinematic is a development route only (`tools/world quest cinematic`). The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn
   point, and an effect on a creature are development routes only (`tools/world hurt`, `roll`,
   `creature respawn`, `creature effect`). A

@@ -163,6 +163,8 @@ The source of each rule is in brackets: game data, client code, live check (the 
 - Not in this stage: fishing (3.6b); the durability loss, the refining, and the crafting (3.7); the observer action of a gather (the
   animation of a different player: type 11, not derived); the yield multiplier (GatheringMultiplier, MULT) and the instant gather
   (INS); the event and special nodes (the unsupported rows).
+- Stage 1.8e: `gathering.py` reads the variation table `Gatherable_Quest_Damageable` too (`DAMAGEABLE_TABLES`), with no change of its
+  output: its placements are the destructible quest objects of `quest-objects.json` ([Quests](quests.md)), not nodes of a gather.
 - Stage 1.8c (the quest objects, [Quests](quests.md)): a placement of Master_Quest_Instanced (the variation table Gatherable_Quest) is a quest
   object. Its capital entry has the InteractTag and InteractOnlyOnQuest of its variant; its row is marked quest. A gather of it needs an Active
   quest task of the character with the tag (else the refusal `notOnQuest`; live check G1: the client shows no prompt then); it needs no tool
