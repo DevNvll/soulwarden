@@ -537,6 +537,139 @@ WorldCommand creature_status_action(const std::string& character, const Argument
     };
 }
 
+namespace {
+
+const char* cause_name(world::StepCause cause) {
+    switch (cause) {
+    case world::StepCause::none:
+        return "none";
+    case world::StepCause::tree:
+        return "tree";
+    case world::StepCause::held:
+        return "held (a stun, a knockdown, a stagger, or a forced movement)";
+    case world::StepCause::hit_stun:
+        return "hit stun";
+    case world::StepCause::action:
+        return "an action plays";
+    case world::StepCause::way_back:
+        return "the way back";
+    case world::StepCause::no_tree:
+        return "no tree";
+    }
+    return "none";
+}
+
+const char* mode_name(world::CreatureMode mode) {
+    switch (mode) {
+    case world::CreatureMode::rest:
+        return "rest";
+    case world::CreatureMode::fight:
+        return "fight";
+    case world::CreatureMode::home:
+        return "home";
+    }
+    return "rest";
+}
+
+/** @return Seconds from now to a time of the world clock (0 for a time that passed). */
+double seconds_to(world::WorldClock::time_point time, world::WorldClock::time_point now) {
+    return time > now ? std::chrono::duration<double>(time - now).count() : 0.0;
+}
+
+} // namespace
+
+WorldCommand creature_tree(const std::string& character, const Arguments& arguments, CreatureReach reach, service::HttpResponse& refusal) {
+    const auto id = creature_id(arguments);
+    if (!id) {
+        refusal = message(400, "give creature=ID (16 hexadecimal digits)");
+        return {};
+    }
+    return [character, id = *id, reach](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
+        const world::Entity* creature = target.creatures().find(id);
+        if (creature == nullptr) {
+            return message(404, "the world has no creature with this id");
+        }
+        const world::CreatureMind& mind = creature->creature.mind;
+        const world::CreatureBrain& brain = mind.brain;
+        const world::WorldClock::time_point now = target.clock().now();
+        json reply{{"creature", id_text(id)}, {"kind", creature->creature.kind->id}, {"mode", mode_name(mind.mode)}};
+        json step{{"cause", cause_name(brain.cause)},
+                  {"secondsAgo", brain.at.time_since_epoch().count() != 0 ? std::chrono::duration<double>(now - brain.at).count() : -1.0},
+                  {"decided", brain.decided != 0 ? std::string(world::tree::kind_name(static_cast<world::tree::NodeKind>(brain.decided - 1)))
+                                                 : std::string()}};
+        reply["step"] = step;
+        if (brain.tree) {
+            const world::tree::CompiledTree& tree = *brain.tree;
+            reply["tree"] = tree.name;
+            reply["source"] = tree.source;
+            json nodes = json::array();
+            for (std::size_t index = 0; index < tree.nodes.size(); ++index) {
+                const world::tree::Node& node = tree.nodes[index];
+                json parameters = json::object();
+                for (const auto& [name, value] : world::tree::parameters(tree, index)) {
+                    parameters[name] = (name == "key" && static_cast<std::size_t>(value) < tree.keys.size())
+                                           ? json(tree.keys[static_cast<std::size_t>(value)].name)
+                                           : json(value);
+                }
+                const auto status = static_cast<world::tree::Status>(index < brain.last.size() ? brain.last[index] : 0);
+                nodes.push_back({{"index", index},
+                                 {"depth", node.depth},
+                                 {"node", world::tree::kind_name(node.kind)},
+                                 {"name", node.label},
+                                 {"status", world::tree::status_name(status)},
+                                 {"parameters", parameters}});
+            }
+            reply["nodes"] = nodes;
+            json keys = json::object();
+            for (std::size_t slot = 0; slot < tree.keys.size() && slot < brain.board.size(); ++slot) {
+                keys[tree.keys[slot].name] = brain.board[slot];
+            }
+            reply["blackboard"]["keys"] = keys;
+        }
+        // The facts of the creature that the leaves use (the names of the auto-evaluated keys of the client where the meaning is the same:
+        // Has_Target, Target_Vitals_State; research BT0, section 2).
+        const world::Entity* goal = mind.target != 0 ? target.find(mind.target) : nullptr;
+        json facts{{"Has_Target", mind.target != 0},
+                   {"Health_Percent", creature->vitals.healthMax > 0.0F ? 100.0 * creature->vitals.health / creature->vitals.healthMax : 0.0},
+                   {"Anchor_Distance", world::horizontal_distance(creature->position, mind.anchor)},
+                   {"Attacks", mind.attacks},
+                   {"Ready_In", seconds_to(mind.ready, now)},
+                   {"Shot_Ready_In", seconds_to(mind.shotReady, now)},
+                   {"Area_Ready_In", seconds_to(mind.areaReady, now)},
+                   {"Status_Ready_In", seconds_to(mind.statusReady, now)},
+                   {"Retreating", mind.retreating},
+                   {"Closing", mind.closing},
+                   {"No_Way_Hold_In", mind.holdUntil ? seconds_to(*mind.holdUntil, now) : -1.0}};
+        if (goal != nullptr) {
+            facts["Target"] = goal->kind == world::EntityKind::player ? goal->name : std::string("a summon");
+            facts["Target_Kind"] = goal->kind == world::EntityKind::player ? "player" : "summon";
+            facts["Target_Distance"] = world::horizontal_distance(creature->position, goal->position);
+            facts["Target_Vitals_State"] = goal->kind == world::EntityKind::player && goal->life.dead ? "dead" : "alive";
+        }
+        reply["blackboard"]["facts"] = facts;
+        return json_reply(200, reply.dump());
+    };
+}
+
+WorldCommand reload_creature_trees(const std::string&, const Arguments&, CreatureReach, service::HttpResponse& refusal) {
+    if (!harness_gate()) {
+        refusal = message(403, "the reload of the behavior trees is a harness command: the backend needs SOULWARDEN_HARNESS=1");
+        return {};
+    }
+    return [](world::World& target) {
+        world::tree::LoadReport report;
+        const bool loaded = target.creatures().behavior().reload_trees(target.options().behaviorDirectory, report);
+        log::write("world: command: the behavior trees again (%zu tree(s), %zu file(s) refused)", report.loaded.size(), report.refused.size());
+        return json_reply(loaded ? 200 : 500, json{{"loaded", report.loaded},
+                                                   {"refused", report.refused},
+                                                   {"folder", !target.options().behaviorDirectory.empty()}}
+                                                  .dump());
+    };
+}
+
 WorldCommand move_creature_anchor(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                   service::HttpResponse& refusal) {
     const auto id = creature_id(arguments);

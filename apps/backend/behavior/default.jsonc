@@ -1,0 +1,25 @@
+// The tree of each creature (stage BT1). It has the behavior of the stages 3.4b to 3.4f-D with no change: a creature with a target
+// fights (the subtree default/fight), a creature at rest roams (its patrol or its wander). The engine (world/behavior.h) runs a creature
+// on its way back, and it holds a creature that a stun, a knockdown, a stagger, a forced movement, the hit stun, or an action that plays
+// holds: the tree does not run in these steps. Format: docs/systems/creature-behavior.md, section "Behavior trees".
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "default",
+  "root": {
+    "node": "selector",
+    "children": [
+      {
+        "node": "sequence",
+        "name": "fight",
+        "children": [
+          { "node": "in_fight" },
+          { "node": "subtree", "tree": "default/fight" }
+        ]
+      },
+      // A creature at rest near a character: its patrol route (game data) or its wander (game data). The leaf fails for a creature that
+      // is not at rest, and it waits by the rules of the roam (the wait at a waypoint, a hold, a root, the hit stun).
+      { "node": "roam" }
+    ]
+  }
+}

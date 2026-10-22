@@ -804,6 +804,17 @@ int main(int argc, char** argv) {
     worldOptions.navigationData = &navigationData;
     worldOptions.navigationThread = true;
     worldOptions.creatureBehavior = options.creatureBehavior;
+    // The behavior trees of a development run (stage BT1): a folder whose tree files replace the trees of the program, and the reload
+    // route reads it again. Only with --dev-commands (the harness gate): a start of the user has the trees of the program.
+    if (const char* folder = std::getenv("SOULWARDEN_BEHAVIOR_DIR"); folder != nullptr && *folder != '\0') {
+        if (options.devCommands) {
+            worldOptions.behaviorDirectory = folder;
+            log::write("backend: the behavior tree files of the folder SOULWARDEN_BEHAVIOR_DIR replace the trees of the program "
+                       "(a development run)");
+        } else {
+            log::write("backend: SOULWARDEN_BEHAVIOR_DIR is not used: it needs --dev-commands (a development run)");
+        }
+    }
     // The random numbers of the world (the wander of the creatures): a different sequence in each start.
     worldOptions.randomSeed = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     world::World world(clock, store, appearanceTables, worldOptions);

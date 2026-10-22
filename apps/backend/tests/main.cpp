@@ -1,7 +1,7 @@
 // Test program of the backend. It runs the game server with made-up clients: no socket, no
 // game process, and a database in memory.
 //
-// Usage: soulwarden-backend-tests --golden-dir DIR [--work-dir DIR] [--write-golden] [--list] [CASE ...]
+// Usage: soulwarden-backend-tests --golden-dir DIR [--work-dir DIR] [--write-golden] [--write-trace] [--list] [CASE ...]
 // Status 0: each case passed. tools/test-soulwarden-backend.sh builds and runs this program.
 
 #include <cstdio>
@@ -44,10 +44,12 @@ int main(int argc, char** argv) {
             options.workDirectory = argv[++index];
         } else if (argument == "--write-golden") {
             options.writeGolden = true;
+        } else if (argument == "--write-trace") {
+            options.writeTrace = true;
         } else if (argument == "--list") {
             list = true;
         } else if (argument.rfind("--", 0) == 0) {
-            std::fprintf(stderr, "usage: soulwarden-backend-tests --golden-dir DIR [--work-dir DIR] [--write-golden] [--list] [CASE ...]\n");
+            std::fprintf(stderr, "usage: soulwarden-backend-tests --golden-dir DIR [--work-dir DIR] [--write-golden] [--write-trace] [--list] [CASE ...]\n");
             return 2;
         } else {
             selected.push_back(argument);

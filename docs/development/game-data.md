@@ -433,6 +433,14 @@ backend. The tool of each system is also in the document of that system.
   table, a table with rows and no id column, and two NPC or topic ids with one CRC-32. The build: 1,478 NPC rows, 3,429 states, 556
   topics; 1.5 MB, 10 s. Without the file the backend starts, and a person has no conversation state.
 
+- The behavior trees of the creatures (stage BT1, [Creature behavior](../systems/creature-behavior.md), section "Behavior trees") are
+  project data, not game data: the files `apps/backend/behavior/*.jsonc` of the repository (the default tree `default` and its subtree
+  `default/fight`, format 1, JSON with comments; the JSON Schema `tree.schema.json`). The build puts their text into the program: the
+  backend has its trees with no file of the game data folder, and `tools/release.sh` takes nothing new. The game files have no server
+  tree (research BT0): each slice names its tree, and the client has no such file. A development run can give a folder of tree files
+  (`SOULWARDEN_BEHAVIOR_DIR`, only with `--dev-commands`) whose trees replace the trees of the program with the same name; a file that is
+  not correct is refused with one log line, and the tree of the program stays.
+
 ## Commands
 
 ```sh

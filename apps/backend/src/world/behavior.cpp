@@ -83,7 +83,10 @@ float angle_to(const state::WorldPosition& from, float yaw, const state::WorldPo
     return turn_between(yaw_to(from, to), yaw);
 }
 
-Behavior::Behavior(World& world, Creatures& creatures) : m_world(world), m_creatures(creatures) {}
+Behavior::Behavior(World& world, Creatures& creatures) : m_world(world), m_creatures(creatures) {
+    tree::LoadReport report;
+    (void)reload_trees(m_world.options().behaviorDirectory, report);
+}
 
 void Behavior::set_ignored(const std::string& characterId, bool ignored) {
     if (ignored) {
@@ -144,6 +147,7 @@ void Behavior::made(Entity& creature) {
     mind.walks = false;
     mind.groundKnown = false;
     (void)can_walk(creature);
+    bind(creature);
 }
 
 bool Behavior::can_walk(Entity& creature) {
@@ -226,17 +230,17 @@ bool Behavior::sheltered(const Entity& character) const {
     return m_world.clock().now() < character.life.shelterUntil;
 }
 
-std::uint32_t Behavior::next_attack(const Creature& creature) {
+std::uint32_t Behavior::next_attack(const Creature& creature, std::uint32_t lightBeforeHeavy) {
     const gamedata::CreatureSlice& body = *creature.body;
     const std::uint32_t count = creature.mind.attacks;
     if (body.lightAttacks.empty() || body.heavyAttacks.empty()) {
         return static_cast<std::uint32_t>(count % body.attacks.size());
     }
-    // A cycle: `kLightAttacks` light attacks, then one heavy attack.
-    const std::uint32_t cycle = count / (behavior_rules::kLightAttacks + 1);
-    const std::uint32_t place = count % (behavior_rules::kLightAttacks + 1);
-    if (place < behavior_rules::kLightAttacks) {
-        return body.lightAttacks[(cycle * behavior_rules::kLightAttacks + place) % body.lightAttacks.size()];
+    // A cycle: `lightBeforeHeavy` light attacks, then one heavy attack.
+    const std::uint32_t cycle = count / (lightBeforeHeavy + 1);
+    const std::uint32_t place = count % (lightBeforeHeavy + 1);
+    if (place < lightBeforeHeavy) {
+        return body.lightAttacks[(cycle * lightBeforeHeavy + place) % body.lightAttacks.size()];
     }
     return body.heavyAttacks[cycle % body.heavyAttacks.size()];
 }
@@ -409,9 +413,15 @@ void Behavior::step(float seconds) {
         }
         ++m_counts.creatureSteps;
         if (creature->creature.mind.mode == CreatureMode::home) {
+            // The way back is a rule of the engine: no node of the tree runs in this step.
+            CreatureBrain& brain = creature->creature.mind.brain;
+            brain.at = m_world.clock().now();
+            brain.cause = StepCause::way_back;
+            brain.decided = 0;
+            std::fill(brain.last.begin(), brain.last.end(), std::uint8_t{0});
             go_home(*creature, seconds);
         } else {
-            think(*creature, seconds);
+            decide(*creature, seconds);
         }
     }
     // The roam of the creatures at rest near a character.
@@ -428,7 +438,7 @@ void Behavior::step(float seconds) {
             continue;
         }
         ++m_counts.roamSteps;
-        roam(*creature, seconds);
+        run_tree(*creature, seconds);
     }
 }
 
@@ -513,113 +523,121 @@ bool Behavior::hit_stunned(Entity& creature, WorldClock::time_point now) {
     return false;
 }
 
-void Behavior::think(Entity& creature, float seconds) {
+StepCause Behavior::engine_holds(Entity& creature, WorldClock::time_point now) {
     CreatureMind& mind = creature.creature.mind;
-    const gamedata::CreatureSlice& body = *creature.creature.body;
-    const WorldClock::time_point now = m_world.clock().now();
     // A stun or a knockdown of an ability holds the creature: no movement and no attack (stage
     // 3.3a). It keeps its target. A forced movement (a pull, a push; stage 3.3b-S4) moves it: the
     // behavior waits for its end.
     if (creature.creature.held(now) || creature.creature.held_by_force()) {
-        return;
+        return StepCause::held;
     }
     // The hit stun of the last hit (user test 2, UT2-9: HitStun_AI of the damage row): the reaction plays; no step, no turn, no attack.
     if (hit_stunned(creature, now)) {
-        return;
+        return StepCause::hit_stun;
     }
     if (mind.attack || mind.shooting) {
         // An attack or a shot plays: the creature stays at its place and keeps its direction to its end.
         if (now < mind.attackEnds) {
-            return;
+            return StepCause::action;
         }
-        const bool heavy = mind.attack && body.attacks[*mind.attack].heavy;
         const bool shot = mind.shooting;
         mind.attack.reset();
         mind.shooting = false;
-        mind.ready = now + (heavy ? behavior_rules::kHeavyPause : behavior_rules::kAttackPause);
-        // After a shot its own ready time holds for the next shot (kShotRepeat), and the pause for a melee attack. After a melee attack the
-        // next shot waits for its pause too.
+        // The pause of the node that started the action (its `pause`, or the `heavy_pause` of a heavy melee attack; stage BT1).
+        mind.ready = now + mind.actionPause;
+        // After a shot its own ready time holds for the next shot (the repeat of its band), and the pause for a melee attack. After a
+        // melee attack the next shot waits for its pause too.
         if (!shot) {
             mind.shotReady = std::max(mind.shotReady, mind.ready);
         }
     }
-    Entity* target = fightable(mind.target);
+    return StepCause::tree;
+}
+
+void Behavior::decide(Entity& creature, float seconds) {
+    CreatureBrain& brain = creature.creature.mind.brain;
+    const WorldClock::time_point now = m_world.clock().now();
+    brain.at = now;
+    brain.decided = 0;
+    brain.cause = engine_holds(creature, now);
+    if (brain.cause != StepCause::tree) {
+        std::fill(brain.last.begin(), brain.last.end(), std::uint8_t{0});
+        return;
+    }
+    run_tree(creature, seconds);
+}
+
+bool Behavior::keep_target(Entity& creature, float loseDistance) {
+    CreatureMind& mind = creature.creature.mind;
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    Entity* target = step_target(creature);
     if (target == nullptr) {
         const Entity* gone = mind.target != 0 ? m_world.find(mind.target) : nullptr;
         lose_target(creature, gone == nullptr                     ? "the target left the world"
                               : gone->kind == EntityKind::spell   ? "the summon ends"
                               : gone->life.dead                   ? "the target is dead"
                                                                   : "the creatures ignore the target");
-        return;
+        return false;
     }
     const gamedata::CreatureBehavior& values = *body.behavior;
     // The leash is a distance from the anchor: the place where the creature took its target.
     const float fromAnchor = horizontal_distance(creature.position, mind.anchor);
     if (fromAnchor > leash_of(values)) {
         lose_target(creature, "the creature is at the end of its leash");
-        return;
+        return false;
     }
     const float away = horizontal_distance(creature.position, target->position);
     const bool walks = can_walk(creature);
-    // A root of an ability keeps the creature at its place: it turns and attacks in its reach.
-    const bool rooted = creature.creature.rooted(now);
-    const float farthest = walks ? behavior_rules::kLoseDistance
-                                 : (values.combatDistance > 0.0F ? values.combatDistance : behavior_rules::kDefaultCombatSight);
+    const float farthest = walks ? loseDistance : (values.combatDistance > 0.0F ? values.combatDistance : behavior_rules::kDefaultCombatSight);
     if (away > farthest) {
         lose_target(creature, "the target is too far");
-        return;
+        return false;
     }
-    // A status action of the slice (stage 3.4f-D): its heal at low health, its buff when it does not have it. The target is each target of a
-    // fight, also a summon (code review of stage 3.4f-D, finding SU-R6): the action has no recipient but the creature.
-    if (!body.statusActions.empty() && think_status(creature, *target)) {
-        return;
-    }
-    // An area attack (stage 3.4f-C) at a character: in the CastDistance of its spell, with a free line, when it is ready.
-    if (!body.areas.empty() && target->kind == EntityKind::player && think_area(creature, *target, seconds)) {
-        return;
-    }
-    // The basic shot of an archer (stage 3.4f-A) at a character: the band, the release, the walk back. Its melee attack wins in its
-    // reach (think_shot gives false).
-    if (body.basicShot && target->kind == EntityKind::player && think_shot(creature, *target, *body.basicShot, seconds)) {
-        return;
-    }
-    if (body.attacks.empty()) {
-        turn_to(creature, target->position); // A creature with only a shot and a target that it cannot shoot (a summon).
-        return;
-    }
+    return true;
+}
+
+void Behavior::melee(Entity& creature, Entity& target, float seconds, const MeleeValues& values) {
+    CreatureMind& mind = creature.creature.mind;
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    const WorldClock::time_point now = m_world.clock().now();
+    const gamedata::CreatureBehavior& data = *body.behavior;
+    const float away = horizontal_distance(creature.position, target.position);
+    const bool walks = can_walk(creature);
+    // A root of an ability keeps the creature at its place: it turns and attacks in its reach.
+    const bool rooted = creature.creature.rooted(now);
     // The next attack of the slice: its light attacks in their sequence, and its heavy attacks between them.
-    const std::uint32_t attackIndex = next_attack(creature.creature);
+    const std::uint32_t attackIndex = next_attack(creature.creature, values.lightBeforeHeavy);
     const gamedata::CreatureAttack& attack = body.attacks[attackIndex];
     const float reach = attack.contacts.front().reach;
     // A creature that walks goes some distance into the reach of its attack. A creature that does
     // not leave its place attacks a target that is in the reach.
     const float stop = walks && !rooted ? std::max(reach - behavior_rules::kReachMargin, behavior_rules::kNearest) : reach;
-    const bool level = std::fabs(creature.position.z - target->position.z) <= behavior_rules::kContactHeight;
+    const bool level = std::fabs(creature.position.z - target.position.z) <= behavior_rules::kContactHeight;
     const bool near = away <= stop + 0.05F && level;
     // A wall between the creature and its target stops the attack too: the creature then goes on its path.
-    const bool sees = (near || away - stop < values.runSpeed * seconds + behavior_rules::kCrowdRange || away <= reach) && level
-                      && m_world.navigation().sees(creature.position, target->position);
+    const bool sees = (near || away - stop < data.runSpeed * seconds + behavior_rules::kCrowdRange || away <= reach) && level
+                      && m_world.navigation().sees(creature.position, target.position);
     if (near && sees) {
-        turn_to(creature, target->position);
+        turn_to(creature, target.position);
         if (now >= mind.ready) {
-            start_attack(creature, *target, attackIndex);
+            start_attack(creature, target, attackIndex, values);
         }
         return;
     }
     if (!walks || rooted) {
-        turn_to(creature, target->position);
+        turn_to(creature, target.position);
         return;
     }
     // One step on the path to the target. The navigation gives the place and the height of its
     // floor. The step ends where the target is in the reach, when the line to the target is free.
     // A slow of an ability lowers the speed (Creature::speed_factor).
-    float way = values.runSpeed * seconds * creature.creature.speed_factor(now);
+    float way = data.runSpeed * seconds * creature.creature.speed_factor(now);
     if (sees && away - stop < way + behavior_rules::kCrowdRange) {
         // The last steps, on the free line to the target. The step ends where the target is in
         // the reach. A different creature at its end makes it shorter: the creature then
         // attacks from its place when the target is in the reach of the attack.
         const float wanted = std::min(way, std::max(away - stop, 0.05F));
-        way = free_way(creature, *target, wanted);
+        way = free_way(creature, target, wanted);
         if (way < wanted) {
             ++m_counts.crowded;
             if (way <= 0.05F) {
@@ -627,12 +645,12 @@ void Behavior::think(Entity& creature, float seconds) {
                 // and for a different creature (one with no target, a kind that does not fight)
                 // for `kCrowdPatience` steps; then it goes past it (code review of stage 3.4d,
                 // finding F7: two creatures waited for each other for all time).
-                const Entity* other = blocker(creature, *target, wanted);
+                const Entity* other = blocker(creature, target, wanted);
                 if (other == nullptr || other->creature.mind.target == mind.target || mind.blockedSteps < behavior_rules::kCrowdPatience) {
                     ++mind.blockedSteps;
-                    turn_to(creature, target->position);
+                    turn_to(creature, target.position);
                     if (away <= reach && now >= mind.ready) {
-                        start_attack(creature, *target, attackIndex);
+                        start_attack(creature, target, attackIndex, values);
                     }
                     return;
                 }
@@ -641,13 +659,13 @@ void Behavior::think(Entity& creature, float seconds) {
         }
     }
     // The way to the target, or to the place nearest to it when it has no way (`nearest`).
-    NavStep next = m_world.navigation().next_step(creature.id, creature.position, target->position, way, true);
+    NavStep next = m_world.navigation().next_step(creature.id, creature.position, target.position, way, true);
     // A different creature at the end of the step: a shorter step, so that the creatures of a
     // queue stand near each other.
     for (float shorter = way * 0.5F; next.kind == StepKind::moved && shorter >= 0.2F && taken(creature, next.position) != nullptr;
          shorter *= 0.5F) {
         m_world.navigation().take_back(creature.id);
-        next = m_world.navigation().next_step(creature.id, creature.position, target->position, shorter, true);
+        next = m_world.navigation().next_step(creature.id, creature.position, target.position, shorter, true);
     }
     // The wait at the place nearest to a target with no way: its time starts when the creature
     // is at that place (the end of its path, or no step nearer), not at the first step of the
@@ -661,10 +679,10 @@ void Behavior::think(Entity& creature, float seconds) {
                        "there with it (%.1f m)",
                        id_number(creature.id),
                        creature.creature.kind->id.c_str(),
-                       target->name.c_str(),
+                       target.name.c_str(),
                        static_cast<double>(away));
         } else if (now >= *mind.holdUntil) {
-            no_way(creature, *target);
+            no_way(creature, target);
             return;
         }
     } else if (next.kind == StepKind::moved) {
@@ -681,9 +699,9 @@ void Behavior::think(Entity& creature, float seconds) {
             m_world.navigation().take_back(creature.id);
             ++mind.blockedSteps;
             ++m_counts.crowded;
-            turn_to(creature, target->position);
+            turn_to(creature, target.position);
             if (sees && away <= reach && now >= mind.ready) {
-                start_attack(creature, *target, attackIndex);
+                start_attack(creature, target, attackIndex, values);
             }
             break;
         }
@@ -696,22 +714,22 @@ void Behavior::think(Entity& creature, float seconds) {
         break;
     case StepKind::waiting:
         // The navigation data of the place is not there yet, or the path search of the creature waits.
-        turn_to(creature, target->position);
+        turn_to(creature, target.position);
         break;
     case StepKind::arrived:
     case StepKind::noWay:
         // The end of the path, and the target is not in the reach: the target is at a place with
         // no way to it. The creature waits at its place (the place nearest to the target), turns
         // to it, and attacks it when it comes into the reach.
-        turn_to(creature, target->position);
-        if (away <= reach && level && now >= mind.ready && m_world.navigation().sees(creature.position, target->position)) {
-            start_attack(creature, *target, attackIndex);
+        turn_to(creature, target.position);
+        if (away <= reach && level && now >= mind.ready && m_world.navigation().sees(creature.position, target.position)) {
+            start_attack(creature, target, attackIndex, values);
         }
         break;
     case StepKind::noGround:
         mind.walks = false;
         mind.groundKnown = true;
-        turn_to(creature, target->position);
+        turn_to(creature, target.position);
         break;
     }
 }
@@ -1114,7 +1132,7 @@ void Behavior::next_waypoint(CreatureMind& mind, const gamedata::PatrolRoute& ro
     }
 }
 
-void Behavior::start_attack(Entity& creature, Entity& target, std::uint32_t attackIndex) {
+void Behavior::start_attack(Entity& creature, Entity& target, std::uint32_t attackIndex, const MeleeValues& values) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const gamedata::CreatureAttack& attack = body.attacks[attackIndex];
@@ -1124,13 +1142,14 @@ void Behavior::start_attack(Entity& creature, Entity& target, std::uint32_t atta
     mind.sentYaw = creature.creature.yaw;
     const std::chrono::milliseconds length = milliseconds(attack.length);
     if (!m_creatures.start_action(creature, attack.action, length)) {
-        mind.ready = now + behavior_rules::kAttackPause;
+        mind.ready = now + values.pause;
         return;
     }
     m_world.health().fought(target);
     if (mind.holdUntil) {
         mind.holdUntil = now + behavior_rules::kNoWayHold; // A fight at the place nearest to the target goes on.
     }
+    mind.actionPause = attack.heavy ? values.heavyPause : values.pause;
     mind.attack = attackIndex;
     mind.attackGeneration = creature.creature.action->generation;
     mind.attackEnds = now + length;
@@ -1207,26 +1226,39 @@ void Behavior::contact(const PendingContact& pending) {
     m_world.health().creature_hit(*creature, data, *target);
 }
 
-Behavior::ShotBand Behavior::band_of(const gamedata::CreatureSlice& body) {
-    if (body.caster) {
-        return ShotBand{behavior_rules::kCastFar, behavior_rules::kCastHold, behavior_rules::kCastNear, behavior_rules::kCastMiddle,
-                        behavior_rules::kCastRepeat};
-    }
-    return ShotBand{behavior_rules::kShotFar, behavior_rules::kShotHold, behavior_rules::kShotNear, behavior_rules::kShotMiddle,
-                    behavior_rules::kShotRepeat};
+Behavior::MeleeValues Behavior::melee_values(const float* values) {
+    return MeleeValues{static_cast<std::uint32_t>(values[tree::param::kLightBeforeHeavy]), milliseconds(values[tree::param::kMeleePause]),
+                       milliseconds(values[tree::param::kHeavyPause])};
 }
 
-bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, float seconds) {
+Behavior::ShotValues Behavior::shot_values(const gamedata::CreatureSlice& body, const float* values, std::uint32_t lightBeforeHeavy) {
+    // The band of a caster for a slice whose basic shot is a cast (stage 3.4f-B), else the band of an archer.
+    const float* band = values + (body.caster ? tree::param::kCaster : tree::param::kArcher);
+    return ShotValues{ShotBand{band[tree::param::kBandFar], band[tree::param::kBandHold], band[tree::param::kBandNear],
+                               band[tree::param::kBandMiddle], milliseconds(band[tree::param::kBandRepeat])},
+                      milliseconds(values[tree::param::kRetreatPause]), milliseconds(values[tree::param::kShotPause]), lightBeforeHeavy};
+}
+
+Behavior::AreaValues Behavior::area_values(const float* values) {
+    return AreaValues{milliseconds(values[tree::param::kAreaRepeat]), milliseconds(values[tree::param::kAreaOnlyRepeat]),
+                      values[tree::param::kAreaHoldMargin], milliseconds(values[tree::param::kAreaPause])};
+}
+
+Behavior::StatusValues Behavior::status_values(const float* values) {
+    return StatusValues{milliseconds(values[tree::param::kStatusRepeat]), milliseconds(values[tree::param::kStatusPause])};
+}
+
+bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, float seconds, const ShotValues& shotValues) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const gamedata::CreatureBehavior& values = *body.behavior;
     const WorldClock::time_point now = m_world.clock().now();
-    const ShotBand band = band_of(body);
+    const ShotBand& band = shotValues.band;
     const float away = horizontal_distance(creature.position, target.position);
     const float rise = std::fabs(creature.position.z - target.position.z);
     // The melee attack wins in its reach (research creature-ranged.md Q3, the first option): the next melee attack of the slice.
     if (!body.attacks.empty()) {
-        const gamedata::CreatureAttack& melee = body.attacks[next_attack(creature.creature)];
+        const gamedata::CreatureAttack& melee = body.attacks[next_attack(creature.creature, shotValues.lightBeforeHeavy)];
         if (away <= melee.contacts.front().reach + behavior_rules::kContactTolerance && rise <= behavior_rules::kContactHeight) {
             mind.retreating = false;
             return false;
@@ -1234,10 +1266,10 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
     }
     const bool walks = can_walk(creature) && !creature.creature.rooted(now);
     const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position);
-    // A creature that walks into its band from farther walks on to the hold distance (kShotHold, kCastHold: some steps of the target
+    // A creature that walks into its band from farther walks on to the hold distance (`hold` of its band: some steps of the target
     // need no new walk; stage 3.4f-B, the rule of the research Q3 that the code of stage 3.4f-A did not keep: it stopped at the edge).
     const bool inBand = sees && away <= (mind.closing && walks ? band.hold : band.outer);
-    // The walk back to the middle of the band: on a path, inside the leash, one time in kRetreatPause.
+    // The walk back to the middle of the band: on a path, inside the leash, one time in the retreat pause of the node.
     if (inBand && walks && !mind.retreating && away < band.inner && now >= mind.retreatPauseUntil) {
         mind.retreating = true;
         m_world.navigation().forget(creature.id);
@@ -1271,9 +1303,9 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
             return true;
         }
         // At the middle, at the end of the leash, or no path back: the creature shoots from its place, and does not walk back again for
-        // kRetreatPause.
+        // the retreat pause.
         mind.retreating = false;
-        mind.retreatPauseUntil = now + behavior_rules::kRetreatPause;
+        mind.retreatPauseUntil = now + shotValues.retreatPause;
         m_world.navigation().forget(creature.id);
     }
     if (inBand) {
@@ -1284,7 +1316,7 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
         // stage 3.4f-B, finding CS-R4).
         const bool shown = spawn_lead_over(creature, now);
         if (now >= mind.shotReady && shown) {
-            start_shot(creature, target, shot);
+            start_shot(creature, target, shot, shotValues);
         }
         return true;
     }
@@ -1292,7 +1324,7 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
         turn_to(creature, target.position);
         return true;
     }
-    // Farther than the band, or no free line: the walk to the target on its path, to kShotHold with a free line.
+    // Farther than the band, or no free line: the walk to the target on its path, to the hold distance with a free line.
     mind.closing = true;
     walk_to(creature, target, band.hold, sees, away, seconds);
     return true;
@@ -1343,7 +1375,7 @@ void Behavior::walk_to(Entity& creature, Entity& target, float hold, bool sees, 
     turn_to(creature, target.position);
 }
 
-void Behavior::start_shot(Entity& creature, Entity& target, std::uint32_t shot) {
+void Behavior::start_shot(Entity& creature, Entity& target, std::uint32_t shot, const ShotValues& values) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const gamedata::CreatureRangedAttack& attack = body.ranged[shot];
@@ -1353,7 +1385,7 @@ void Behavior::start_shot(Entity& creature, Entity& target, std::uint32_t shot) 
     mind.sentYaw = creature.creature.yaw;
     const std::chrono::milliseconds length = milliseconds(attack.length);
     if (!m_creatures.start_action(creature, attack.action, length)) {
-        mind.shotReady = now + behavior_rules::kAttackPause;
+        mind.shotReady = now + values.pause;
         return;
     }
     m_world.health().fought(target);
@@ -1361,9 +1393,10 @@ void Behavior::start_shot(Entity& creature, Entity& target, std::uint32_t shot) 
         mind.holdUntil = now + behavior_rules::kNoWayHold;
     }
     mind.shooting = true;
+    mind.actionPause = values.pause;
     mind.attackGeneration = creature.creature.action->generation;
     mind.attackEnds = now + length;
-    mind.shotReady = std::max(now + band_of(body).repeat, mind.attackEnds);
+    mind.shotReady = std::max(now + values.band.repeat, mind.attackEnds);
     ++mind.attacks;
     ++m_counts.shots;
     for (std::uint32_t index = 0; index < attack.releases.size(); ++index) {
@@ -1394,7 +1427,8 @@ bool Behavior::command_shot(Entity& creature, EntityId target) {
     if (mind.mode != CreatureMode::fight || mind.target != character->id) {
         take_target(creature, *character, "a command shot", horizontal_distance(creature.position, character->position));
     }
-    start_shot(creature, *character, *body.basicShot);
+    start_shot(creature, *character, *body.basicShot,
+               shot_values(body, command_values(creature, tree::NodeKind::basic_shot), cadence_of(creature)));
     return mind.shooting;
 }
 
@@ -1514,7 +1548,7 @@ std::vector<std::uint32_t> Behavior::usable_areas(const gamedata::CreatureSlice&
     return usable;
 }
 
-bool Behavior::think_area(Entity& creature, Entity& target, float seconds) {
+bool Behavior::think_area(Entity& creature, Entity& target, float seconds, const AreaValues& values) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const std::vector<std::uint32_t> usable = usable_areas(body);
@@ -1529,7 +1563,7 @@ bool Behavior::think_area(Entity& creature, Entity& target, float seconds) {
     const float away = horizontal_distance(creature.position, target.position);
     const float rise = std::fabs(creature.position.z - target.position.z);
     const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position);
-    const float hold = std::max(range - behavior_rules::kAreaHoldMargin, behavior_rules::kNearest);
+    const float hold = std::max(range - values.holdMargin, behavior_rules::kNearest);
     const bool inRange = sees && away <= (mind.closing && only ? hold : range);
     // The pause after the last attack: the pause of a melee attack (mind.ready), or the repeat of the basic shot (mind.shotReady) when it
     // ends first. Else the shot of a creature with a basic shot always comes first, and its area attack does not come again (live run
@@ -1538,7 +1572,7 @@ bool Behavior::think_area(Entity& creature, Entity& target, float seconds) {
     if (inRange) {
         if (now >= mind.areaReady && rested && spawn_lead_over(creature, now)) {
             mind.closing = false;
-            start_area(creature, target, area);
+            start_area(creature, target, area, values);
             return mind.shooting;
         }
         if (only) {
@@ -1555,13 +1589,13 @@ bool Behavior::think_area(Entity& creature, Entity& target, float seconds) {
         turn_to(creature, target.position);
         return true;
     }
-    // Farther than the CastDistance, or no free line: the walk to the target on its path, to kAreaHoldMargin inside the CastDistance.
+    // Farther than the CastDistance, or no free line: the walk to the target on its path, to the hold margin inside the CastDistance.
     mind.closing = true;
     walk_to(creature, target, hold, sees, away, seconds);
     return true;
 }
 
-void Behavior::start_area(Entity& creature, Entity& target, std::uint32_t index) {
+void Behavior::start_area(Entity& creature, Entity& target, std::uint32_t index, const AreaValues& values) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const gamedata::CreatureAreaAttack& area = body.areas[index];
@@ -1570,7 +1604,7 @@ void Behavior::start_area(Entity& creature, Entity& target, std::uint32_t index)
     mind.sentYaw = creature.creature.yaw;
     const std::chrono::milliseconds length = milliseconds(area.length);
     if (!m_creatures.start_action(creature, area.action, length)) {
-        mind.areaReady = now + behavior_rules::kAttackPause;
+        mind.areaReady = now + values.pause;
         return;
     }
     m_world.health().fought(target);
@@ -1579,10 +1613,11 @@ void Behavior::start_area(Entity& creature, Entity& target, std::uint32_t index)
     }
     // The action plays to its end as the action of a shot (no step, no turn, no other attack in it).
     mind.shooting = true;
+    mind.actionPause = values.pause;
     mind.attackGeneration = creature.creature.action->generation;
     mind.attackEnds = now + length;
     const bool only = body.attacks.empty() && !body.basicShot;
-    mind.areaReady = std::max(now + (only ? behavior_rules::kAreaOnlyRepeat : behavior_rules::kAreaRepeat), mind.attackEnds);
+    mind.areaReady = std::max(now + (only ? values.onlyRepeat : values.repeat), mind.attackEnds);
     ++mind.nextArea;
     ++mind.attacks;
     ++m_counts.areaAttacks;
@@ -1613,7 +1648,7 @@ bool Behavior::command_area(Entity& creature, EntityId target) {
     if (mind.mode != CreatureMode::fight || mind.target != character->id) {
         take_target(creature, *character, "a command area attack", horizontal_distance(creature.position, character->position));
     }
-    start_area(creature, *character, usable[mind.nextArea % usable.size()]);
+    start_area(creature, *character, usable[mind.nextArea % usable.size()], area_values(command_values(creature, tree::NodeKind::area_attack)));
     return mind.shooting;
 }
 
@@ -1780,7 +1815,7 @@ bool Behavior::wants(const Entity& creature, const gamedata::CreatureStatusActio
     return low && creature.vitals.healthMax > 0.0F && creature.vitals.health <= *low * creature.vitals.healthMax;
 }
 
-bool Behavior::think_status(Entity& creature, Entity& target) {
+bool Behavior::think_status(Entity& creature, Entity& target, const StatusValues& values) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const WorldClock::time_point now = m_world.clock().now();
@@ -1791,29 +1826,30 @@ bool Behavior::think_status(Entity& creature, Entity& target) {
     for (std::uint32_t index = 0; index < body.statusActions.size(); ++index) {
         if (wants(creature, body.statusActions[index])) {
             turn_to(creature, target.position);
-            start_status_action(creature, index);
+            start_status_action(creature, index, values);
             return mind.shooting;
         }
     }
     return false;
 }
 
-void Behavior::start_status_action(Entity& creature, std::uint32_t index) {
+void Behavior::start_status_action(Entity& creature, std::uint32_t index, const StatusValues& values) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const gamedata::CreatureStatusAction& action = body.statusActions[index];
     const WorldClock::time_point now = m_world.clock().now();
     const std::chrono::milliseconds length = milliseconds(action.length);
     if (!m_creatures.start_action(creature, action.action, length)) {
-        mind.statusReady = now + behavior_rules::kAttackPause;
+        mind.statusReady = now + values.pause;
         return;
     }
     // The action plays to its end as the action of a shot (no step, no turn, no other attack in it).
     mind.shooting = true;
+    mind.actionPause = values.pause;
     mind.attack.reset();
     mind.attackGeneration = creature.creature.action->generation;
     mind.attackEnds = now + length;
-    mind.statusReady = std::max(now + behavior_rules::kStatusRepeat, mind.attackEnds);
+    mind.statusReady = std::max(now + values.repeat, mind.attackEnds);
     ++m_counts.statusActions;
     for (std::uint32_t mark = 0; mark < action.marks.size(); ++mark) {
         m_statusMarks.emplace(now + milliseconds(action.marks[mark].time), PendingStatus{creature.id, mind.attackGeneration, index, mark});
@@ -1856,11 +1892,236 @@ bool Behavior::command_status_action(Entity& creature, std::string_view action) 
     }
     for (std::uint32_t index = 0; index < body.statusActions.size(); ++index) {
         if (action.empty() || body.actions[body.statusActions[index].action].name == action) {
-            start_status_action(creature, index);
+            start_status_action(creature, index, status_values(command_values(creature, tree::NodeKind::status_action)));
             return creature.creature.mind.shooting;
         }
     }
     return false;
 }
+
+// ---- the trees (stage BT1) --------------------------------------------------------------------------------------------------------
+
+bool Behavior::reload_trees(const std::string& folder, tree::LoadReport& report) {
+    tree::TreeSet trees;
+    const bool loaded = trees.load(folder, report);
+    for (const std::string& refused : report.refused) {
+        log::write("world: behavior tree refused: %s", refused.c_str());
+    }
+    if (!loaded) {
+        // A set with no tree "default" (an embedded file that is not correct: a fault of the build): the trees of the world stay.
+        log::write("world: the behavior trees have no tree \"default\" that compiles: the trees of the world do not change");
+        if (!m_default) {
+            m_trees = std::move(trees);
+        }
+        return m_default != nullptr;
+    }
+    m_trees = std::move(trees);
+    m_default = m_trees.default_tree();
+    ++m_counts.treeReloads;
+    for (const std::string& loaded : report.loaded) {
+        log::write("world: behavior tree %s", loaded.c_str());
+    }
+    // Each creature of the world gets the new tree: its state (the results of the nodes, the keys) starts again.
+    std::vector<EntityId> creatures;
+    for (const auto& [id, entity] : m_world.entities()) {
+        if (entity.kind == EntityKind::creature) {
+            creatures.push_back(id);
+        }
+    }
+    for (const EntityId id : creatures) {
+        if (Entity* creature = m_creatures.find(id)) {
+            bind(*creature);
+        }
+    }
+    return true;
+}
+
+void Behavior::bind(Entity& creature) {
+    CreatureBrain& brain = creature.creature.mind.brain;
+    brain.tree = m_default;
+    brain.last.assign(m_default ? m_default->nodes.size() : 0, 0);
+    brain.board.clear();
+    if (m_default) {
+        for (const tree::Key& key : m_default->keys) {
+            brain.board.push_back(key.initial);
+        }
+    }
+}
+
+const float* Behavior::command_values(const Entity& creature, tree::NodeKind kind) const {
+    const std::shared_ptr<const tree::CompiledTree>& own = creature.creature.mind.brain.tree;
+    if (own) {
+        if (const float* values = own->first(kind)) {
+            return values;
+        }
+    }
+    return m_default->first(kind);
+}
+
+std::uint32_t Behavior::cadence_of(const Entity& creature) const {
+    const std::shared_ptr<const tree::CompiledTree>& own = creature.creature.mind.brain.tree;
+    return own && own->lightBeforeHeavy != 0 ? own->lightBeforeHeavy : m_default->lightBeforeHeavy;
+}
+
+void Behavior::run_tree(Entity& creature, float seconds) {
+    CreatureBrain& brain = creature.creature.mind.brain;
+    brain.at = m_world.clock().now();
+    brain.decided = 0;
+    if (!brain.tree) {
+        brain.cause = StepCause::no_tree;
+        return;
+    }
+    brain.cause = StepCause::tree;
+    std::fill(brain.last.begin(), brain.last.end(), std::uint8_t{0});
+    ++m_counts.treeSteps;
+    m_stepTarget = StepTarget{};
+    (void)run_node(creature, *brain.tree, 0, seconds);
+    m_stepTarget = StepTarget{};
+}
+
+Entity* Behavior::step_target(const Entity& creature) {
+    const EntityId target = creature.creature.mind.target;
+    if (m_stepTarget.creature != creature.id || m_stepTarget.target != target) {
+        m_stepTarget = StepTarget{creature.id, target, fightable(target)};
+    }
+    return m_stepTarget.entity;
+}
+
+tree::Status Behavior::run_node(Entity& creature, const tree::CompiledTree& tree, std::size_t index, float seconds) {
+    using tree::NodeKind;
+    using tree::Status;
+    const tree::Node& node = tree.nodes[index];
+    const float* values = tree.values(index);
+    CreatureMind& mind = creature.creature.mind;
+    ++m_counts.treeNodes;
+    Status status = Status::failure;
+    const auto leaf = [&](bool done) { return done ? Status::success : Status::failure; };
+    switch (node.kind) {
+    case NodeKind::selector:
+        for (std::size_t child = index + 1; child < node.end; child = tree.nodes[child].end) {
+            status = run_node(creature, tree, child, seconds);
+            if (status != Status::failure) {
+                break;
+            }
+        }
+        break;
+    case NodeKind::sequence:
+        status = Status::success;
+        for (std::size_t child = index + 1; child < node.end; child = tree.nodes[child].end) {
+            status = run_node(creature, tree, child, seconds);
+            if (status != Status::success) {
+                break;
+            }
+        }
+        break;
+    case NodeKind::invert:
+        status = run_node(creature, tree, index + 1, seconds);
+        status = status == Status::success ? Status::failure : status == Status::failure ? Status::success : status;
+        break;
+    case NodeKind::subtree:
+        status = run_node(creature, tree, index + 1, seconds);
+        break;
+    case NodeKind::in_fight:
+        status = leaf(mind.mode == CreatureMode::fight);
+        break;
+    case NodeKind::target_is: {
+        const Entity* target = step_target(creature);
+        status = leaf(target != nullptr
+                      && (values[tree::param::kTargetPlayer] != 0.0F ? target->kind == EntityKind::player : target->kind == EntityKind::spell));
+        break;
+    }
+    case NodeKind::check: {
+        const float value = mind.brain.board[static_cast<std::size_t>(values[tree::param::kCheckKey])];
+        const float other = values[tree::param::kCheckValue];
+        switch (static_cast<tree::Compare>(static_cast<int>(values[tree::param::kCheckOp]))) {
+        case tree::Compare::eq:
+            status = leaf(value == other);
+            break;
+        case tree::Compare::ne:
+            status = leaf(value != other);
+            break;
+        case tree::Compare::lt:
+            status = leaf(value < other);
+            break;
+        case tree::Compare::le:
+            status = leaf(value <= other);
+            break;
+        case tree::Compare::gt:
+            status = leaf(value > other);
+            break;
+        case tree::Compare::ge:
+            status = leaf(value >= other);
+            break;
+        }
+        break;
+    }
+    case NodeKind::set:
+        mind.brain.board[static_cast<std::size_t>(values[tree::param::kSetKey])] = values[tree::param::kSetValue];
+        status = Status::success;
+        break;
+    case NodeKind::keep_target:
+        status = leaf(mind.mode == CreatureMode::fight && keep_target(creature, values[tree::param::kLoseDistance]));
+        break;
+    case NodeKind::status_action: {
+        // The heal at low health or the buff of the slice (stage 3.4f-D). The target is each target of a fight, also a summon (code review
+        // of stage 3.4f-D, finding SU-R6): the action has no recipient but the creature.
+        if (creature.creature.body->statusActions.empty()) {
+            break;
+        }
+        Entity* target = step_target(creature);
+        status = leaf(target != nullptr && think_status(creature, *target, status_values(values)));
+        break;
+    }
+    case NodeKind::area_attack: {
+        // An area attack (stage 3.4f-C) at a character only: in the CastDistance of its spell, with a free line, when it is ready.
+        if (creature.creature.body->areas.empty()) {
+            break;
+        }
+        Entity* target = step_target(creature);
+        status = leaf(target != nullptr && target->kind == EntityKind::player && think_area(creature, *target, seconds, area_values(values)));
+        break;
+    }
+    case NodeKind::basic_shot: {
+        // The basic shot of an archer or a caster (stages 3.4f-A and 3.4f-B) at a character only: the band, the release, the walk back.
+        // Its melee attack wins in its reach (think_shot gives false).
+        const gamedata::CreatureSlice& body = *creature.creature.body;
+        if (!body.basicShot) {
+            break;
+        }
+        Entity* target = step_target(creature);
+        status = leaf(target != nullptr && target->kind == EntityKind::player
+                      && think_shot(creature, *target, *body.basicShot, seconds, shot_values(body, values, cadence_of(creature))));
+        break;
+    }
+    case NodeKind::melee: {
+        Entity* target = creature.creature.body->attacks.empty() ? nullptr : step_target(creature);
+        if (target != nullptr) {
+            melee(creature, *target, seconds, melee_values(values));
+            status = Status::success;
+        }
+        break;
+    }
+    case NodeKind::turn_to_target:
+        // A creature with only a shot and a target that it cannot shoot (a summon).
+        if (const Entity* target = step_target(creature)) {
+            turn_to(creature, target->position);
+            status = Status::success;
+        }
+        break;
+    case NodeKind::roam:
+        if (mind.mode == CreatureMode::rest) {
+            roam(creature, seconds);
+            status = Status::success;
+        }
+        break;
+    }
+    mind.brain.last[index] = static_cast<std::uint8_t>(status);
+    // The leaf that decided the step: the last action leaf that succeeded, or keep_target that lost the target.
+    if (node.kind >= NodeKind::keep_target && node.kind != NodeKind::set && (status == Status::success || node.kind == NodeKind::keep_target)) {
+        mind.brain.decided = static_cast<std::uint8_t>(1 + static_cast<unsigned>(node.kind));
+    }
+    return status;
+}
+
 
 } // namespace soulwarden::backend::world

@@ -1,0 +1,42 @@
+// The fight of a creature with a target (stage BT1): the order of the questions of Behavior::think before the trees (stages 3.4b to
+// 3.4f-D). Each leaf fails when the slice of the creature does not have its ability, and the next child of the selector decides. The
+// values are the values of the namespace behavior_rules before the trees (project rules; the source of each one is in
+// docs/systems/creature-behavior.md). Times in seconds, distances in meters.
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "default/fight",
+  "root": {
+    "node": "sequence",
+    "children": [
+      // The target checks: a target that is gone (dead, left, ignored, the end of a summon), the end of the leash (the combat leash of the
+      // slice from the anchor), a target farther than lose_distance (kLoseDistance; a creature that does not walk: the combat vision
+      // distance of its slice). A lost target ends the step: the creature goes back.
+      { "node": "keep_target", "lose_distance": 60 },
+      {
+        "node": "selector",
+        "children": [
+          // The heal at low health or the buff of the slice (stage 3.4f-D, kStatusRepeat).
+          { "node": "status_action", "repeat": 20, "pause": 1.5 },
+          // The area attack of the slice (stage 3.4f-C: kAreaRepeat, kAreaOnlyRepeat, kAreaHoldMargin). The leaf fails for a target
+          // that is not a character (a summon): an area attack and a shot are only at a character (stage 3.4f-A).
+          { "node": "area_attack", "repeat": 10, "repeat_area_only": 5, "hold_margin": 2, "pause": 1.5 },
+          // The basic shot (stage 3.4f-A: the band kShot*, kRetreatPause; stage 3.4f-B: the band of a caster kCast*). The melee attack
+          // of the slice wins in its reach: the leaf then fails.
+          {
+            "node": "basic_shot",
+            "archer": { "far": 20, "hold": 18, "near": 8, "middle": 14, "repeat": 3 },
+            "caster": { "far": 16, "hold": 14, "near": 6, "middle": 11, "repeat": 2.5 },
+            "retreat_pause": 6,
+            "pause": 1.5
+          },
+          // The melee attacks (stages 3.4b to 3.4e: kLightAttacks, kAttackPause, kHeavyPause), the way to the target, the crowd, and the
+          // wait at the place nearest to a target with no way.
+          { "node": "melee", "light_before_heavy": 3, "pause": 1.5, "heavy_pause": 2.5 },
+          // A creature with no melee attack and a target that it cannot shoot (a summon).
+          { "node": "turn_to_target" }
+        ]
+      }
+    ]
+  }
+}

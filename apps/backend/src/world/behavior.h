@@ -10,6 +10,7 @@
 #include <unordered_set>
 
 #include "gamedata/creature_data.h"
+#include "world/behavior_tree.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/load_meter.h"
@@ -73,10 +74,11 @@
 //           follows the places of the way out (the trail) back; a creature jumps to its anchor
 //           only when no session can observe it.
 //   Shoot.  (stage 3.4f-A) A creature whose slice has the basic shot of an archer (gamedata::kBasicShotAction: the action FireBow
-//           with its release, game data) shoots a character in a band of distances: in kShotFar or less, with a free line, it stands,
-//           turns to the target, and starts the action of the shot when it is ready (kShotRepeat from the start of its last shot, or
-//           the end of that action when later); farther, or with no free line, it walks to the target until kShotHold with a free
-//           line; nearer than kShotNear it walks back to kShotMiddle on a path inside its leash, at most one time in kRetreatPause
+//           with its release, game data) shoots a character in a band of distances (the parameters of the node basic_shot of its
+//           tree): in `far` or less, with a free line, it stands, turns to the target, and starts the action of the shot when it is
+//           ready (`repeat` from the start of its last shot, or the end of that action when later); farther, or with no free line, it
+//           walks to the target until `hold` with a free line; nearer than `near` it walks back to `middle` on a path inside its leash,
+//           at most one time in `retreat_pause`
 //           (with no such path it shoots from its place). Its melee attack wins in its reach: a target in the reach of the next melee
 //           attack of the slice gets the melee attack. The action plays to its end (no other attack, no step, no turn in it). At the
 //           time of the release of the data the shot flies (world/projectiles.h) in the direction of the aim: the place of the target
@@ -96,6 +98,13 @@
 //           the leave distance of its interest (the distance at which a session of that
 //           character can observe it); a different creature stands where it is.
 //
+// The trees (stage BT1, world/behavior_tree.h). The rules above are the engine and the leaves of a tree. The engine holds a creature that
+// a stun, a knockdown, a stagger, a forced movement, the hit stun, or an action that plays holds, and it runs the way back; in each
+// other step of a creature in a fight or at rest the tree of the creature decides (the default tree, apps/backend/behavior/*.jsonc: the
+// order of the rules above, and the values of the bands, the repeats, and the pauses as node parameters). Each leaf calls one rule:
+// keep_target (Back: a target that is gone, the leash, too far), status_action, area_attack, basic_shot (Shoot), melee (Way, Attack,
+// Crowd, No way), turn_to_target, roam (Roam).
+//
 // A creature that stands needs no time: only the creatures of the set `m_active` (a target, the
 // way back) and of the set `m_roaming` (a roam near a character) are in the step, the vision
 // rule runs from the characters, and the roam set comes from the characters too, with the
@@ -112,11 +121,13 @@ namespace behavior_rules {
 inline constexpr std::chrono::milliseconds kStepInterval{200};
 /** A step is not longer than the way of this time: the world clock of a test, or a slow tick, can jump. */
 inline constexpr std::chrono::milliseconds kLongestStep{1000};
-/** The pause between the end of an attack and the next attack of a creature, and the pause after a heavy attack. */
+/**
+ * The pause between the end of an attack and the next attack of a creature, and the pause after a heavy attack: the values of the node
+ * `melee` of the default tree (apps/backend/behavior/default-fight.jsonc; case BT2 checks that the file has them). From stage BT1 the
+ * pause after an action is the parameter of the node that started it (CreatureMind::actionPause); the cases use these names.
+ */
 inline constexpr std::chrono::milliseconds kAttackPause{1500};
 inline constexpr std::chrono::milliseconds kHeavyPause{2500};
-/** A creature with light attacks and heavy attacks makes one heavy attack after this number of light attacks. */
-inline constexpr std::uint32_t kLightAttacks = 3;
 /**
  * A creature does not end a step of its way nearer than `kCrowdDistance` to a different
  * creature, in the last `kCrowdRange` of its way to the reach of its attack (meters).
@@ -146,8 +157,6 @@ inline constexpr float kContactTolerance = 0.3F;
 inline constexpr float kContactHeight = 3.0F;
 /** A contact hurts a target in this angle to each side of the direction of the creature (degrees). */
 inline constexpr float kContactAngle = 70.0F;
-/** A creature loses a target that is farther than this (meters): the target travelled away. */
-inline constexpr float kLoseDistance = 60.0F;
 /** The leash of a slice whose data has no leash distance (meters). */
 inline constexpr float kDefaultLeash = 40.0F;
 /** A creature that does not walk loses a target that is farther than this (meters), when its slice has no vision distance for a fight. */
@@ -185,54 +194,13 @@ inline constexpr std::chrono::milliseconds kWanderWaitLongest{12000};
 inline constexpr unsigned kWanderTries = 6;
 /** A creature that found no way to a waypoint or to a place of its wander waits this long before its next goal. */
 inline constexpr std::chrono::milliseconds kRoamNoWayPause{3000};
-/**
- * The band of an archer (stage 3.4f-A; project rules: research creature-ranged.md Q3, the first option, because the game files have no
- * keep-distance rule and no behavior tree): it shoots a target in kShotFar or less (meters, horizontal) with a free line; a creature that
- * walks to a target for its shot stops at kShotHold (2 m in the band: the target can move some steps with no new walk); nearer than
- * kShotNear it walks back to kShotMiddle.
- */
-inline constexpr float kShotFar = 20.0F;
-inline constexpr float kShotHold = 18.0F;
-inline constexpr float kShotNear = 8.0F;
-inline constexpr float kShotMiddle = 14.0F;
 /** A shot needs the target this near in height (meters): the height limit of the vision of a creature. */
 inline constexpr float kShotHeight = kSenseHeight;
-/**
- * The next shot of a creature: this long after the start of its last shot, or at the end of the action of that shot when later
- * (research Q3, the first option: the completion offsets of the action lists are not a repeat time of the original).
- */
-inline constexpr std::chrono::milliseconds kShotRepeat{3000};
-/** A creature that walked back (or found no way back) does not walk back again for this time (a decision of an agent: no endless kite). */
-inline constexpr std::chrono::milliseconds kRetreatPause{6000};
-/**
- * The band of a caster (stage 3.4f-B; project rules: research creature-ranged.md Q3, the first option for a caster, 6 m to 16 m): the
- * same rules as the band of an archer with these distances, and the next cast kCastRepeat after the start of the last one (research Q3:
- * 2.5 s from the start of the action of a caster). The game files have no band and no repeat time of a caster.
- */
-inline constexpr float kCastFar = 16.0F;
-inline constexpr float kCastHold = 14.0F;
-inline constexpr float kCastNear = 6.0F;
-inline constexpr float kCastMiddle = 11.0F;
-inline constexpr std::chrono::milliseconds kCastRepeat{2500};
-/**
- * The area attacks (stage 3.4f-C; project rules, decisions of an agent: the game files have the casts of the actions and the CastDistance of
- * each spell row, and no rule for the choice of an attack or its repeat): a creature casts its area attack at a target in the CastDistance of
- * the spell row of its first cast (horizontal) with a free line, when it is ready: kAreaRepeat after the start of its last area attack for a
- * creature with a different attack (the area is a part of its fight), kAreaOnlyRepeat for a creature whose only attack is the area attack
- * (the Undead Shaman). It also waits for the pause after its last attack: the pause of a melee attack, or the repeat of its basic shot
- * when that ends first. A creature with only area attacks walks to kAreaHoldMargin inside the CastDistance.
- */
-inline constexpr std::chrono::milliseconds kAreaRepeat{10000};
-inline constexpr std::chrono::milliseconds kAreaOnlyRepeat{5000};
-inline constexpr float kAreaHoldMargin = 2.0F;
-/**
- * The status actions (stage 3.4f-D; project rules, decisions of an agent: the game files have the actions, their marks, and the statuses, and
- * the task of the behavior tree that starts an action is not in them). A creature in a fight starts a status action of its slice before its
- * other attacks when it is ready: its heal (a status with a heal part) when its health is not above the low-health part of its slice (game
- * data: m_lowHealthPercentThreshold, 0.15 for the Inquisitor Cleric), its buff when it does not have the buff; not before kStatusRepeat after
- * the start of its last status action, and after the pause of its last attack.
- */
-inline constexpr std::chrono::milliseconds kStatusRepeat{20000};
+// The bands of a shot (kShotFar, kShotHold, kShotNear, kShotMiddle, kShotRepeat; kCastFar, kCastHold, kCastNear, kCastMiddle,
+// kCastRepeat), the retreat pause (kRetreatPause), the repeats of an area attack (kAreaRepeat, kAreaOnlyRepeat, kAreaHoldMargin), the
+// repeat of a status action (kStatusRepeat), the light attacks before a heavy one (kLightAttacks), and the distance at which a creature
+// loses its target (kLoseDistance) are parameters of the nodes of the default tree from stage BT1 (default-fight.jsonc), with the same
+// values. docs/systems/creature-behavior.md has the source of each one.
 /**
  * The presentation of the spawn action of a new creature (protocol notes 4.14): a session gives the action that plays this long after a
  * first record with the spawn action (rep_session.cpp). A creature whose slice needs the spawn action starts no shot in this time after
@@ -309,6 +277,10 @@ struct BehaviorCounts {
     std::uint64_t statusMarksCancelled{0};
     /** Casts of an area at the place of the caster (stage 3.4f-D: the place rule of the client for a spell with no ranged attack data). */
     std::uint64_t castsAtCaster{0};
+    /** The steps of the trees of the creatures (stage BT1), the nodes that they ran, and the reloads of the trees. */
+    std::uint64_t treeSteps{0};
+    std::uint64_t treeNodes{0};
+    std::uint64_t treeReloads{0};
 };
 
 /** Where the client puts the spell of a cast of an AI (stage 3.4f-D, client code 0x679DBB0; Behavior::place_rule). */
@@ -433,6 +405,16 @@ public:
      *         its velocity (World::velocity_of) for the lead of the data, the fall of the projectile slice, and the angle limits.
      */
     [[nodiscard]] ShotAim aim(const Entity& creature, const Entity& target, const gamedata::RangedRelease& release) const;
+    /**
+     * The trees of the creatures (stage BT1): loads the embedded trees and the `*.jsonc` files of a folder (empty: none), and binds each
+     * creature of the world to its tree again (the default tree). A file that is not correct is refused (one log line for each one, and
+     * `report`); the earlier tree of its name stays. A development route (reload) and the start of the behavior call it.
+     * @return False when the set has no tree "default": the creatures then do nothing.
+     */
+    bool reload_trees(const std::string& folder, tree::LoadReport& report);
+    [[nodiscard]] const tree::TreeSet& trees() const {
+        return m_trees;
+    }
     /** A hit of a character did not hurt a creature on its way back (the combat system): for the counts. */
     void immune_hit() {
         ++m_counts.immuneHits;
@@ -486,9 +468,66 @@ private:
         std::uint32_t release{0};
     };
 
+    /** The values of the node `melee` of a tree (world/behavior_tree.h, param::kLightBeforeHeavy...). */
+    struct MeleeValues {
+        std::uint32_t lightBeforeHeavy{0};
+        std::chrono::milliseconds pause{0};
+        std::chrono::milliseconds heavyPause{0};
+    };
+    /** The distances and the repeat time of the shot of a slice: the band of an archer, or of a caster (stage 3.4f-B). */
+    struct ShotBand {
+        /** The outer edge and the inner edge of the band, the hold distance of a walk into the band, and the middle of a walk back. */
+        float outer{0.0F};
+        float hold{0.0F};
+        float inner{0.0F};
+        float middle{0.0F};
+        std::chrono::milliseconds repeat{0};
+    };
+    /** The values of the node `basic_shot` for a slice (its band by `CreatureSlice::caster`), and the melee cadence of its tree. */
+    struct ShotValues {
+        ShotBand band;
+        std::chrono::milliseconds retreatPause{0};
+        std::chrono::milliseconds pause{0};
+        std::uint32_t lightBeforeHeavy{0};
+    };
+    struct AreaValues {
+        std::chrono::milliseconds repeat{0};
+        std::chrono::milliseconds onlyRepeat{0};
+        float holdMargin{0.0F};
+        std::chrono::milliseconds pause{0};
+    };
+    struct StatusValues {
+        std::chrono::milliseconds repeat{0};
+        std::chrono::milliseconds pause{0};
+    };
+
     void step(float seconds);
     void sense();
-    void think(Entity& creature, float seconds);
+    /**
+     * The step of a creature in a fight (stage BT1): the rules of the engine that hold the creature (StepCause), else its tree. Before the
+     * trees this was `think`.
+     */
+    void decide(Entity& creature, float seconds);
+    /** @return The rule of the engine that holds a creature in a fight now (and the end of an action that played), or StepCause::tree. */
+    StepCause engine_holds(Entity& creature, WorldClock::time_point now);
+    /** One step of the tree of a creature (in a fight, or at rest). */
+    void run_tree(Entity& creature, float seconds);
+    tree::Status run_node(Entity& creature, const tree::CompiledTree& tree, std::size_t index, float seconds);
+    /** @return The target of a fight of the creature of the tree that runs (fightable), one look-up in a step. */
+    Entity* step_target(const Entity& creature);
+    /** The leaves (stage BT1): each one is a rule of the behavior before the trees, with the parameters of its node. */
+    bool keep_target(Entity& creature, float loseDistance);
+    void melee(Entity& creature, Entity& target, float seconds, const MeleeValues& values);
+    /** Binds a creature to the default tree: the lists of its state get one value for each node and each key. */
+    void bind(Entity& creature);
+    /** @return The parameters of the first node of a kind of the tree of a creature, or of the default tree (a development command). */
+    [[nodiscard]] const float* command_values(const Entity& creature, tree::NodeKind kind) const;
+    [[nodiscard]] static MeleeValues melee_values(const float* values);
+    [[nodiscard]] static ShotValues shot_values(const gamedata::CreatureSlice& body, const float* values, std::uint32_t lightBeforeHeavy);
+    [[nodiscard]] static AreaValues area_values(const float* values);
+    [[nodiscard]] static StatusValues status_values(const float* values);
+    /** @return The light attacks before a heavy one of the tree of a creature (the melee rule of a shot), or of the default tree. */
+    [[nodiscard]] std::uint32_t cadence_of(const Entity& creature) const;
     /**
      * @return True while the hit stun of the last hit holds the creature (Creature::hitStunUntil, user test 2): no step, no turn, no attack.
      *         The fight, the way back, and the roam check it (code review of user test 2, finding U2-R5). An ended hit stun goes.
@@ -498,36 +537,26 @@ private:
      * The shot rules of a step of a creature with a basic shot and a character as its target (stage 3.4f-A).
      * @return False: the melee rules decide (the target is in the reach of the next melee attack).
      */
-    bool think_shot(Entity& creature, Entity& target, std::uint32_t shot, float seconds);
-    /** The distances and the repeat time of the shot of a slice: the band of an archer, or of a caster (stage 3.4f-B). */
-    struct ShotBand {
-        /** The outer edge (kShotFar, kCastFar) and the inner edge (kShotNear, kCastNear) of the band. */
-        float outer{0.0F};
-        float hold{0.0F};
-        float inner{0.0F};
-        float middle{0.0F};
-        std::chrono::milliseconds repeat{0};
-    };
-    [[nodiscard]] static ShotBand band_of(const gamedata::CreatureSlice& body);
-    void start_shot(Entity& creature, Entity& target, std::uint32_t shot);
+    bool think_shot(Entity& creature, Entity& target, std::uint32_t shot, float seconds, const ShotValues& values);
+    void start_shot(Entity& creature, Entity& target, std::uint32_t shot, const ShotValues& values);
     void release(const PendingRelease& pending);
     /**
      * The area rules of a step of a creature with an area attack and a character as its target (stage 3.4f-C). @return False: the other
      * rules decide (not ready, not in the CastDistance, or no free line, for a creature with a different attack).
      */
-    bool think_area(Entity& creature, Entity& target, float seconds);
+    bool think_area(Entity& creature, Entity& target, float seconds, const AreaValues& values);
     /** @return The indexes of the area attacks of a slice whose casts the spell system can make (Spells::area_usable). */
     [[nodiscard]] std::vector<std::uint32_t> usable_areas(const gamedata::CreatureSlice& body) const;
-    void start_area(Entity& creature, Entity& target, std::uint32_t area);
+    void start_area(Entity& creature, Entity& target, std::uint32_t area, const AreaValues& values);
     void cast(const PendingCast& pending);
     /**
      * The status rules of a step of a creature with a status action (stage 3.4f-D). @return True: the creature started a status action (or
      * one plays).
      */
-    bool think_status(Entity& creature, Entity& target);
+    bool think_status(Entity& creature, Entity& target, const StatusValues& values);
     /** @return True when the creature wants this status action now: its heal at low health, or its buff that it does not have. */
     [[nodiscard]] bool wants(const Entity& creature, const gamedata::CreatureStatusAction& action) const;
-    void start_status_action(Entity& creature, std::uint32_t index);
+    void start_status_action(Entity& creature, std::uint32_t index, const StatusValues& values);
     void status_mark(const PendingStatus& pending);
     /**
      * A walk of a creature to its target on its path to `hold` (horizontal, with a free line), with the rules of a target with no way and
@@ -535,9 +564,12 @@ private:
      */
     void walk_to(Entity& creature, Entity& target, float hold, bool sees, float away, float seconds);
     void go_home(Entity& creature, float seconds);
-    void start_attack(Entity& creature, Entity& target, std::uint32_t attack);
-    /** @return The index of the next attack of a creature: its light attacks in their sequence, and a heavy attack after each `kLightAttacks` of them. */
-    [[nodiscard]] static std::uint32_t next_attack(const Creature& creature);
+    void start_attack(Entity& creature, Entity& target, std::uint32_t attack, const MeleeValues& values);
+    /**
+     * @return The index of the next attack of a creature: its light attacks in their sequence, and a heavy attack after each
+     *         `lightBeforeHeavy` of them (the parameter of the node `melee`).
+     */
+    [[nodiscard]] static std::uint32_t next_attack(const Creature& creature, std::uint32_t lightBeforeHeavy);
     /**
      * @return The length of the last step of a creature to its target: `way`, or less when a
      * different creature stands at the end of the step (`kCrowdDistance`). 0: the creature stays.
@@ -608,6 +640,19 @@ private:
     std::optional<WorldClock::time_point> m_lastStep;
     BehaviorCounts m_counts;
     LoadMeter m_load;
+    /** The trees of the creatures (stage BT1), and the default tree of each creature. */
+    tree::TreeSet m_trees;
+    std::shared_ptr<const tree::CompiledTree> m_default;
+    /**
+     * The target of the creature of the tree that runs (stage BT1): the leaves of one step look it up one time. A step does not remove an
+     * entity, does not kill a character, and does not change who the creatures ignore; a new target id of the creature looks up again.
+     */
+    struct StepTarget {
+        EntityId creature{0};
+        EntityId target{0};
+        Entity* entity{nullptr};
+    };
+    StepTarget m_stepTarget;
 };
 
 /** @return The direction from one place to a different one as the angle of a creature: degrees, 0 is north, 90 is west. */

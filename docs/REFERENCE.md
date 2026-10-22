@@ -766,6 +766,12 @@ button on "Confirm").
   for example the Null Chamber of the void gauntlet). In a development run `tools/world creature status-action CREATURE [ACTION]`
   (route `POST /v1/dev/creatures/status-action`) starts the action at once, and `tools/world creature effect CREATURE STATUS` gives a
   status row. Not yet: the heal of a different creature, the other buffs of the data.
+- Behavior trees of the creatures (stage BT1, [Creature behavior](systems/creature-behavior.md)). A tree decides what a creature does
+  next: the default tree of the program (`apps/backend/behavior/*.jsonc`) has the behavior of the stages before, with no change. In a
+  development run `tools/world creature tree CREATURE` (route `GET /v1/dev/creatures/tree`) prints the last step of a creature (its tree,
+  or the rule of the engine that held it), the result and the parameters of each node, and its blackboard. `SOULWARDEN_BEHAVIOR_DIR`
+  (a variable of `tools/dev-run.sh`, only with the development commands) names a folder of tree files that replace the trees of the
+  program, and `tools/world creature tree reload` (route `POST /v1/dev/creatures/tree/reload`, harness gate) reads them again.
 - Interactions (stage 2.5a). The client shows the prompt of an object and executes its option
   at the key; the backend checks the request with the interaction data of the game and
   replies. A lore page: E (Read) opens the journal on the page, T (Add To Journal) adds it, and

@@ -29,6 +29,19 @@ target_include_directories(soulwarden_mbedtls
     PRIVATE vendor/mbedtls/library)
 target_compile_options(soulwarden_mbedtls PRIVATE -O2 -w)
 
+# The behavior trees of the creatures (stage BT1): the build puts the text of behavior/*.jsonc into a generated source file, so that the
+# backend has its trees with no file of the game data folder.
+file(GLOB SOULWARDEN_BEHAVIOR_TREES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/behavior/*.jsonc")
+set(SOULWARDEN_BEHAVIOR_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/behavior_trees.cpp")
+add_custom_command(
+    OUTPUT "${SOULWARDEN_BEHAVIOR_SOURCE}"
+    COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/behavior -DOUTPUT=${SOULWARDEN_BEHAVIOR_SOURCE}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_behavior.cmake"
+    DEPENDS ${SOULWARDEN_BEHAVIOR_TREES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_behavior.cmake"
+    COMMENT "Embedding the behavior trees of the creatures"
+    VERBATIM)
+list(APPEND SOULWARDEN_BACKEND_SOURCES "${SOULWARDEN_BEHAVIOR_SOURCE}")
+
 add_library(soulwarden_backend_core STATIC ${SOULWARDEN_BACKEND_SOURCES})
 target_include_directories(soulwarden_backend_core PUBLIC src vendor)
 target_link_libraries(soulwarden_backend_core PUBLIC soulwarden_sqlite soulwarden_mbedtls)

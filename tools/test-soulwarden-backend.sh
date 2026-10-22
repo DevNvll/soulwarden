@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Build and run the test program of the backend (native target). The tests run the game
 # server with made-up clients: no socket, no game process, and a database in memory.
-# Usage: tools/test-soulwarden-backend.sh [--write-golden] [--list] [CASE ...]
+# Usage: tools/test-soulwarden-backend.sh [--write-golden] [--write-trace] [--list] [CASE ...]
 #   --write-golden   write the stored bytes of case T2 again (apps/backend/tests/golden). Do
 #                    this only for a change of the bytes that is intended, with a live run.
+#   --write-trace    write the stored trace of the decisions of the behavior of case BTD1 again
+#                    (apps/backend/tests/golden/behavior_trace.txt). Do this only for a change of
+#                    the behavior that is intended (a later stage of the trees), with its source.
 #   --list           print the cases
 #   CASE             run only these cases, for example: T1 T2
 # Status 0: each case passed. The output lists each case.

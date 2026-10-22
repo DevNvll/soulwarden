@@ -391,6 +391,22 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
 [[nodiscard]] WorldCommand creature_status_action(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                                   service::HttpResponse& refusal);
 /**
+ * tree: `creature` (stage BT1). A development command: the behavior tree of the creature and its last step (what decided it: the tree,
+ * or a rule of the engine; the result of each node: the path), the parameters of each node, and the blackboard (the declared keys of the
+ * tree, and the facts of the creature that the leaves use: the names of the auto-evaluated keys of the client where the meaning is the
+ * same, research BT0). Only the development routes have it.
+ */
+[[nodiscard]] WorldCommand creature_tree(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                         service::HttpResponse& refusal);
+/**
+ * tree reload (stage BT1, a harness command): the behavior trees again, from the program and from the folder of the world options
+ * (SOULWARDEN_BEHAVIOR_DIR of a development run); each creature of the world gets its new tree. A file that is not correct is refused
+ * (its cause in the reply and one log line), and the tree of its name stays. Needs SOULWARDEN_HARNESS=1 (403 without it). Only the
+ * development routes have it.
+ */
+[[nodiscard]] WorldCommand reload_creature_trees(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                                 service::HttpResponse& refusal);
+/**
  * anchor: `creature`, and `x`, `y`, `z` (meters). A development command: the anchor of a
  * creature in a fight (the end of its way back, and the first place of its trail) is that
  * place. A test of the way back with no path to the anchor. Only the development routes have it.

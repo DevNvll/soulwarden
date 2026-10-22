@@ -175,7 +175,9 @@ tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
 - More variables of `tools/dev-run.sh`: `SOULWARDEN_BACKEND_EXE` and `SOULWARDEN_HOOK_DLL` start a
   different build of the backend or of the hook. `SOULWARDEN_CREATURE_BEHAVIOR=0` turns the
   behavior of the creatures off for the run (the backend option `--no-creature-behavior`):
-  the creatures stand at their spawn points. `SOULWARDEN_RESEARCH_SESSION` is the research
+  the creatures stand at their spawn points. `SOULWARDEN_BEHAVIOR_DIR=FOLDER` (stage BT1): the
+  `*.jsonc` behavior tree files of the folder replace the trees of the program with the same name
+  (only with the development commands); `tools/world creature tree reload` reads them again. `SOULWARDEN_RESEARCH_SESSION` is the research
   switch of the game server for live checks (`registration-result=N`, `reject=N`, `kick=N`,
   `kick-delay=SECONDS`; protocol notes 3.6; and `refuse-equipment=1`, which makes the backend
   refuse each equipment request with the message "equip item fail": the client sends only

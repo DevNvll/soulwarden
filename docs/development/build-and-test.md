@@ -17,8 +17,10 @@ Read this document before a build, a change of the test program, a change of the
   clock, a transport with no socket, and a database in memory. Its output lists each case.
   `--list` prints each case with its subject, and `T1 E3` runs only these cases. Some cases run
   the check of a Python tool with `python3` (`--list` names the tool). `--write-golden` writes the
-  stored file of T2 again: do this only for an intended change of the wire bytes. Cases D2 and H1
-  wait some seconds.
+  stored file of T2 again: do this only for an intended change of the wire bytes. `--write-trace`
+  writes the stored trace of the decisions of the behavior of case BTD1 again
+  (`tests/golden/behavior_trace.txt`, stage BT1): do this only for an intended change of the
+  behavior. Cases D2 and H1 wait some seconds.
 - Dear ImGui (version 1.92.6) is in `apps/game-hook/vendor/imgui`, with no change of its
   files. The CMake file compiles each `.cpp` file below `apps/game-hook/vendor`: do not add a
   file of the library that the hook does not use (the demo file). The JSON library of the

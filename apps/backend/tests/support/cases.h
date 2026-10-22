@@ -15,6 +15,11 @@ struct Options {
     bool writeGolden{false};
     /** Folder for the files that a case writes (capture folders). It is not in the repository. */
     std::filesystem::path workDirectory;
+    /**
+     * True: case BTD1 writes the stored trace of the decisions of the behavior again (golden/behavior_trace.txt, stage BT1) and compares
+     * with it. Do this only for a change of the behavior that is intended (a later stage of the trees), with its source.
+     */
+    bool writeTrace{false};
 };
 
 struct Case {

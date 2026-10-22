@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -620,6 +621,45 @@ enum class CreatureMode : std::uint8_t {
     home,
 };
 
+namespace tree {
+struct CompiledTree;
+} // namespace tree
+
+/** What decided the last step of the behavior of a creature (stage BT1, world/behavior.h): its tree, or a rule of the engine. */
+enum class StepCause : std::uint8_t {
+    none,
+    /** The tree of the creature ran (`CreatureBrain::last` has the result of each node). */
+    tree,
+    /** A stun, a knockdown, a stagger, or a forced movement holds the creature. */
+    held,
+    /** The hit stun of the last hit holds the creature. */
+    hit_stun,
+    /** An action of the creature (an attack, a shot, an area attack, a status action) plays to its end. */
+    action,
+    /** The creature is on its way back to its anchor (the engine: immune, the trail). */
+    way_back,
+    /** The creature has no tree (the set of the trees has no tree "default"): it does nothing. */
+    no_tree,
+};
+
+/**
+ * The tree of a creature and its state (stage BT1, world/behavior_tree.h): values of the creature in the world, not of a session (rule
+ * MP-1). The behavior binds a creature to a tree when it makes the creature (and again at a reload of the trees): the lists have one
+ * value for each node and each key of that tree, thus a step of the tree allocates nothing.
+ */
+struct CreatureBrain {
+    std::shared_ptr<const tree::CompiledTree> tree;
+    /** The result of each node in the last step of the tree (tree::Status: 0 the step did not run the node). */
+    std::vector<std::uint8_t> last;
+    /** The value of each declared key of the blackboard of the tree. */
+    std::vector<float> board;
+    /** The time of the last step, and what decided it. */
+    WorldClock::time_point at{};
+    StepCause cause{StepCause::none};
+    /** The leaf that decided the last step of the tree: 1 + tree::NodeKind, 0 for none. */
+    std::uint8_t decided{0};
+};
+
 /**
  * The behavior values of a creature: its target, its home, and the attack that it plays. They
  * are values of the creature in the world, not of a session (roadmap, rule MP-1). The behavior
@@ -688,6 +728,11 @@ struct CreatureMind {
     WorldClock::time_point attackEnds{};
     /** The creature starts no attack before this time (the pause after an attack). */
     WorldClock::time_point ready{};
+    /**
+     * The pause after the action that plays (stage BT1): the parameter `pause` (or `heavy_pause`) of the node of the tree that started
+     * it. At the end of the action `ready` is its end plus this pause.
+     */
+    std::chrono::milliseconds actionPause{1500};
     /** Number of attacks that the creature started. It selects the next attack of its slice. */
     std::uint32_t attacks{0};
     /** The direction of the creature in the last movement state that the behavior marked. */
@@ -712,6 +757,8 @@ struct CreatureMind {
     WorldClock::time_point statusReady{};
     /** Steps in sequence in which a different creature stood at the place of the next step of this one. */
     std::uint32_t blockedSteps{0};
+    /** The tree of the creature and its state (stage BT1). */
+    CreatureBrain brain;
 };
 
 /**

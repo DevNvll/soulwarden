@@ -320,6 +320,11 @@ The creatures of the world (protocol notes 4.14):
                                                 the creature starts a status action of its slice now (stage
                                                 3.4f-D: its heal InqCleric_Rekindle_Self, its buff Howl): its
                                                 marks give their statuses to the creature (no condition)
+  tools/world creature tree CREATURE            the behavior tree of a creature (stage BT1): its last step (the tree, or
+                                                the rule of the engine that held it), the result of each node (+ success,
+                                                - failure, . not run), the parameters, the blackboard keys and facts
+  tools/world creature tree reload              the behavior trees again: the program, and the folder SOULWARDEN_BEHAVIOR_DIR
+                                                of a development run (a file that is not correct is refused, with its cause)
   tools/world creature anchor CREATURE X Y Z    the anchor of a creature in a fight is that place
                                                 (the end of its way back): a test of a way back
                                                 with no path to the anchor
@@ -494,6 +499,15 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         document = {"message": body}
     if isinstance(document, dict) and "phaseNumber" in document and "cycle" in document:
         print("world: " + world_time_text(document))
+    elif isinstance(document, dict) and "step" in document and "blackboard" in document:
+        show_tree(document)
+    elif isinstance(document, dict) and "loaded" in document and "refused" in document:
+        folder = "the program and the folder SOULWARDEN_BEHAVIOR_DIR" if document.get("folder") else "the program"
+        print(f"world: the behavior trees of {folder}: {len(document['loaded'])} tree(s), {len(document['refused'])} file(s) refused")
+        for line in document["loaded"]:
+            print("  tree " + line)
+        for line in document["refused"]:
+            print("  REFUSED " + line)
     elif isinstance(document, dict) and "worldTime" in document and "scope" in document:
         print(f"world: {document['message']}; " + world_time_text(document["worldTime"]))
     elif isinstance(document, dict) and "objectEntities" in document and "objects" in document:
@@ -926,6 +940,28 @@ def show_interactions(document: dict) -> None:
           f"{counts.get('completions', 0)}")
 
 
+def show_tree(document: dict) -> None:
+    """Prints the behavior tree of a creature (stage BT1): its last step, the result of each node (+ success, - failure, ~ running, . the
+    step did not run the node), the parameters of each leaf, and the blackboard."""
+    step = document["step"]
+    ago = f"{step['secondsAgo']:.1f} s ago" if step["secondsAgo"] >= 0 else "no step yet"
+    print(f"creature {document['creature']} ({document['kind']}), mode {document['mode']}, tree {document.get('tree', '(none)')} "
+          f"({document.get('source', '')})")
+    decided = f", the leaf that decided: {step['decided']}" if step["decided"] else ""
+    print(f"the last step ({ago}): {step['cause']}{decided}")
+    marks = {"success": "+", "failure": "-", "running": "~", "idle": "."}
+    for node in document.get("nodes", []):
+        name = f" \"{node['name']}\"" if node["name"] else ""
+        values = " ".join(f"{key}={value:g}" if isinstance(value, (int, float)) else f"{key}={value}"
+                          for key, value in node["parameters"].items())
+        print(f"  {marks.get(node['status'], '?')} {'  ' * node['depth']}{node['node']}{name}{' ' + values if values else ''}")
+    board = document["blackboard"]
+    keys = ", ".join(f"{key} {value:g}" for key, value in board.get("keys", {}).items())
+    print(f"blackboard keys: {keys or '(none)'}")
+    facts = ", ".join(f"{key} {value:g}" if isinstance(value, float) else f"{key} {value}" for key, value in board["facts"].items())
+    print(f"facts: {facts}")
+
+
 def show_bags(document: dict) -> None:
     """Prints the loot bags of a character (stage 3.5b.2): its open bag and the items of its own part of each bag."""
     if not document.get("inWorld"):
@@ -1301,6 +1337,10 @@ def creature_command(data_dir: Path, arguments: list[str]) -> None:
             fail("the action must be a name of the action table of the slice (letters, digits, and _)")
         named = f"&action={arguments[2]}" if len(arguments) == 3 else ""
         request(data_dir, "POST", f"/v1/dev/creatures/status-action?creature={creature_id(data_dir, arguments[1])}{named}")
+    elif action == "tree" and len(arguments) == 2 and arguments[1] == "reload":
+        request(data_dir, "POST", "/v1/dev/creatures/tree/reload")
+    elif action == "tree" and len(arguments) == 2:
+        request(data_dir, "GET", f"/v1/dev/creatures/tree?creature={creature_id(data_dir, arguments[1])}")
     elif action == "anchor" and len(arguments) == 5:
         x, y, z = numbers(arguments[2:5], 3)
         request(data_dir, "POST", f"/v1/dev/creatures/anchor?creature={creature_id(data_dir, arguments[1])}&x={x}&y={y}&z={z}")

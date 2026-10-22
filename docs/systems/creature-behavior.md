@@ -15,6 +15,7 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 | The shot of an archer (stage 3.4f-A): the band, the choice of melee or shot, the windup and the release, the aim and the lead, the repeat time, the walk back, the cancels | Protocol notes 4.37, `apps/backend/src/world/behavior.h` (the rule Shoot, `behavior_rules::kShot*`, `Behavior::aim`, `command_shot`), `world/projectiles.h` (`launch_creature`), `gamedata/creature_data.h` (`RangedRelease`, `kBasicShotAction`), `tools/world creature shoot`, test cases CRG2 to CRG5 |
 | The cast of a caster (stage 3.4f-B): the cast as the basic shot, the band of a caster, its repeat time; the corrections CR-R1 and CR-R2 of the review of stage 3.4f-A | Protocol notes 4.38, `world/behavior.h` (`behavior_rules::kCast*`, `kSpawnLead`, `Behavior::band_of`), `gamedata/creature_data.h` (`kBasicCastAction`, `CreatureSlice::caster`), test cases CRB1, CRG9, CRG10, RR1, RR2 |
 | The area attack of a creature (stage 3.4f-C): the choice, the range, the repeat, the walk of a creature with only area attacks, the casts and their cancels, the place; the correction CS-R4 (the spawn lead for a new observer) | Protocol notes 4.39, `world/behavior.h` (`behavior_rules::kArea*`, `Behavior::think_area`, `start_area`, `cast`, `area_place`, `command_area`, `spawn_lead_over`), `gamedata/creature_data.h` (`CreatureAreaAttack`, `AreaCast`), [Spell entities](spells.md), `tools/world creature area`, test cases CRA6, RZ4 |
+| The behavior trees (stage BT1): the format of a tree file, the loader and the compiler, the runtime, the leaves, the default tree, the blackboard, the folder of a development run, the reload, the view of a tree | This document, section "Behavior trees" below, `apps/backend/behavior/*.jsonc` and `tree.schema.json`, `world/behavior_tree.h`, `world/behavior.h` (`decide`, `run_tree`, `run_node`), `tools/world creature tree`, test cases BT1 to BT5 and BTD1, research `bt0-ai-data.md` |
 | The status actions of a creature (stage 3.4f-D): its heal at low health, its buff, the marks and their cancels, the repeat; the place rule of the client for a cast (at the caster, at the target, at the aim point) | Protocol notes 4.40, `world/behavior.h` (`behavior_rules::kStatusRepeat`, `Behavior::think_status`, `wants`, `start_status_action`, `status_mark`, `command_status_action`, `place_rule`, `area_range`), `gamedata/creature_data.h` (`CreatureStatusAction`, `StatusMark`, `CreatureSlice::lowHealth`), [Creatures](creatures.md), `tools/world creature status-action`, test cases CRH1 to CRH5 |
 
 ## Rules
@@ -280,6 +281,59 @@ protocol notes (sections 4.14, 4.17, and 4.19).
     (`Creatures::first_record`, `Creature::recordedAt`). A new observer of an old creature with a spawn action thus sees the windup.
   - The command `tools/world creature area CREATURE CHARACTER` (`Behavior::command_area`, route `POST /v1/dev/creatures/area`): the
     creature takes the character as its target and starts its next area attack now, with no range and no repeat time.
+- Behavior trees (stage BT1; the plan `behavior-tree-plan.md`, research BT0 `bt0-ai-data.md`). A tree decides what a creature does
+  next; BT1 changed no behavior (the differential test BTD1). The rules and the source of each one:
+  - The engine and the tree (a decision of the plan): the engine of `world/behavior.h` keeps the rules that no tree can change. In a
+    fight it holds the creature and runs no tree while a stun, a knockdown, a stagger, or a forced movement holds it, in the hit stun of
+    the last hit, and while an action of the creature plays (`Behavior::engine_holds`); it runs the way back (`go_home`: immune, the
+    trail, the jump only with no observer); it keeps the vision rule, the shelter, the contacts, the releases, the casts, and the marks
+    with their cancels, the world clock, and the one random source. In each other step of a creature in a fight or at rest (the step of
+    200 ms, only the creatures of `m_active` and `m_roaming`) the tree of the creature runs (`run_tree`). `CreatureBrain::cause` says
+    which one decided (`tree`, `held`, `hit_stun`, `action`, `way_back`).
+  - The leaves (BT1): each one is one rule of the behavior before the trees, with the values of its node. `keep_target` (the target
+    checks: gone, the end of the leash, farther than `lose_distance`; a creature that does not walk: the combat vision distance of its
+    slice; failure: the creature lost its target and goes back), `status_action`, `area_attack`, `basic_shot`, `melee` (the way, the
+    attack, the crowd, the wait with no way), `turn_to_target`, `roam`. A leaf fails when the slice has no such ability; `area_attack` and
+    `basic_shot` fail for a target that is not a character (the rule of stage 3.4f-A). The other nodes: `selector`, `sequence`,
+    `invert`, `subtree`, and the conditions `in_fight`, `target_is`, `check` and the action `set` (the blackboard).
+  - The default tree (`apps/backend/behavior/default.jsonc` and `default-fight.jsonc`, a project rule with the order of
+    `Behavior::think` before the trees): a creature in a fight runs the subtree `default/fight` (`keep_target`, then the status action,
+    the area attack, the shot, the melee attack, the turn), a creature at rest roams. The decision constants of `behavior_rules` are node
+    parameters with the same values (the bands `kShot*` and `kCast*`, `kRetreatPause`, `kArea*`, `kStatusRepeat`, `kLightAttacks`,
+    `kLoseDistance`); the pause after an action is the `pause` of the node that started it (`heavy_pause` for a heavy melee attack;
+    `CreatureMind::actionPause`). `kAttackPause` and `kHeavyPause` stay in the code as names of the values of the default tree (case BT1
+    checks them). A development command (`shoot`, `area`, `status-action`) takes the values of the first node of its kind in the tree of
+    the creature, else of the default tree. The roam has no parameter yet (its waits stay in `behavior_rules` until stage BT2).
+  - The format (a decision of the plan): one tree in one file of JSON with comments (`//`, `/* */`). The vendored JSON library 3.12.0 has
+    no option for a trailing comma: a trailing comma is an error. `{"format": 1, "tree": NAME, "blackboard": {KEY: {"type": "int" | "float"
+    | "bool", "default": V}}, "root": NODE}`, a node `{"node": KIND, "name": TEXT, ...}` with `children` (a list), `child` (one), or `tree`
+    (a subtree). `apps/backend/behavior/tree.schema.json` is the JSON Schema for an editor; the loader of the backend is the authority.
+  - The loader and the compiler (`world/behavior_tree.cpp`, decisions of an agent for the limits): each node kind, each member, each
+    parameter and its range (times 0 to 600 s, pauses 0 to 60 s, distances 0 to 200 m, `lose_distance` 1 to 1000 m, `light_before_heavy`
+    a whole number 1 to 20, a band with near <= middle <= hold <= far), the keys of a `check` and a `set` (declared in the file, the value
+    fits the type), and the subtrees (no cycle, each one in the set). The compiler puts a tree and its subtrees into one flat pre-order
+    table (at most 1,024 nodes, 32 levels, 64 keys); the keys of a file are in the sequence of their names. A file that is not correct
+    is refused with one log line `world: behavior tree refused: FILE: PLACE: CAUSE`, and the tree of its name stays the tree of the
+    program.
+  - The files (a decision of the plan; the brief: the backend starts and works with no file): the build puts the text of
+    `apps/backend/behavior/*.jsonc` into the program (`cmake/embed_behavior.cmake`, a generated source file). No file of the game data
+    folder, nothing for `tools/release.sh`. The tree `default` must be in the set: with no such tree that compiles (a fault of the build)
+    the trees of the world do not change, and with none at the start the creatures do nothing (`StepCause::no_tree`).
+  - The state of a tree is in the creature (rule MP-1): `CreatureMind::brain` (the compiled tree, the result of each node in the last
+    step, the value of each key). The behavior binds a creature to the tree `default` when it makes the creature and again at a reload:
+    a step allocates nothing and looks up no text. The leaves of one step look up the target one time (`Behavior::step_target`).
+  - The cost (case BT4): 400 creatures in a fight need 0.05 us to 0.08 us more for each step of a creature than the code before the
+    trees (about 7 ns for each node; 6.4 nodes for each step of a creature on average), with the same steps and attacks.
+  - A development run (`--dev-commands`, the harness gate): `SOULWARDEN_BEHAVIOR_DIR` names a folder whose `*.jsonc` files replace the
+    trees of the program of the same name (`WorldOptions::behaviorDirectory`; `tools/dev-run.sh` gives the variable to the backend). The
+    backend does not read it without `--dev-commands` (one log line). `tools/world creature tree reload` (route `POST
+    /v1/dev/creatures/tree/reload`, needs `SOULWARDEN_HARNESS=1`: 403 without it) reads the program and the folder again and binds each
+    creature to its new tree. `tools/world creature tree CREATURE` (route `GET /v1/dev/creatures/tree`) prints the last step, each node
+    with its result and parameters, and the blackboard: the declared keys and the facts of the creature (the names of the auto-evaluated
+    keys of the client where the meaning is the same: `Has_Target`, `Target_Vitals_State`; research BT0).
+  - The server trees of the original are not in the client files (research BT0: each slice names its tree, for example
+    `SharedAssets/AI/BehaviorTrees/Wolf/Wolf_Base.behaviortree`, 128 names; the pak files have no such file). Each tree of this project
+    is a project rule.
 - Two switches for the behavior. `SOULWARDEN_CREATURE_BEHAVIOR=0` (backend option
   `--no-creature-behavior`) turns it off for a start: the creatures stand at their spawn
   points. The command `set_creatures_ignore` (`tools/world ignore`, the mark of the tab
@@ -295,6 +349,9 @@ tools/world track 2c 20 --tsv FILE   # the place of a creature each 200 ms for 2
 tools/world creature anchor 2c 8585.5 4243.1 173.26   # the anchor of a creature in a fight (a test of a way back with no path)
 tools/world creature area 5e Soulwarden               # the creature casts its next area attack at the character now (stage 3.4f-C)
 tools/world creature status-action 5e Howl            # the creature starts its status action now (stage 3.4f-D: its heal or its buff)
+tools/world creature tree 5e                          # the behavior tree of the creature: its last step, each node, the blackboard (stage BT1)
+tools/world creature tree reload                      # the trees again from the program and SOULWARDEN_BEHAVIOR_DIR (a development run)
+tools/test-soulwarden-backend.sh --write-trace BTD1   # the stored trace of the decisions again: only for an intended change of the behavior
 ```
 
 - `tools/world` has the commands of stage 3.4b (routes `/v1/dev/world/ignore`, `heal`,
@@ -325,6 +382,15 @@ tools/world creature status-action 5e Howl            # the creature starts its 
 
 ## Traps
 
+- A tree file with a trailing comma is refused (the vendored JSON library reads comments, not trailing commas): the log line names the
+  byte. The keys of a blackboard are in the sequence of their names, not of the file.
+- A change of the default tree is a change of the behavior of each creature: case BTD1 then fails (the stored trace of the decisions,
+  `tests/golden/behavior_trace.txt`). Write the trace again (`--write-trace`) only for an intended change, with its source and a live
+  video.
+- The view of `tools/world creature tree` shows the last step of the tree. While an action plays, the engine holds the creature: the
+  view then says `an action plays` and no node has a result. Look again after the end of the action.
+- `SOULWARDEN_BEHAVIOR_DIR` replaces a tree by its name (the member `tree` of the file), not by the name of the file. A folder with a
+  file `default.jsonc` whose tree is `default/fight` replaces the subtree.
 - After the end of its attack a creature stands in the idle of its slice (user test 2): a ghost floats up and down, a wolf crouches.
   Before, it kept the last pose of the attack until its next state. A video of the agent desktop shows it; a still picture does not.
 - In the hit stun of a hit a creature does not turn to its target: a fast series of light hits keeps it in its reactions until the

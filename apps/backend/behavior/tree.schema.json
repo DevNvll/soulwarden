@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/DevNvll/soulwarden/apps/backend/behavior/tree.schema.json",
+  "title": "Soulwarden behavior tree (format 1)",
+  "description": "One tree of a creature. The loader of the backend (world/behavior_tree.cpp) is the authority; this schema is for an editor. JSON with comments, no trailing comma. Times in seconds, distances in meters.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "tree", "root"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "format": { "const": 1 },
+    "tree": {
+      "description": "The name of the tree: letters, digits, '_', parts with '/'.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_]+(/[A-Za-z0-9_]+)*$",
+      "maxLength": 64
+    },
+    "blackboard": {
+      "description": "The declared keys of the tree: a number of each creature (a bool is 0 or 1). The nodes check and set of this file can use them.",
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "pattern": "^[A-Za-z0-9_]{1,64}$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+          "type": { "enum": ["int", "float", "bool"] },
+          "default": { "type": ["number", "boolean"] }
+        }
+      }
+    },
+    "root": { "$ref": "#/$defs/node" }
+  },
+  "$defs": {
+    "seconds": { "type": "number", "minimum": 0, "maximum": 600 },
+    "pause": { "type": "number", "minimum": 0, "maximum": 60 },
+    "distance": { "type": "number", "minimum": 0, "maximum": 200 },
+    "name": { "type": "string", "maxLength": 64, "description": "A name of the node for the view of tools/world creature tree." },
+    "band": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["far", "hold", "near", "middle", "repeat"],
+      "description": "The band of a shot: a shot in far with a free line, a walk to hold from farther, a walk back to middle from nearer than near (near <= middle <= hold <= far), the next shot repeat after the start of the last one.",
+      "properties": {
+        "far": { "type": "number", "minimum": 0.5, "maximum": 200 },
+        "hold": { "type": "number", "minimum": 0.5, "maximum": 200 },
+        "near": { "$ref": "#/$defs/distance" },
+        "middle": { "$ref": "#/$defs/distance" },
+        "repeat": { "$ref": "#/$defs/seconds" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["node"],
+      "properties": {
+        "node": {
+          "enum": ["selector", "sequence", "invert", "subtree", "in_fight", "target_is", "check", "keep_target", "status_action",
+                   "area_attack", "basic_shot", "melee", "turn_to_target", "roam", "set"]
+        }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/selector" }, { "$ref": "#/$defs/sequence" }, { "$ref": "#/$defs/invert" }, { "$ref": "#/$defs/subtree" },
+        { "$ref": "#/$defs/in_fight" }, { "$ref": "#/$defs/target_is" }, { "$ref": "#/$defs/check" }, { "$ref": "#/$defs/keep_target" },
+        { "$ref": "#/$defs/status_action" }, { "$ref": "#/$defs/area_attack" }, { "$ref": "#/$defs/basic_shot" }, { "$ref": "#/$defs/melee" },
+        { "$ref": "#/$defs/turn_to_target" }, { "$ref": "#/$defs/roam" }, { "$ref": "#/$defs/set" }
+      ]
+    },
+    "selector": {
+      "description": "The children in turn until one succeeds. Success: a child succeeded; failure: each child failed.",
+      "type": "object", "additionalProperties": false, "required": ["node", "children"],
+      "properties": { "node": { "const": "selector" }, "name": { "$ref": "#/$defs/name" },
+                      "children": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/node" } } }
+    },
+    "sequence": {
+      "description": "The children in turn until one fails. Success: each child succeeded.",
+      "type": "object", "additionalProperties": false, "required": ["node", "children"],
+      "properties": { "node": { "const": "sequence" }, "name": { "$ref": "#/$defs/name" },
+                      "children": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/node" } } }
+    },
+    "invert": {
+      "description": "One child: success and failure change places.",
+      "type": "object", "additionalProperties": false, "required": ["node", "child"],
+      "properties": { "node": { "const": "invert" }, "name": { "$ref": "#/$defs/name" }, "child": { "$ref": "#/$defs/node" } }
+    },
+    "subtree": {
+      "description": "The root of a different tree of the set (no cycle).",
+      "type": "object", "additionalProperties": false, "required": ["node", "tree"],
+      "properties": { "node": { "const": "subtree" }, "name": { "$ref": "#/$defs/name" },
+                      "tree": { "type": "string", "pattern": "^[A-Za-z0-9_]+(/[A-Za-z0-9_]+)*$", "maxLength": 64 } }
+    },
+    "in_fight": {
+      "description": "Success: the creature has a target of a fight.",
+      "type": "object", "additionalProperties": false, "required": ["node"],
+      "properties": { "node": { "const": "in_fight" }, "name": { "$ref": "#/$defs/name" } }
+    },
+    "target_is": {
+      "description": "Success: the target is a character (player) or a summon (summon).",
+      "type": "object", "additionalProperties": false, "required": ["node", "kind"],
+      "properties": { "node": { "const": "target_is" }, "name": { "$ref": "#/$defs/name" }, "kind": { "enum": ["player", "summon"] } }
+    },
+    "check": {
+      "description": "Success: the key of the blackboard compares with the value.",
+      "type": "object", "additionalProperties": false, "required": ["node", "key", "op", "value"],
+      "properties": { "node": { "const": "check" }, "name": { "$ref": "#/$defs/name" }, "key": { "type": "string" },
+                      "op": { "enum": ["eq", "ne", "lt", "le", "gt", "ge"] }, "value": { "type": ["number", "boolean"] } }
+    },
+    "set": {
+      "description": "The key of the blackboard gets the value. Always success.",
+      "type": "object", "additionalProperties": false, "required": ["node", "key", "value"],
+      "properties": { "node": { "const": "set" }, "name": { "$ref": "#/$defs/name" }, "key": { "type": "string" },
+                      "value": { "type": ["number", "boolean"] } }
+    },
+    "keep_target": {
+      "description": "The target checks: a target that is gone, the end of the leash, a target farther than lose_distance. Failure: the creature lost its target (it goes back).",
+      "type": "object", "additionalProperties": false, "required": ["node", "lose_distance"],
+      "properties": { "node": { "const": "keep_target" }, "name": { "$ref": "#/$defs/name" },
+                      "lose_distance": { "type": "number", "minimum": 1, "maximum": 1000 } }
+    },
+    "status_action": {
+      "description": "A status action of the slice (its heal at low health, its buff). Failure: the slice has none, or it is not ready or not wanted.",
+      "type": "object", "additionalProperties": false, "required": ["node", "repeat", "pause"],
+      "properties": { "node": { "const": "status_action" }, "name": { "$ref": "#/$defs/name" },
+                      "repeat": { "$ref": "#/$defs/seconds" }, "pause": { "$ref": "#/$defs/pause" } }
+    },
+    "area_attack": {
+      "description": "An area attack of the slice at a character. Failure: the slice has none, or a different attack decides.",
+      "type": "object", "additionalProperties": false, "required": ["node", "repeat", "repeat_area_only", "hold_margin", "pause"],
+      "properties": { "node": { "const": "area_attack" }, "name": { "$ref": "#/$defs/name" },
+                      "repeat": { "$ref": "#/$defs/seconds" }, "repeat_area_only": { "$ref": "#/$defs/seconds" },
+                      "hold_margin": { "type": "number", "minimum": 0, "maximum": 50 }, "pause": { "$ref": "#/$defs/pause" } }
+    },
+    "basic_shot": {
+      "description": "The basic shot of an archer or a caster at a character. Failure: the slice has none, or the target is in the reach of its next melee attack.",
+      "type": "object", "additionalProperties": false, "required": ["node", "archer", "caster", "retreat_pause", "pause"],
+      "properties": { "node": { "const": "basic_shot" }, "name": { "$ref": "#/$defs/name" },
+                      "archer": { "$ref": "#/$defs/band" }, "caster": { "$ref": "#/$defs/band" },
+                      "retreat_pause": { "$ref": "#/$defs/seconds" }, "pause": { "$ref": "#/$defs/pause" } }
+    },
+    "melee": {
+      "description": "The melee attacks of the slice and the way to the target. Failure: the slice has no melee attack.",
+      "type": "object", "additionalProperties": false, "required": ["node", "light_before_heavy", "pause", "heavy_pause"],
+      "properties": { "node": { "const": "melee" }, "name": { "$ref": "#/$defs/name" },
+                      "light_before_heavy": { "type": "integer", "minimum": 1, "maximum": 20 },
+                      "pause": { "$ref": "#/$defs/pause" }, "heavy_pause": { "$ref": "#/$defs/pause" } }
+    },
+    "turn_to_target": {
+      "description": "The creature turns to its target. Always success.",
+      "type": "object", "additionalProperties": false, "required": ["node"],
+      "properties": { "node": { "const": "turn_to_target" }, "name": { "$ref": "#/$defs/name" } }
+    },
+    "roam": {
+      "description": "The patrol or the wander of a creature at rest. Failure: the creature is not at rest.",
+      "type": "object", "additionalProperties": false, "required": ["node"],
+      "properties": { "node": { "const": "roam" }, "name": { "$ref": "#/$defs/name" } }
+    }
+  }
+}

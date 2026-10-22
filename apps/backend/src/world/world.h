@@ -388,6 +388,12 @@ struct WorldOptions {
      * program gives a value of the time of its start; a test gives a value of its own.
      */
     std::uint64_t randomSeed{0x5357'4F55'4C57'4152ULL};
+    /**
+     * A folder of behavior tree files (stage BT1, world/behavior_tree.h): its `*.jsonc` files replace the trees of the program with the
+     * same name, and the development route of a reload reads it again. A development run only (SOULWARDEN_BEHAVIOR_DIR with
+     * --dev-commands). Empty: the trees of the program.
+     */
+    std::string behaviorDirectory;
 };
 
 class World {
