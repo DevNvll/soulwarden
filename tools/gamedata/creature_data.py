@@ -1405,6 +1405,11 @@ def read_creature_slice(path: str, asset: tuple[bytes, int], roots: list[Element
             raise Failure(f"{path}: m_lowHealthPercentThreshold is not a part of the maximum health ({found.value.hex()})")
         entry["lowHealth"] = round(value, 4)
         break
+    # Stage BT2: the server trees that the slice names (research BT0: one in 500 slices, two in the 3 bombers): a binding key of the
+    # backend. A member of a slice that names one or more.
+    trees = creature_behavior.read_server_trees(roots, path)
+    if trees:
+        entry["serverTrees"] = trees
     return entry
 
 
@@ -1443,6 +1448,10 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                                                        the slice (its end blend, else its animation; -1: not
                                                        known); only for a slice with one length (user test 2)
                  "spawnAction": NAME,                  only for a slice that needs its spawn action
+                 "serverTrees": [NAME, ...],           the server trees that the slice names (stage BT2: m_behaviorTreeAssets of
+                                                       its BehaviorTreeComponent, lower case, with no folder
+                                                       sharedassets/ai/behaviortrees/ and no suffix: "wolf/wolf_base"); a
+                                                       binding key of the backend; only for a slice that names one
                  "behavior": {"sight": [angle, distance], "combatSight": [angle, distance],
                               "leash": [at rest, in a fight], "speed": [walk, run]},
                  "tags": HEX,                          the tag state of its animation fragments (12 bytes)
@@ -1797,6 +1806,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                                       "notInTheSlice": sum(1 for body in used if "behavior" in slices[body]
                                                            and wander_flags[body] is None)}
     counts["slicesWithBehavior"] = sum(1 for body in used if "behavior" in slices[body])
+    # Stage BT2: the server trees of the slices (a binding key of the backend).
+    counts["slicesWithServerTree"] = sum(1 for body in used if "serverTrees" in slices[body])
+    counts["serverTrees"] = len({name for body in used for name in slices[body].get("serverTrees", [])})
     counts["slicesWithAttacks"] = sum(1 for body in used if slices[body].get("attacks"))
     counts["slicesWithTags"] = sum(1 for body in used if "tags" in slices[body])
     # The hit facts (stage 3.3b-S5).

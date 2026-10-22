@@ -653,6 +653,18 @@ struct CreatureBrain {
     std::vector<std::uint8_t> last;
     /** The value of each declared key of the blackboard of the tree. */
     std::vector<float> board;
+    /**
+     * Stage BT2: for each action that the tree names (tree::CompiledTree::actions), its index in the status actions or the area attacks of
+     * the slice of the creature (the behavior binds them when it binds the tree).
+     */
+    std::vector<std::int32_t> actions;
+    /**
+     * Stage BT2: the binding that selected the tree (tree::Selection::text: "family Wolf (binding 3)", "a command"), and the cause when the
+     * slice of the creature does not fit the tree of its binding (the creature then has the tree default). Texts for a view: the behavior
+     * sets them when it binds the creature, not in a step.
+     */
+    std::string binding;
+    std::string refusal;
     /** The time of the last step, and what decided it. */
     WorldClock::time_point at{};
     StepCause cause{StepCause::none};

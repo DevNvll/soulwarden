@@ -190,6 +190,13 @@ json creatures_view(world::World& target, const std::string& character, std::opt
             row["waypoints"] = route->points.size();
         }
         row["immune"] = entity->creature.immune();
+        // The behavior tree (stage BT2): its name, the binding that selected it, and the refusal of the tree of its binding.
+        const world::CreatureBrain& brain = mind.brain;
+        row["tree"] = brain.tree ? brain.tree->name : std::string();
+        row["treeBinding"] = brain.binding;
+        if (!brain.refusal.empty()) {
+            row["treeRefused"] = brain.refusal;
+        }
         // A forced movement that runs (stage 3.3b-S4): the damage row of its hit.
         if (entity->creature.forced) {
             row["forced"] = entity->creature.forced->row;
@@ -473,8 +480,8 @@ WorldCommand creature_shoot(const std::string& character, const Arguments& argum
             return message(404, "the world has no creature with this id, or the character is not in the world");
         }
         if (!target.creatures().behavior().command_shot(*creature, aimed->id)) {
-            return message(400, "the creature does not shoot: it has no basic shot, it is dead, it holds, or the character is dead or "
-                                "ignored");
+            return message(400, "the creature does not shoot: it has no basic shot, it is dead, it holds, the character is dead or "
+                                "ignored, or no tree of it has a node basic_shot of its band");
         }
         log::write("world: command: creature %s shoots at %s", id_text(id).c_str(), character.c_str());
         return creature_reply(world::CreatureResult{world::CreatureError::none, creature});
@@ -497,8 +504,8 @@ WorldCommand creature_area(const std::string& character, const Arguments& argume
             return message(404, "the world has no creature with this id, or the character is not in the world");
         }
         if (!target.creatures().behavior().command_area(*creature, aimed->id)) {
-            return message(400, "the creature makes no area attack: it has no area attack with spell data, it is dead, it holds, or the "
-                                "character is dead or ignored");
+            return message(400, "the creature makes no area attack: it has no area attack with spell data, it is dead, it holds, the "
+                                "character is dead or ignored, or no tree of it has a node area_attack");
         }
         log::write("world: command: creature %s starts its area attack at %s", id_text(id).c_str(), character.c_str());
         return creature_reply(world::CreatureResult{world::CreatureError::none, creature});
@@ -530,7 +537,8 @@ WorldCommand creature_status_action(const std::string& character, const Argument
             return message(404, "the world has no creature with this id");
         }
         if (!target.creatures().behavior().command_status_action(*creature, action)) {
-            return message(400, "the creature starts no status action: it has no such status action, it is dead, or it holds");
+            return message(400, "the creature starts no status action: it has no such status action, it is dead, it holds, or no tree of "
+                                "it has a node status_action");
         }
         log::write("world: command: creature %s starts its status action %s", id_text(id).c_str(), action.empty() ? "(the first)" : action.c_str());
         return creature_reply(world::CreatureResult{world::CreatureError::none, creature});
@@ -601,6 +609,11 @@ WorldCommand creature_tree(const std::string& character, const Arguments& argume
                   {"decided", brain.decided != 0 ? std::string(world::tree::kind_name(static_cast<world::tree::NodeKind>(brain.decided - 1)))
                                                  : std::string()}};
         reply["step"] = step;
+        // The binding (stage BT2): the binding that selected the tree, and the refusal of the tree of its binding.
+        reply["binding"] = brain.binding;
+        if (!brain.refusal.empty()) {
+            reply["refused"] = brain.refusal;
+        }
         if (brain.tree) {
             const world::tree::CompiledTree& tree = *brain.tree;
             reply["tree"] = tree.name;
@@ -612,6 +625,8 @@ WorldCommand creature_tree(const std::string& character, const Arguments& argume
                 for (const auto& [name, value] : world::tree::parameters(tree, index)) {
                     parameters[name] = (name == "key" && static_cast<std::size_t>(value) < tree.keys.size())
                                            ? json(tree.keys[static_cast<std::size_t>(value)].name)
+                                       : (name == "action" && static_cast<std::size_t>(value) < tree.actions.size())
+                                           ? json(tree.actions[static_cast<std::size_t>(value)].name)
                                            : json(value);
                 }
                 const auto status = static_cast<world::tree::Status>(index < brain.last.size() ? brain.last[index] : 0);
@@ -665,8 +680,50 @@ WorldCommand reload_creature_trees(const std::string&, const Arguments&, Creatur
         log::write("world: command: the behavior trees again (%zu tree(s), %zu file(s) refused)", report.loaded.size(), report.refused.size());
         return json_reply(loaded ? 200 : 500, json{{"loaded", report.loaded},
                                                    {"refused", report.refused},
+                                                   {"bindings", report.bindings},
                                                    {"folder", !target.options().behaviorDirectory.empty()}}
                                                   .dump());
+    };
+}
+
+WorldCommand set_creature_tree(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                               service::HttpResponse& refusal) {
+    if (!harness_gate()) {
+        refusal = message(403, "the tree of a creature is a harness command: the backend needs SOULWARDEN_HARNESS=1");
+        return {};
+    }
+    const auto id = creature_id(arguments);
+    const std::string name = arguments.text("tree").value_or(std::string());
+    if (!id || name.empty() || name.size() > 64) {
+        refusal = message(400, "give creature=ID (16 hexadecimal digits) and tree=NAME (a tree of the set)");
+        return {};
+    }
+    return [character, id = *id, reach, name](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
+        world::Entity* creature = target.creatures().find(id);
+        if (creature == nullptr) {
+            return message(404, "the world has no creature with this id");
+        }
+        std::string cause;
+        switch (target.creatures().behavior().set_tree(*creature, name, cause)) {
+        case world::Behavior::TreeCommand::unknownTree:
+            return message(404, cause);
+        case world::Behavior::TreeCommand::refused:
+            return json_reply(409, json{{"message", "refused: " + cause + "; the creature keeps its tree"},
+                                        {"creature", id_text(id)},
+                                        {"tree", creature->creature.mind.brain.tree ? creature->creature.mind.brain.tree->name : std::string()}}
+                                       .dump());
+        case world::Behavior::TreeCommand::done:
+            break;
+        }
+        return json_reply(200, json{{"message", "done"},
+                                    {"creature", id_text(id)},
+                                    {"kind", creature->creature.kind->id},
+                                    {"tree", name},
+                                    {"binding", creature->creature.mind.brain.binding}}
+                                   .dump());
     };
 }
 

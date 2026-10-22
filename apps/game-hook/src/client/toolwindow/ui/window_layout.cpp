@@ -361,12 +361,13 @@ void draw_creatures() {
         send("reset_creatures", json::object(), "Reset the spawn points that wait");
     }
     ImGui::EndDisabled();
-    if (ImGui::BeginTable("creatures", 5, kTable, ImVec2(0.0F, std::max(line * 6.0F, ImGui::GetContentRegionAvail().y)))) {
+    if (ImGui::BeginTable("creatures", 6, kTable, ImVec2(0.0F, std::max(line * 6.0F, ImGui::GetContentRegionAvail().y)))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Creature", ImGuiTableColumnFlags_WidthStretch, 3.2F);
         ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthStretch, 0.8F);
         ImGui::TableSetupColumn("Health", ImGuiTableColumnFlags_WidthStretch, 2.1F);
         ImGui::TableSetupColumn("Meters", ImGuiTableColumnFlags_WidthStretch, 1.0F);
+        ImGui::TableSetupColumn("Tree", ImGuiTableColumnFlags_WidthStretch, 2.2F);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 3.7F);
         ImGui::TableHeadersRow();
         for (const model::Creature& creature : g_data.creatures) {
@@ -389,6 +390,20 @@ void draw_creatures() {
             }
             ImGui::TableNextColumn();
             ImGui::Text("%.1f", static_cast<double>(creature.distance));
+            // The behavior tree (stage BT2): its name; the binding that selected it, and a refused tree of the binding, in the tooltip.
+            ImGui::TableNextColumn();
+            if (creature.treeRefused.empty()) {
+                ImGui::TextUnformatted(creature.tree.empty() ? "-" : creature.tree.c_str());
+            } else {
+                ImGui::TextColored(kErrorColor, "%s (refused)", creature.tree.c_str());
+            }
+            if (ImGui::IsItemHovered() && !creature.treeBinding.empty()) {
+                if (creature.treeRefused.empty()) {
+                    ImGui::SetTooltip("Binding: %s", creature.treeBinding.c_str());
+                } else {
+                    ImGui::SetTooltip("Binding: %s\nRefused: %s", creature.treeBinding.c_str(), creature.treeRefused.c_str());
+                }
+            }
             ImGui::TableNextColumn();
             const std::string name = creature.name.empty() ? creature.kind : creature.name;
             ImGui::BeginDisabled(g_data.busy || creature.dead);

@@ -67,6 +67,16 @@ of the tool (made-up sources): the values 12 to 14 of the spawn point (the phase
   phase-missing-flag            no m_day                                            status 1, the file stays
   phase-two-constraints         two constraint components                           status 1, the file stays
 
+The server trees of a slice (stage BT2; test case BB1 of the backend reads the member), with made-up asset values of the field
+m_behaviorTreeAssets (the asset id, 16 bytes, the asset type, the length of the path, the path):
+
+  case                          what                                                expected result
+  trees-one                     one tree "SharedAssets/AI/BehaviorTrees/Wolf/..."   ["wolf/wolf_base"]
+  trees-two                     a base tree, the explode tree, the base tree again  two names in the sequence of the slice
+  trees-none                    no field                                            no name (no member in the file)
+  trees-other-folder            a path that is not in sharedassets/ai/behaviortrees the tool stops (Failure)
+  trees-cut-length              a length that is not the length of the path         the tool stops (Failure)
+
 Usage: check_creature_tool.py WORK_FOLDER     status 0: each case gives its result
 """
 
@@ -969,6 +979,43 @@ def check_review_support(work: Path) -> int:
     return failures
 
 
+def tree_asset(path: str, length: int | None = None) -> bytes:
+    """@return One made-up asset value of m_behaviorTreeAssets: the asset id, 16 bytes, the asset type, the length, the path."""
+    data = path.encode("utf-8")
+    return bytes(range(16)) + bytes(16) + bytes(range(16, 32)) + (len(data) if length is None else length).to_bytes(8, "big") + data
+
+
+def check_server_trees() -> int:
+    """The server trees of a slice (stage BT2): creature_behavior.read_server_trees with made-up elements."""
+    behavior = cd.creature_behavior
+    base = "SharedAssets/AI/BehaviorTrees/Wolf/Wolf_Base.behaviortree"
+    explode = "sharedassets/ai/behaviortrees/bomber/bomber_explode.behaviortree"
+
+    def slice_roots(*values: bytes) -> list:
+        assets = node(behavior.TREE_ASSETS_FIELD, children=[node(children=[node(cd.field_id("m_asset"), value)]) for value in values])
+        return [node(children=[node(children=[assets])])]
+
+    cases = [("trees-one", slice_roots(tree_asset(base)), ["wolf/wolf_base"]),
+             ("trees-two", slice_roots(tree_asset("SharedAssets/AI/BehaviorTrees/Bomber/Bomber_Base.behaviortree"), tree_asset(explode),
+                                       tree_asset("sharedassets/ai/behaviortrees/bomber/bomber_base.behaviortree")),
+              ["bomber/bomber_base", "bomber/bomber_explode"]),
+             ("trees-none", [node(children=[node(cd.field_id("m_name"), b"x")])], []),
+             ("trees-other-folder", slice_roots(tree_asset("sharedassets/ai/other/wolf.behaviortree")), None),
+             ("trees-cut-length", slice_roots(tree_asset(base, length=12)), None)]
+    failures = 0
+    for case, roots, expected in cases:
+        try:
+            names = behavior.read_server_trees(roots, "slices/check/creature.dynamicslice")
+            passed = names == expected
+            detail = f"{names}"
+        except cd.Failure as error:
+            passed = expected is None
+            detail = f"Failure: {error}"
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
+        failures += 0 if passed else 1
+    return failures
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
@@ -1039,6 +1086,7 @@ def main() -> int:
     failures += check_status_actions()
     failures += check_lengths()
     failures += check_u3()
+    failures += check_server_trees()
     return 1 if failures else 0
 
 

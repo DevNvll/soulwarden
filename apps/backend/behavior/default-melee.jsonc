@@ -1,0 +1,8 @@
+// The melee attacks (stages 3.4b to 3.4e: kLightAttacks, kAttackPause, kHeavyPause; stage BT2: a subtree of default/fight), the way to the
+// target, the crowd, and the wait at the place nearest to a target with no way. Times in seconds.
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "default/melee",
+  "root": { "node": "melee", "light_before_heavy": 3, "pause": 1.5, "heavy_pause": 2.5 }
+}

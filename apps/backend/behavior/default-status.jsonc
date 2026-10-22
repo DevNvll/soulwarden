@@ -1,0 +1,7 @@
+// The heal at low health or the buff of the slice (stage 3.4f-D, kStatusRepeat; stage BT2: a subtree of default/fight). Times in seconds.
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "default/status",
+  "root": { "node": "status_action", "repeat": 20, "pause": 1.5 }
+}

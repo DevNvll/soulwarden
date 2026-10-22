@@ -118,6 +118,12 @@ MAX_SPEED_FIELD = field_id("m_maxSpeed")
 NAME_FIELD = field_id("m_name")
 DEFAULT_TAGS_FIELD = field_id("m_defaultTags")
 VALUE_FIELD = field_id("m_value")
+# Stage BT2: the server trees of a slice (the BehaviorTreeComponent of its entity "AI Functionality", research BT0). Each element below
+# the field is one asset value: the asset id (16 bytes), 16 bytes, the asset type (16 bytes), the length of the path (8 bytes, big
+# endian), and the path. Each path of the 503 slices of the supported build is in the folder SERVER_TREE_FOLDER (research BT0).
+TREE_ASSETS_FIELD = field_id("m_behaviorTreeAssets")
+SERVER_TREE_FOLDER = "sharedassets/ai/behaviortrees/"
+SERVER_TREE_SUFFIX = ".behaviortree"
 
 # The slots of the weapons of a creature: the slot numbers of the paperdoll.
 MAIN_HAND_SLOT = 24
@@ -344,6 +350,35 @@ def read_behavior(roots: list) -> dict | None:
             "wander": [1 if flags.get("Enable_Wander") else 0, rounded(nearest), rounded(farthest)],
             # For the counts of the tool only (not a member of the file): the value of the slice.
             "wanderFlag": flags.get("Enable_Wander")}
+
+
+def server_tree_name(value: bytes, slice_path: str) -> str:
+    """@return The name of a server tree from one asset value of m_behaviorTreeAssets: its path in lower case, with no folder
+    SERVER_TREE_FOLDER and no suffix SERVER_TREE_SUFFIX ("wolf/wolf_base"). A value that is not an asset with a path of a tree stops the
+    tool."""
+    length = int.from_bytes(value[48:56], "big") if len(value) >= 56 else -1
+    path = value[56:].decode("utf-8", "replace").replace("\\", "/").lower() if length == len(value) - 56 else ""
+    if not path.startswith(SERVER_TREE_FOLDER) or not path.endswith(SERVER_TREE_SUFFIX) or len(path) <= len(SERVER_TREE_FOLDER) + len(
+            SERVER_TREE_SUFFIX):
+        raise Failure(f"{slice_path}: a value of m_behaviorTreeAssets is not the asset of a behavior tree ({value[:64].hex()})")
+    return path[len(SERVER_TREE_FOLDER):-len(SERVER_TREE_SUFFIX)]
+
+
+def read_server_trees(roots: list, slice_path: str) -> list[str]:
+    """@return The server trees that a slice names (stage BT2), in the sequence of the slice, each one time: the names of
+    server_tree_name. The tree files are not in the client (research BT0): a name is a binding key of the backend
+    (apps/backend/behavior/bindings.jsonc), not a tree that the backend runs."""
+    names: list[str] = []
+    for root in roots:
+        for node in walk(root):
+            if node.name != TREE_ASSETS_FIELD:
+                continue
+            for entry in walk(node):
+                if entry is not node and entry.value is not None and len(entry.value) > 0:
+                    name = server_tree_name(entry.value, slice_path)
+                    if name not in names:
+                        names.append(name)
+    return names
 
 
 def read_default_tags(roots: list) -> set[str]:

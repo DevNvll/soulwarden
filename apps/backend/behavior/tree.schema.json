@@ -37,6 +37,10 @@
     "pause": { "type": "number", "minimum": 0, "maximum": 60 },
     "distance": { "type": "number", "minimum": 0, "maximum": 200 },
     "name": { "type": "string", "maxLength": 64, "description": "A name of the node for the view of tools/world creature tree." },
+    "action": {
+      "description": "Stage BT2: the name of an action of the slice that the node uses (no member: each one of the slice). The behavior refuses the tree for a creature whose slice does not have it (the creature has the tree default).",
+      "type": "string", "pattern": "^[A-Za-z0-9_]{1,64}$"
+    },
     "band": {
       "type": "object",
       "additionalProperties": false,
@@ -118,21 +122,23 @@
                       "lose_distance": { "type": "number", "minimum": 1, "maximum": 1000 } }
     },
     "status_action": {
-      "description": "A status action of the slice (its heal at low health, its buff). Failure: the slice has none, or it is not ready or not wanted.",
+      "description": "A status action of the slice (its heal at low health, its buff), or only the status action of the member action. Failure: the slice has none, or it is not ready or not wanted.",
       "type": "object", "additionalProperties": false, "required": ["node", "repeat", "pause"],
       "properties": { "node": { "const": "status_action" }, "name": { "$ref": "#/$defs/name" },
-                      "repeat": { "$ref": "#/$defs/seconds" }, "pause": { "$ref": "#/$defs/pause" } }
+                      "repeat": { "$ref": "#/$defs/seconds" }, "pause": { "$ref": "#/$defs/pause" }, "action": { "$ref": "#/$defs/action" } }
     },
     "area_attack": {
-      "description": "An area attack of the slice at a character. Failure: the slice has none, or a different attack decides.",
+      "description": "An area attack of the slice at a character, or only the area attack of the member action. Failure: the slice has none, or a different attack decides.",
       "type": "object", "additionalProperties": false, "required": ["node", "repeat", "repeat_area_only", "hold_margin", "pause"],
       "properties": { "node": { "const": "area_attack" }, "name": { "$ref": "#/$defs/name" },
                       "repeat": { "$ref": "#/$defs/seconds" }, "repeat_area_only": { "$ref": "#/$defs/seconds" },
-                      "hold_margin": { "type": "number", "minimum": 0, "maximum": 50 }, "pause": { "$ref": "#/$defs/pause" } }
+                      "hold_margin": { "type": "number", "minimum": 0, "maximum": 50 }, "pause": { "$ref": "#/$defs/pause" },
+                      "action": { "$ref": "#/$defs/action" } }
     },
     "basic_shot": {
-      "description": "The basic shot of an archer or a caster at a character. Failure: the slice has none, or the target is in the reach of its next melee attack.",
-      "type": "object", "additionalProperties": false, "required": ["node", "archer", "caster", "retreat_pause", "pause"],
+      "description": "The basic shot of an archer or a caster at a character. A node has the band of an archer, of a caster, or both (stage BT2). Failure: the slice has no shot, the node has no band of the slice, or the target is in the reach of its next melee attack.",
+      "type": "object", "additionalProperties": false, "required": ["node", "retreat_pause", "pause"],
+      "anyOf": [ { "required": ["archer"] }, { "required": ["caster"] } ],
       "properties": { "node": { "const": "basic_shot" }, "name": { "$ref": "#/$defs/name" },
                       "archer": { "$ref": "#/$defs/band" }, "caster": { "$ref": "#/$defs/band" },
                       "retreat_pause": { "$ref": "#/$defs/seconds" }, "pause": { "$ref": "#/$defs/pause" } }
@@ -150,9 +156,11 @@
       "properties": { "node": { "const": "turn_to_target" }, "name": { "$ref": "#/$defs/name" } }
     },
     "roam": {
-      "description": "The patrol or the wander of a creature at rest. Failure: the creature is not at rest.",
+      "description": "The patrol or the wander of a creature at rest. Failure: the creature is not at rest. Stage BT2: the wait after a walk of the wander (a random time from wait_shortest to wait_longest) and the pause after a goal with no way; a parameter that the node does not have: 4, 12, and 3 s (the values of stage 3.4e).",
       "type": "object", "additionalProperties": false, "required": ["node"],
-      "properties": { "node": { "const": "roam" }, "name": { "$ref": "#/$defs/name" } }
+      "properties": { "node": { "const": "roam" }, "name": { "$ref": "#/$defs/name" },
+                      "wait_shortest": { "$ref": "#/$defs/seconds" }, "wait_longest": { "$ref": "#/$defs/seconds" },
+                      "no_way_pause": { "$ref": "#/$defs/pause" } }
     }
   }
 }

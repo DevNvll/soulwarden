@@ -1,0 +1,13 @@
+// The basic cast of a caster (stage 3.4f-B: the band kCast*, kRetreatPause; stage BT2: a subtree of default/fight). The node has only the
+// band of a caster: it fails for an archer (default/shot). Times in seconds, distances in meters.
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "default/cast",
+  "root": {
+    "node": "basic_shot",
+    "caster": { "far": 16, "hold": 14, "near": 6, "middle": 11, "repeat": 2.5 },
+    "retreat_pause": 6,
+    "pause": 1.5
+  }
+}

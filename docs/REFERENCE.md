@@ -772,6 +772,14 @@ button on "Confirm").
   or the rule of the engine that held it), the result and the parameters of each node, and its blackboard. `SOULWARDEN_BEHAVIOR_DIR`
   (a variable of `tools/dev-run.sh`, only with the development commands) names a folder of tree files that replace the trees of the
   program, and `tools/world creature tree reload` (route `POST /v1/dev/creatures/tree/reload`, harness gate) reads them again.
+- The binding of a tree to a creature (stage BT2, [Creature behavior](systems/creature-behavior.md)). The binding file of the program
+  (`apps/backend/behavior/bindings.jsonc`) selects the tree of each creature by its kind, its vitals row, its slice, the server tree of its
+  slice (the member `serverTrees` of `creatures.json`), its creature type, or its family: the narrowest key wins. In BT2 each creature has
+  the default tree, which is now a set of subtrees (rest, fight, status, area, shot, cast, melee) with the behavior of before. A tree that
+  names an action that the slice of a creature does not have is refused for that creature (one log line), and the creature has the
+  default tree. The tab "Creatures" of the tool window shows the tree of each creature (the column "Tree"). In a development run
+  `tools/world creature tree CREATURE --set NAME` (route `POST /v1/dev/creatures/tree/set`, harness gate) gives a creature a tree now
+  (`default`: the default tree), and a file `bindings.jsonc` in `SOULWARDEN_BEHAVIOR_DIR` replaces the binding file of the program.
 - Interactions (stage 2.5a). The client shows the prompt of an object and executes its option
   at the key; the backend checks the request with the interaction data of the game and
   replies. A lore page: E (Read) opens the journal on the page, T (Add To Journal) adds it, and

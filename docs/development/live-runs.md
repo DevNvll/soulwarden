@@ -176,8 +176,9 @@ tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
   different build of the backend or of the hook. `SOULWARDEN_CREATURE_BEHAVIOR=0` turns the
   behavior of the creatures off for the run (the backend option `--no-creature-behavior`):
   the creatures stand at their spawn points. `SOULWARDEN_BEHAVIOR_DIR=FOLDER` (stage BT1): the
-  `*.jsonc` behavior tree files of the folder replace the trees of the program with the same name
-  (only with the development commands); `tools/world creature tree reload` reads them again. `SOULWARDEN_RESEARCH_SESSION` is the research
+  `*.jsonc` behavior tree files of the folder replace the trees of the program with the same name, and its `bindings.jsonc` (stage BT2)
+  replaces the binding file of the program (only with the development commands); `tools/world creature tree reload` reads them again,
+  and `tools/world creature tree CREATURE --set NAME` gives one creature a tree. `SOULWARDEN_RESEARCH_SESSION` is the research
   switch of the game server for live checks (`registration-result=N`, `reject=N`, `kick=N`,
   `kick-delay=SECONDS`; protocol notes 3.6; and `refuse-equipment=1`, which makes the backend
   refuse each equipment request with the message "equip item fail": the client sends only
@@ -191,6 +192,8 @@ tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
   `gamescope-1`; a later run got `gamescope-0`). `gamescopectl screenshot` with no variable can take the picture of the other display.
   Read the socket of the run from the environment of its backend and give it to each call:
   `GAMESCOPE_WAYLAND_DISPLAY=$(tr '\0' '\n' < /proc/PID_OF_THE_BACKEND/environ | grep '^GAMESCOPE_WAYLAND_DISPLAY=' | cut -d= -f2)`.
+  The socket of a gamescope that ended can stay (stage BT2: `gamescope-0` with no process, the run on `gamescope-1`): a call with no
+  variable then fails with "Failed to open GAMESCOPE_WAYLAND_DISPLAY", and a capture loop writes no picture.
   Delete a picture of a different display at once.
 - A `tools/world fragment` of a container state (the full form with a sequence) with a sequence above the world revision blocks the real
   states of that slot until the next session: the client takes no full container with a lower sequence (stage 1.8a: a fragment of slot 22

@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string_view>
 #include <vector>
 
@@ -41,6 +44,9 @@ bool at_place(const state::WorldPosition& place, const state::WorldPosition& goa
 std::chrono::milliseconds milliseconds(float seconds) {
     return std::chrono::milliseconds(static_cast<long long>(std::lround(seconds * 1000.0F)));
 }
+
+/** The named action of a node that the slice of the creature does not have (stage BT2): the leaf fails. -1: the node names no action. */
+constexpr std::int32_t kMissingAction = -2;
 
 /** @return The leash of a slice in a fight: the largest distance of a creature from its anchor, in meters. */
 float leash_of(const gamedata::CreatureBehavior& values) {
@@ -140,14 +146,19 @@ void Behavior::made(Entity& creature) {
     mind.homeYaw = creature.creature.yaw;
     mind.sentYaw = creature.creature.yaw;
     mind.anchor = creature.position;
-    // The creatures of one place do not all start their roam at one time.
-    const auto shortest = static_cast<float>(behavior_rules::kWanderWaitShortest.count());
+    // The tree of the creature (stage BT2: its binding).
+    bind(creature);
+    // The creatures of one place do not all start their roam at one time: a random part of the shortest wait of the roam of its tree.
+    const std::shared_ptr<const tree::CompiledTree>& own = creature.creature.mind.brain.tree;
+    const float* roamValues = own && own->first(tree::NodeKind::roam) != nullptr ? own->first(tree::NodeKind::roam)
+                              : m_default                                       ? m_default->first(tree::NodeKind::roam)
+                                                                                : nullptr;
+    const float shortest = roamValues != nullptr ? roam_values(roamValues).waitShortest : 0.0F;
     mind.roamWaitUntil = m_world.clock().now() + std::chrono::milliseconds(static_cast<long long>(m_world.random_unit() * shortest));
     // The navigation says if the creature stands on a floor: now, or when it has the data of the place.
     mind.walks = false;
     mind.groundKnown = false;
     (void)can_walk(creature);
-    bind(creature);
 }
 
 bool Behavior::can_walk(Entity& creature) {
@@ -972,7 +983,7 @@ void Behavior::stand(Entity& creature) {
     m_world.navigation().forget(creature.id);
 }
 
-void Behavior::roam(Entity& creature, float seconds) {
+void Behavior::roam(Entity& creature, float seconds, const RoamValues& values) {
     CreatureMind& mind = creature.creature.mind;
     const WorldClock::time_point now = m_world.clock().now();
     // An effect of an ability that holds the creature or keeps it at its place stops its walk too, and the hit stun of a hit (a passive
@@ -981,7 +992,7 @@ void Behavior::roam(Entity& creature, float seconds) {
         || hit_stunned(creature, now)) {
         return;
     }
-    if (!mind.roamGoal && !next_roam_goal(creature)) {
+    if (!mind.roamGoal && !next_roam_goal(creature, values)) {
         return;
     }
     const state::WorldPosition goal = *mind.roamGoal;
@@ -989,7 +1000,7 @@ void Behavior::roam(Entity& creature, float seconds) {
     // arrival: the navigation finds the way to it, or says that it has none (code review of
     // stage 3.4e, finding F2).
     if (at_place(creature.position, goal, behavior_rules::kRoamArrival)) {
-        at_roam_goal(creature);
+        at_roam_goal(creature, values);
         return;
     }
     const float speed = ambient_speed_of(*creature.creature.body->behavior) * creature.creature.speed_factor(now);
@@ -1004,7 +1015,7 @@ void Behavior::roam(Entity& creature, float seconds) {
     case StepKind::waiting:
         break;
     case StepKind::arrived:
-        at_roam_goal(creature);
+        at_roam_goal(creature, values);
         break;
     case StepKind::noWay:
     case StepKind::noGround:
@@ -1015,12 +1026,12 @@ void Behavior::roam(Entity& creature, float seconds) {
             next_waypoint(mind, *route);
         }
         mind.roamGoal.reset();
-        mind.roamWaitUntil = now + behavior_rules::kRoamNoWayPause;
+        mind.roamWaitUntil = now + values.noWayPause;
         break;
     }
 }
 
-bool Behavior::next_roam_goal(Entity& creature) {
+bool Behavior::next_roam_goal(Entity& creature, const RoamValues& roamValues) {
     CreatureMind& mind = creature.creature.mind;
     if (const gamedata::PatrolRoute* route = route_of(creature)) {
         mind.waypoint = std::min<std::uint32_t>(mind.waypoint, static_cast<std::uint32_t>(route->points.size() - 1));
@@ -1052,11 +1063,11 @@ bool Behavior::next_roam_goal(Entity& creature) {
         return true;
     }
     ++m_counts.roamNoWay;
-    mind.roamWaitUntil = m_world.clock().now() + behavior_rules::kRoamNoWayPause;
+    mind.roamWaitUntil = m_world.clock().now() + roamValues.noWayPause;
     return false;
 }
 
-void Behavior::at_roam_goal(Entity& creature) {
+void Behavior::at_roam_goal(Entity& creature, const RoamValues& values) {
     CreatureMind& mind = creature.creature.mind;
     const WorldClock::time_point now = m_world.clock().now();
     // The end of the walk: the client plays the idle action of the creature.
@@ -1065,8 +1076,8 @@ void Behavior::at_roam_goal(Entity& creature) {
     const gamedata::PatrolRoute* route = route_of(creature);
     if (route == nullptr) {
         ++m_counts.wanderPlaces;
-        const auto shortest = static_cast<float>(behavior_rules::kWanderWaitShortest.count());
-        const auto longest = static_cast<float>(behavior_rules::kWanderWaitLongest.count());
+        const float shortest = values.waitShortest;
+        const float longest = values.waitLongest;
         mind.roamWaitUntil =
             now + std::chrono::milliseconds(static_cast<long long>(shortest + m_world.random_unit() * (longest - shortest)));
         return;
@@ -1248,6 +1259,22 @@ Behavior::StatusValues Behavior::status_values(const float* values) {
     return StatusValues{milliseconds(values[tree::param::kStatusRepeat]), milliseconds(values[tree::param::kStatusPause])};
 }
 
+Behavior::RoamValues Behavior::roam_values(const float* values) {
+    // The waits in milliseconds as floats: the random wait of a wander is the same number as with the constants before stage BT2.
+    return RoamValues{values[tree::param::kWaitShortest] * 1000.0F, values[tree::param::kWaitLongest] * 1000.0F,
+                      milliseconds(values[tree::param::kNoWayPause])};
+}
+
+std::int32_t Behavior::named_action(const Entity& creature, const float* values, std::size_t place) {
+    const float slot = values[place];
+    if (slot < 0.0F) {
+        return -1;
+    }
+    const std::vector<std::int32_t>& actions = creature.creature.mind.brain.actions;
+    const auto index = static_cast<std::size_t>(slot);
+    return index < actions.size() ? actions[index] : kMissingAction;
+}
+
 bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, float seconds, const ShotValues& shotValues) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
@@ -1417,7 +1444,10 @@ void Behavior::start_shot(Entity& creature, Entity& target, std::uint32_t shot, 
 bool Behavior::command_shot(Entity& creature, EntityId target) {
     const gamedata::CreatureSlice& body = *creature.creature.body;
     Entity* character = fightable(target);
-    if (creature.creature.dead || !body.basicShot || character == nullptr || character->kind != EntityKind::player
+    // The values of a basic_shot node of its tree or of the default tree: a tree with no such node (a reload of a folder) refuses the command
+    // before a change of the creature (code review of stage BT1, finding R4).
+    const float* values = command_values(creature, tree::NodeKind::basic_shot);
+    if (creature.creature.dead || !body.basicShot || character == nullptr || character->kind != EntityKind::player || values == nullptr
         || creature.creature.held(m_world.clock().now()) || creature.creature.held_by_force()) {
         return false;
     }
@@ -1427,8 +1457,7 @@ bool Behavior::command_shot(Entity& creature, EntityId target) {
     if (mind.mode != CreatureMode::fight || mind.target != character->id) {
         take_target(creature, *character, "a command shot", horizontal_distance(creature.position, character->position));
     }
-    start_shot(creature, *character, *body.basicShot,
-               shot_values(body, command_values(creature, tree::NodeKind::basic_shot), cadence_of(creature)));
+    start_shot(creature, *character, *body.basicShot, shot_values(body, values, cadence_of(creature)));
     return mind.shooting;
 }
 
@@ -1548,17 +1577,21 @@ std::vector<std::uint32_t> Behavior::usable_areas(const gamedata::CreatureSlice&
     return usable;
 }
 
-bool Behavior::think_area(Entity& creature, Entity& target, float seconds, const AreaValues& values) {
+bool Behavior::think_area(Entity& creature, Entity& target, float seconds, const AreaValues& values, std::int32_t named) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const std::vector<std::uint32_t> usable = usable_areas(body);
     if (usable.empty()) {
         return false; // No spell data of the shape of its casts: the other rules decide.
     }
+    // The area attack that the node names (stage BT2): the other rules decide when the spell system cannot make its casts.
+    if (named >= 0 && std::find(usable.begin(), usable.end(), static_cast<std::uint32_t>(named)) == usable.end()) {
+        return false;
+    }
     const WorldClock::time_point now = m_world.clock().now();
     // A creature whose only attack is an area attack (the Undead Shaman) keeps its distance by the area rules.
     const bool only = body.attacks.empty() && !body.basicShot;
-    const std::uint32_t area = usable[mind.nextArea % usable.size()];
+    const std::uint32_t area = named >= 0 ? static_cast<std::uint32_t>(named) : usable[mind.nextArea % usable.size()];
     const float range = area_range(body.areas[area].casts.front());
     const float away = horizontal_distance(creature.position, target.position);
     const float rise = std::fabs(creature.position.z - target.position.z);
@@ -1640,7 +1673,8 @@ bool Behavior::command_area(Entity& creature, EntityId target) {
     const gamedata::CreatureSlice& body = *creature.creature.body;
     Entity* character = fightable(target);
     const std::vector<std::uint32_t> usable = usable_areas(body);
-    if (creature.creature.dead || usable.empty() || character == nullptr || character->kind != EntityKind::player
+    const float* values = command_values(creature, tree::NodeKind::area_attack); // null: no such node (finding R4 of BT1)
+    if (creature.creature.dead || usable.empty() || character == nullptr || character->kind != EntityKind::player || values == nullptr
         || creature.creature.held(m_world.clock().now()) || creature.creature.held_by_force()) {
         return false;
     }
@@ -1648,7 +1682,7 @@ bool Behavior::command_area(Entity& creature, EntityId target) {
     if (mind.mode != CreatureMode::fight || mind.target != character->id) {
         take_target(creature, *character, "a command area attack", horizontal_distance(creature.position, character->position));
     }
-    start_area(creature, *character, usable[mind.nextArea % usable.size()], area_values(command_values(creature, tree::NodeKind::area_attack)));
+    start_area(creature, *character, usable[mind.nextArea % usable.size()], area_values(values));
     return mind.shooting;
 }
 
@@ -1815,7 +1849,7 @@ bool Behavior::wants(const Entity& creature, const gamedata::CreatureStatusActio
     return low && creature.vitals.healthMax > 0.0F && creature.vitals.health <= *low * creature.vitals.healthMax;
 }
 
-bool Behavior::think_status(Entity& creature, Entity& target, const StatusValues& values) {
+bool Behavior::think_status(Entity& creature, Entity& target, const StatusValues& values, std::int32_t only) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const WorldClock::time_point now = m_world.clock().now();
@@ -1824,7 +1858,8 @@ bool Behavior::think_status(Entity& creature, Entity& target, const StatusValues
         return false;
     }
     for (std::uint32_t index = 0; index < body.statusActions.size(); ++index) {
-        if (wants(creature, body.statusActions[index])) {
+        // The status action that the node names (stage BT2), or each one.
+        if ((only < 0 || index == static_cast<std::uint32_t>(only)) && wants(creature, body.statusActions[index])) {
             turn_to(creature, target.position);
             start_status_action(creature, index, values);
             return mind.shooting;
@@ -1887,12 +1922,13 @@ void Behavior::status_mark(const PendingStatus& pending) {
 
 bool Behavior::command_status_action(Entity& creature, std::string_view action) {
     const gamedata::CreatureSlice& body = *creature.creature.body;
-    if (creature.creature.dead || creature.creature.held(m_world.clock().now()) || creature.creature.held_by_force()) {
+    const float* values = command_values(creature, tree::NodeKind::status_action); // null: no such node (finding R4 of BT1)
+    if (creature.creature.dead || values == nullptr || creature.creature.held(m_world.clock().now()) || creature.creature.held_by_force()) {
         return false;
     }
     for (std::uint32_t index = 0; index < body.statusActions.size(); ++index) {
         if (action.empty() || body.actions[body.statusActions[index].action].name == action) {
-            start_status_action(creature, index, status_values(command_values(creature, tree::NodeKind::status_action)));
+            start_status_action(creature, index, status_values(values));
             return creature.creature.mind.shooting;
         }
     }
@@ -1921,6 +1957,9 @@ bool Behavior::reload_trees(const std::string& folder, tree::LoadReport& report)
     for (const std::string& loaded : report.loaded) {
         log::write("world: behavior tree %s", loaded.c_str());
     }
+    // The binding file (stage BT2): its trees must be trees of the new set.
+    load_bindings(folder, report);
+    m_refusalsLogged.clear();
     // Each creature of the world gets the new tree: its state (the results of the nodes, the keys) starts again.
     std::vector<EntityId> creatures;
     for (const auto& [id, entity] : m_world.entities()) {
@@ -1936,26 +1975,156 @@ bool Behavior::reload_trees(const std::string& folder, tree::LoadReport& report)
     return true;
 }
 
-void Behavior::bind(Entity& creature) {
+void Behavior::load_bindings(const std::string& folder, tree::LoadReport& report) {
+    tree::BindingSet set;
+    std::string error;
+    const auto refuse = [&](const std::string& source) {
+        report.refused.push_back(source + ": " + error);
+        log::write("world: behavior tree refused: %s: %s", source.c_str(), error.c_str());
+    };
+    for (const tree::EmbeddedFile& file : tree::embedded_tree_files()) {
+        const std::string source = std::string("embedded:") + file.name;
+        if (file.name == tree::kBindingFile && !tree::BindingSet::parse(file.text, source, m_trees, set, error)) {
+            refuse(source); // A fault of the build: each creature has the tree default.
+        }
+    }
+    // The binding file of the folder of a development run replaces the file of the program (the whole file).
+    const std::filesystem::path path = std::filesystem::path(folder) / std::string(tree::kBindingFile);
+    std::error_code failure;
+    if (!folder.empty() && std::filesystem::is_regular_file(path, failure)) {
+        std::string text;
+        tree::BindingSet own;
+        if (!tree::read_text_file(path, tree::kMaxFileBytes, text, error)
+            || !tree::BindingSet::parse(text, std::string(tree::kBindingFile), m_trees, own, error)) {
+            refuse(std::string(tree::kBindingFile));
+        } else {
+            set = std::move(own);
+        }
+    }
+    m_bindings = std::move(set);
+    report.bindings = m_bindings.source().empty() ? std::string("no binding file: each creature has the tree default")
+                                                  : m_bindings.source() + ", " + std::to_string(m_bindings.bindings().size()) + " binding(s)";
+    log::write("world: behavior tree bindings: %s", report.bindings.c_str());
+}
+
+bool Behavior::fits(const tree::CompiledTree& tree, const gamedata::CreatureSlice& body, std::vector<std::int32_t>& actions, std::string& cause) {
+    actions.assign(tree.actions.size(), kMissingAction);
+    bool all = true;
+    for (std::size_t slot = 0; slot < tree.actions.size(); ++slot) {
+        const tree::NamedAction& named = tree.actions[slot];
+        const bool status = named.kind == tree::NodeKind::status_action;
+        const std::size_t count = status ? body.statusActions.size() : body.areas.size();
+        for (std::size_t index = 0; index < count; ++index) {
+            const std::uint32_t action = status ? body.statusActions[index].action : body.areas[index].action;
+            if (action < body.actions.size() && body.actions[action].name == named.name) {
+                actions[slot] = static_cast<std::int32_t>(index);
+                break;
+            }
+        }
+        if (actions[slot] == kMissingAction && all) {
+            all = false;
+            const char* what = status ? "status action" : "area attack";
+            cause = "the tree \"" + tree.name + "\" names the " + what + " \"" + named.name + "\" (node " + std::to_string(named.node)
+                    + "): the slice " + body.path + " has no " + what + " of this name";
+        }
+    }
+    return all;
+}
+
+void Behavior::attach(Entity& creature, const std::shared_ptr<const tree::CompiledTree>& tree, std::vector<std::int32_t> actions) {
     CreatureBrain& brain = creature.creature.mind.brain;
-    brain.tree = m_default;
-    brain.last.assign(m_default ? m_default->nodes.size() : 0, 0);
+    brain.tree = tree;
+    brain.last.assign(tree ? tree->nodes.size() : 0, 0);
     brain.board.clear();
-    if (m_default) {
-        for (const tree::Key& key : m_default->keys) {
+    if (tree) {
+        for (const tree::Key& key : tree->keys) {
             brain.board.push_back(key.initial);
         }
     }
+    brain.actions = std::move(actions);
+}
+
+void Behavior::bind(Entity& creature) {
+    CreatureBrain& brain = creature.creature.mind.brain;
+    brain.refusal.clear();
+    const gamedata::CreatureKind* kind = creature.creature.kind;
+    const gamedata::CreatureSlice* body = creature.creature.body;
+    if (!m_default || kind == nullptr || body == nullptr) {
+        brain.binding = m_default ? "no binding" : "no tree";
+        attach(creature, m_default, std::vector<std::int32_t>(m_default ? m_default->actions.size() : 0, kMissingAction));
+        return;
+    }
+    // The binding of the file (world/tree_binding.h): the narrowest key that matches; each tree of a binding is a tree of the set.
+    const tree::Selection selection = m_bindings.select(*kind, *body);
+    std::shared_ptr<const tree::CompiledTree> chosen = m_trees.find(selection.tree());
+    brain.binding = selection.text();
+    if (!chosen) {
+        chosen = m_default;
+    }
+    std::vector<std::int32_t> actions;
+    std::string cause;
+    if (!fits(*chosen, *body, actions, cause)) {
+        // The slice does not have an action that the tree names: the creature has the tree default (one log line for each tree and slice).
+        ++m_counts.treeRefusals;
+        brain.refusal = cause;
+        if (m_refusalsLogged.emplace(chosen->name, body->path).second) {
+            log::write("world: behavior tree refused for creature %016llx (%s, %s): %s; the creature has the tree default (one line for "
+                       "each tree and slice)",
+                       id_number(creature.id), kind->id.c_str(), brain.binding.c_str(), cause.c_str());
+        }
+        chosen = m_default;
+        (void)fits(*chosen, *body, actions, cause);
+    }
+    attach(creature, chosen, std::move(actions));
+}
+
+Behavior::TreeCommand Behavior::set_tree(Entity& creature, std::string_view name, std::string& cause) {
+    const std::shared_ptr<const tree::CompiledTree> chosen = m_trees.find(name);
+    if (!chosen) {
+        cause = "the set has no tree \"" + std::string(name) + "\"";
+        return TreeCommand::unknownTree;
+    }
+    std::vector<std::int32_t> actions;
+    if (!fits(*chosen, *creature.creature.body, actions, cause)) {
+        ++m_counts.treeRefusals;
+        log::write("world: command: behavior tree refused for creature %016llx (%s): %s; the creature keeps the tree %s",
+                   id_number(creature.id), creature.creature.kind->id.c_str(), cause.c_str(),
+                   creature.creature.mind.brain.tree ? creature.creature.mind.brain.tree->name.c_str() : "(none)");
+        return TreeCommand::refused;
+    }
+    attach(creature, chosen, std::move(actions));
+    CreatureBrain& brain = creature.creature.mind.brain;
+    brain.binding = "a command";
+    brain.refusal.clear();
+    ++m_counts.treeCommands;
+    log::write("world: command: creature %016llx (%s) has the tree %s", id_number(creature.id), creature.creature.kind->id.c_str(),
+               chosen->name.c_str());
+    return TreeCommand::done;
 }
 
 const float* Behavior::command_values(const Entity& creature, tree::NodeKind kind) const {
+    // The first node of the kind; for a shot the first node with the band of the slice (stage BT2: default/shot and default/cast).
+    const bool caster = creature.creature.body != nullptr && creature.creature.body->caster;
+    const auto first = [&](const tree::CompiledTree& tree) -> const float* {
+        if (kind != tree::NodeKind::basic_shot) {
+            return tree.first(kind);
+        }
+        for (std::size_t index = 0; index < tree.nodes.size(); ++index) {
+            const float* values = tree.values(index);
+            if (tree.nodes[index].kind == kind
+                && values[(caster ? tree::param::kCaster : tree::param::kArcher) + tree::param::kBandFar] != tree::param::kNoBand) {
+                return values;
+            }
+        }
+        return nullptr;
+    };
     const std::shared_ptr<const tree::CompiledTree>& own = creature.creature.mind.brain.tree;
     if (own) {
-        if (const float* values = own->first(kind)) {
+        if (const float* values = first(*own)) {
             return values;
         }
     }
-    return m_default->first(kind);
+    return m_default ? first(*m_default) : nullptr;
 }
 
 std::uint32_t Behavior::cadence_of(const Entity& creature) const {
@@ -2068,8 +2237,13 @@ tree::Status Behavior::run_node(Entity& creature, const tree::CompiledTree& tree
         if (creature.creature.body->statusActions.empty()) {
             break;
         }
+        // Stage BT2: the status action that the node names (no such action of the slice: the leaf fails).
+        const std::int32_t only = named_action(creature, values, tree::param::kStatusAction);
+        if (only == kMissingAction) {
+            break;
+        }
         Entity* target = step_target(creature);
-        status = leaf(target != nullptr && think_status(creature, *target, status_values(values)));
+        status = leaf(target != nullptr && think_status(creature, *target, status_values(values), only));
         break;
     }
     case NodeKind::area_attack: {
@@ -2077,15 +2251,21 @@ tree::Status Behavior::run_node(Entity& creature, const tree::CompiledTree& tree
         if (creature.creature.body->areas.empty()) {
             break;
         }
+        const std::int32_t named = named_action(creature, values, tree::param::kAreaAction);
+        if (named == kMissingAction) {
+            break;
+        }
         Entity* target = step_target(creature);
-        status = leaf(target != nullptr && target->kind == EntityKind::player && think_area(creature, *target, seconds, area_values(values)));
+        status = leaf(target != nullptr && target->kind == EntityKind::player
+                      && think_area(creature, *target, seconds, area_values(values), named));
         break;
     }
     case NodeKind::basic_shot: {
         // The basic shot of an archer or a caster (stages 3.4f-A and 3.4f-B) at a character only: the band, the release, the walk back.
         // Its melee attack wins in its reach (think_shot gives false).
         const gamedata::CreatureSlice& body = *creature.creature.body;
-        if (!body.basicShot) {
+        // Stage BT2: a node with no band of the slice (the subtree default/shot for a caster, default/cast for an archer) fails.
+        if (!body.basicShot || values[(body.caster ? tree::param::kCaster : tree::param::kArcher) + tree::param::kBandFar] == tree::param::kNoBand) {
             break;
         }
         Entity* target = step_target(creature);
@@ -2110,7 +2290,7 @@ tree::Status Behavior::run_node(Entity& creature, const tree::CompiledTree& tree
         break;
     case NodeKind::roam:
         if (mind.mode == CreatureMode::rest) {
-            roam(creature, seconds);
+            roam(creature, seconds, roam_values(values));
             status = Status::success;
         }
         break;

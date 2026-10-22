@@ -1,0 +1,9 @@
+// The area attack of the slice (stage 3.4f-C: kAreaRepeat, kAreaOnlyRepeat, kAreaHoldMargin; stage BT2: a subtree of default/fight). The
+// leaf fails for a target that is not a character (a summon): an area attack and a shot are only at a character (stage 3.4f-A). Times in
+// seconds, distances in meters.
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "default/area",
+  "root": { "node": "area_attack", "repeat": 10, "repeat_area_only": 5, "hold_margin": 2, "pause": 1.5 }
+}

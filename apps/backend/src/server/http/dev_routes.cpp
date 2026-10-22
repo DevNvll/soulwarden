@@ -119,10 +119,13 @@
 //   POST /v1/dev/creatures/area?creature=ID&character=ID   the creature starts its area attack at the character now (stage 3.4f-C)
 //   POST /v1/dev/creatures/status-action?creature=ID[&action=NAME]
 //                                                        the creature starts a status action (its heal, its buff) now (stage 3.4f-D)
-//   GET  /v1/dev/creatures/tree?creature=ID              the behavior tree of a creature: its last step, the result of each node,
-//                                                        the parameters, the blackboard (stage BT1)
-//   POST /v1/dev/creatures/tree/reload                   the behavior trees again from the program and SOULWARDEN_BEHAVIOR_DIR
-//                                                        (stage BT1; needs SOULWARDEN_HARNESS=1)
+//   GET  /v1/dev/creatures/tree?creature=ID              the behavior tree of a creature: its binding (stage BT2), its last step, the
+//                                                        result of each node, the parameters, the blackboard (stage BT1)
+//   POST /v1/dev/creatures/tree/reload                   the behavior trees and the binding file again from the program and
+//                                                        SOULWARDEN_BEHAVIOR_DIR (stage BT1; needs SOULWARDEN_HARNESS=1)
+//   POST /v1/dev/creatures/tree/set?creature=ID&tree=NAME
+//                                                        the creature gets the tree of this name now (stage BT2; needs
+//                                                        SOULWARDEN_HARNESS=1; 409: the slice does not have an action of the tree)
 //   POST /v1/dev/creatures/effect?creature=ID&status=NAME[&seconds=N]
 //                                                        a creature takes an effect of the ability
 //                                                        data, or a knockdown or a stagger (stage 3.3a)
@@ -975,6 +978,7 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("GET", "", "/v1/dev/creatures/tree", "dev.creatures_tree", creature_route(services, commands::creature_tree));
     router.add("POST", "", "/v1/dev/creatures/tree/reload", "dev.creatures_tree_reload",
                creature_route(services, commands::reload_creature_trees));
+    router.add("POST", "", "/v1/dev/creatures/tree/set", "dev.creatures_tree_set", creature_route(services, commands::set_creature_tree));
     router.add("GET", "", "/v1/dev/abilities", "dev.abilities", [&services](const RouteContext& context) {
         service::HttpResponse refusal;
         const auto character = character_of(context, refusal);

@@ -81,6 +81,13 @@ struct Creature {
     bool spawnPoint{false};
     /** Distance from the selected character, in meters. */
     float distance{0.0F};
+    /**
+     * The behavior tree of the creature (stage BT2), the binding that selected it ("family Wolf (binding 3)", "a command"), and the cause
+     * when its slice did not fit the tree of its binding (the creature then has the tree default). Empty: a backend of an earlier stage.
+     */
+    std::string tree;
+    std::string treeBinding;
+    std::string treeRefused;
 };
 
 /** One kind of the creature data of the backend. */

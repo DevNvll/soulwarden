@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -30,6 +31,11 @@
 // The files of the repository (apps/backend/behavior/*.jsonc) are in the program: the build puts their text into a generated source file
 // (`embedded_tree_files`). A development run can give a folder of files (WorldOptions::behaviorDirectory) that replace the embedded
 // trees of the same name, and reload it with a development route. The tree "default" must be there.
+//
+// Stage BT2: the default tree is a set of subtrees (default/rest, default/fight, default/status, default/area, default/shot, default/cast,
+// default/melee), and the binding file (kBindingFile, world/tree_binding.h) selects the tree of each creature. A `status_action` and an
+// `area_attack` can name the action of the slice that they use (`action`): the behavior refuses such a tree for a creature whose slice does
+// not have the action (one log line), and the creature has the tree "default".
 
 namespace soulwarden::backend::world::tree {
 
@@ -40,8 +46,12 @@ inline constexpr std::size_t kMaxNodes = 1024;
 inline constexpr std::size_t kMaxDepth = 32;
 /** The limit of a blackboard: the declared keys of a compiled tree. */
 inline constexpr std::size_t kMaxKeys = 64;
-/** The name of the tree of each creature in stage BT1. */
+/** The largest file of a folder of trees, and of a binding file (bytes). */
+inline constexpr std::size_t kMaxFileBytes = 1024 * 1024;
+/** The tree of a creature with no binding, and of a creature whose slice does not fit the tree of its binding. */
 inline constexpr std::string_view kDefaultTree = "default";
+/** The name of the binding file in the program and in a folder (stage BT2, world/tree_binding.h): the tree loader does not read it. */
+inline constexpr std::string_view kBindingFile = "bindings.jsonc";
 
 /** The kinds of the nodes of a tree. The names of the file are in `kind_name`. */
 enum class NodeKind : std::uint8_t {
@@ -61,7 +71,7 @@ enum class NodeKind : std::uint8_t {
     basic_shot,     ///< the basic shot of an archer or a caster (stages 3.4f-A and 3.4f-B)
     melee,          ///< the melee attacks of the slice, the way to the target, the crowd, and the wait with no way (stages 3.4b to 3.4e)
     turn_to_target, ///< the creature turns to its target
-    roam,           ///< the patrol or the wander of a creature at rest (stage 3.4e)
+    roam,           ///< the patrol or the wander of a creature at rest (stage 3.4e; its waits are parameters from stage BT2)
     set,            ///< a key of the blackboard gets a value (`key`, `value`)
 };
 inline constexpr std::size_t kNodeKinds = static_cast<std::size_t>(NodeKind::set) + 1;
@@ -79,12 +89,22 @@ enum class KeyType : std::uint8_t { boolean, integer, real };
 namespace param {
 inline constexpr std::size_t kLoseDistance = 0;
 inline constexpr std::size_t kTargetPlayer = 0; // target_is: 1 for "player", 0 for "summon"
-inline constexpr std::size_t kStatusRepeat = 0, kStatusPause = 1;
-inline constexpr std::size_t kAreaRepeat = 0, kAreaOnlyRepeat = 1, kAreaHoldMargin = 2, kAreaPause = 3;
-// basic_shot: the band of an archer (0 to 4), the band of a caster (5 to 9), the retreat pause, the pause after the shot.
+// status_action and area_attack (stage BT2): the last value is the place of the named action in `CompiledTree::actions`, or -1 (none: each
+// status action or area attack of the slice).
+inline constexpr std::size_t kStatusRepeat = 0, kStatusPause = 1, kStatusAction = 2;
+inline constexpr std::size_t kAreaRepeat = 0, kAreaOnlyRepeat = 1, kAreaHoldMargin = 2, kAreaPause = 3, kAreaAction = 4;
+// basic_shot: the band of an archer (0 to 4), the band of a caster (5 to 9), the retreat pause, the pause after the shot. A band that the
+// node does not have (stage BT2: the subtrees default/shot and default/cast have one band each) has kNoBand as its `far`: the node then
+// fails for a slice of that band.
 inline constexpr std::size_t kBandFar = 0, kBandHold = 1, kBandNear = 2, kBandMiddle = 3, kBandRepeat = 4;
 inline constexpr std::size_t kArcher = 0, kCaster = 5, kRetreatPause = 10, kShotPause = 11;
+inline constexpr float kNoBand = -1.0F;
 inline constexpr std::size_t kLightBeforeHeavy = 0, kMeleePause = 1, kHeavyPause = 2;
+// roam (stage BT2): the wait after a walk of the wander (a time from the first to the second value), and the pause after a goal with no way.
+// A roam node with no such parameter (a file of stage BT1) has the values of stage 3.4e (project rules): kWanderWaitShortest 4 s,
+// kWanderWaitLongest 12 s, kRoamNoWayPause 3 s. The subtree default/rest writes them.
+inline constexpr std::size_t kWaitShortest = 0, kWaitLongest = 1, kNoWayPause = 2;
+inline constexpr float kDefaultWaitShortest = 4.0F, kDefaultWaitLongest = 12.0F, kDefaultNoWayPause = 3.0F;
 inline constexpr std::size_t kCheckKey = 0, kCheckOp = 1, kCheckValue = 2;
 inline constexpr std::size_t kSetKey = 0, kSetValue = 1;
 } // namespace param
@@ -109,6 +129,17 @@ struct Key {
     float initial{0.0F};
 };
 
+/**
+ * An action of the slice that a node of a compiled tree names (stage BT2): the member `action` of a `status_action` (a status action of the
+ * slice) or of an `area_attack` (an area attack of the slice). The behavior binds it to the slice of each creature.
+ */
+struct NamedAction {
+    /** The node that names it. */
+    std::uint32_t node{0};
+    NodeKind kind{NodeKind::status_action};
+    std::string name;
+};
+
 /** A tree with its subtrees in one flat node table: what the runtime of world/behavior.h runs. */
 struct CompiledTree {
     std::string name;
@@ -117,6 +148,8 @@ struct CompiledTree {
     std::vector<Node> nodes;
     std::vector<float> params;
     std::vector<Key> keys;
+    /** The actions of the slice that its nodes name (stage BT2): the parameter kStatusAction or kAreaAction of a node is a place here. */
+    std::vector<NamedAction> actions;
     /** The first node of each kind (a development command takes its values from it), or -1. */
     std::array<std::int32_t, kNodeKinds> firstOfKind{};
     /** The cadence of the light and heavy attacks of the first melee node (the melee rule of a shot needs the next melee attack). */
@@ -138,6 +171,8 @@ struct TreeFile {
     std::string source;
     std::vector<Key> keys;
     std::string root;
+    /** The trees that its subtree nodes name (the load compiles the set after the last file: code review of stage BT1, finding R2). */
+    std::vector<std::string> subtrees;
 };
 
 /** @return The name of a node kind in a file ("basic_shot"). */
@@ -146,7 +181,9 @@ struct TreeFile {
 [[nodiscard]] std::string_view status_name(Status status);
 /**
  * @return The parameters of a node of a compiled tree as (name, value) pairs in the names of the file ("archer.far", "light_before_heavy";
- *         the key of a check or a set node as its name: "key", with the slot in `CompiledTree::keys`): the view of a development command.
+ *         the key of a check or a set node as its name: "key", with the slot in `CompiledTree::keys`; the named action of a node as
+ *         "action", with its place in `CompiledTree::actions`; a band that the node does not have is not there): the view of a
+ *         development command.
  */
 [[nodiscard]] std::vector<std::pair<std::string, float>> parameters(const CompiledTree& tree, std::size_t index);
 
@@ -160,6 +197,12 @@ bool load_tree_file(std::string_view text, const std::string& source, TreeFile& 
 [[nodiscard]] std::shared_ptr<const CompiledTree> compile(const TreeFile& file, const std::map<std::string, TreeFile, std::less<>>& files,
                                                           std::string& error);
 
+/**
+ * Reads a text file of at most `limit` bytes: it reads at most `limit` + 1 bytes (code review of stage BT1, finding R5). @return False with
+ * `error` for a file that cannot be read or is larger.
+ */
+bool read_text_file(const std::filesystem::path& path, std::size_t limit, std::string& text, std::string& error);
+
 /** The files of apps/backend/behavior that the build put into the program: (file name, text). */
 struct EmbeddedFile {
     const char* name;
@@ -167,10 +210,14 @@ struct EmbeddedFile {
 };
 [[nodiscard]] const std::vector<EmbeddedFile>& embedded_tree_files();
 
-/** The result of a load of a set of files: one text for each tree that was loaded, and one for each file that was refused. */
+/**
+ * The result of a load of a set of files: one text for each tree that was loaded, and one for each file that was refused. `bindings`: the
+ * binding file that the behavior uses and its bindings (stage BT2, world/tree_binding.h).
+ */
 struct LoadReport {
     std::vector<std::string> loaded;
     std::vector<std::string> refused;
+    std::string bindings;
 };
 
 /**
@@ -181,8 +228,9 @@ class TreeSet {
 public:
     /**
      * Loads the embedded files, then the `*.jsonc` files of a folder (empty: none) that replace the trees of the same name, and compiles
-     * each tree. A file that is not correct, and a file whose tree (or a tree that uses it) does not compile, are refused (`report`); the
-     * earlier tree of that name stays. @return False when the set has no tree "default" that compiles.
+     * the set after the last file (a subtree can be in a later file). The binding file (kBindingFile) is not a tree: world/tree_binding.h
+     * reads it. A file that is not correct (or larger than kMaxFileBytes), and a file whose tree does not compile by a fault of its own, are
+     * refused (`report`); the tree of the program of that name stays. @return False when the set has no tree "default" that compiles.
      */
     bool load(const std::string& folder, LoadReport& report);
     /** Adds one file: it replaces the tree of the same name when it is correct and each tree of the set compiles with it. */

@@ -391,7 +391,8 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
 [[nodiscard]] WorldCommand creature_status_action(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                                   service::HttpResponse& refusal);
 /**
- * tree: `creature` (stage BT1). A development command: the behavior tree of the creature and its last step (what decided it: the tree,
+ * tree: `creature` (stage BT1). A development command: the behavior tree of the creature and its binding (stage BT2: the binding that
+ * selected it, and the cause when the slice did not fit the tree of its binding), its last step (what decided it: the tree,
  * or a rule of the engine; the result of each node: the path), the parameters of each node, and the blackboard (the declared keys of the
  * tree, and the facts of the creature that the leaves use: the names of the auto-evaluated keys of the client where the meaning is the
  * same, research BT0). Only the development routes have it.
@@ -406,6 +407,14 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
  */
 [[nodiscard]] WorldCommand reload_creature_trees(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                                  service::HttpResponse& refusal);
+/**
+ * tree set: `creature`, `tree` (the name of a tree of the set) (stage BT2, a harness command). The creature gets the tree now, until a
+ * reload of the trees or its removal (`Behavior::set_tree`); "default" gives it the default tree. A tree that names an action that the
+ * slice of the creature does not have is refused (409, with the cause), and the creature keeps its tree; a name that is not a tree: 404.
+ * Needs SOULWARDEN_HARNESS=1 (403 without it). Only the development routes have it.
+ */
+[[nodiscard]] WorldCommand set_creature_tree(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                             service::HttpResponse& refusal);
 /**
  * anchor: `creature`, and `x`, `y`, `z` (meters). A development command: the anchor of a
  * creature in a fight (the end of its way back, and the first place of its trail) is that

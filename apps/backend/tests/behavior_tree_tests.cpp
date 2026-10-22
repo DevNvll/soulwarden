@@ -33,6 +33,7 @@
 #include "support/check.h"
 #include "support/crafting_fixture.h"
 #include "support/support_fixture.h"
+#include "support/tree_fixture.h"
 #include "world/behavior.h"
 #include "world/behavior_tree.h"
 
@@ -41,101 +42,8 @@ namespace {
 
 using nlohmann::json;
 using namespace support;
+using namespace trees;
 namespace tree = world::tree;
-
-// ---- the world of the cases --------------------------------------------------------------------------------------------------------
-
-/** A melee slice with light attacks and a heavy attack (the cadence of the node melee): the archer slice with three attacks and no shot. */
-gamedata::CreatureSlice fighter_slice() {
-    gamedata::CreatureSlice slice = range::archer_slice(true);
-    slice.path = "slices/test/fighter.dynamicslice";
-    slice.asset.fill(0x51);
-    slice.root = 0x1000000000000051ULL;
-    slice.ranged.clear();
-    const auto attack = [](float factor, float reach) {
-        gamedata::CreatureContact contact;
-        contact.time = 0.5F;
-        contact.reach = reach;
-        contact.factor = factor;
-        contact.type = "Slash";
-        contact.wire = 4;
-        contact.category = gamedata::DamageCategory::physical;
-        contact.row = "Test_Fighter";
-        return gamedata::CreatureAttack{range::kBash, 1.4F, {contact}};
-    };
-    slice.attacks = {attack(0.2F, 2.2F), attack(0.7F, 2.6F), attack(0.25F, 2.0F)};
-    slice.behavior->sightAngle = 180.0F;
-    slice.behavior->runSpeed = 6.0F;
-    return slice;
-}
-
-/** A caster: the archer slice whose basic shot is the cast Cast_One_Projectile (stage 3.4f-B: the band of a caster). */
-gamedata::CreatureSlice caster_slice() {
-    gamedata::CreatureSlice slice = range::archer_slice(true);
-    slice.path = "slices/test/caster.dynamicslice";
-    slice.asset.fill(0x52);
-    slice.root = 0x1000000000000052ULL;
-    slice.actions[range::kFireBow] = {"Cast_One_Projectile", "Cast_One_Projectile", 36, false};
-    slice.behavior->sightAngle = 180.0F;
-    return slice;
-}
-
-/** A creature that does not fight and wanders near its home. */
-gamedata::CreatureSlice wanderer_slice() {
-    gamedata::CreatureSlice slice = range::archer_slice(true);
-    slice.path = "slices/test/wanderer.dynamicslice";
-    slice.asset.fill(0x53);
-    slice.root = 0x1000000000000053ULL;
-    slice.behavior->sightDistance = 0.0F;
-    slice.behavior->wander = true;
-    slice.behavior->wanderNearest = 2.0F;
-    slice.behavior->wanderFarthest = 6.0F;
-    slice.behavior->ambientSpeed = 1.5F;
-    return slice;
-}
-
-/** The world of the cases: the support world (A with a client, B) with eleven slices of each rule of the behavior. */
-struct Arena : Support {
-    explicit Arena(bool observe = true) : Support(observe) {
-        std::vector<gamedata::CreatureSlice> slices = {fighter_slice(),      range::archer_slice(true), caster_slice(),
-                                                       area::shaman_slice(), area::striker_slice(),     area::thrower_slice()};
-        for (gamedata::CreatureSlice& slice : support_slices()) {
-            slices.push_back(std::move(slice));
-        }
-        slices.push_back(wanderer_slice());
-        const char* names[] = {"Test_Fighter", "Test_Archer", "Test_Caster", "Test_Shaman", "Test_Striker", "Test_Thrower",
-                               "Test_Cleric",  "Test_Hound",  "Test_Ghost",  "Test_Knight", "Test_Wanderer"};
-        std::vector<gamedata::CreatureKind> kinds;
-        for (std::uint32_t index = 0; index < 11; ++index) {
-            kinds.push_back(area::area_kind(names[index], index, 0x61112222 + 0x10 * index));
-        }
-        if (!host.creatures.set_full(std::move(slices), std::move(kinds), {}, range::archer_levels(), {}, {range::arrow_slice()},
-                                     gamedata::CreatureCapsule{range::kPlayerRadius, range::kPlayerSegment, {0.0F, 0.0F, 1.0F},
-                                                               {0.0F, 0.0F, 0.0F}})) {
-            throw std::runtime_error("tree test: the creature data is not valid: " + host.creatures.error());
-        }
-        hardy(*character());
-    }
-    static void hardy(world::Entity& character) {
-        character.vitals.healthMax = 1.0e7F;
-        character.vitals.health = 1.0e7F;
-    }
-    world::Entity* creature(const char* kind, float east, float north = 0.0F, float yaw = 90.0F) {
-        return make(kind, east, north, yaw);
-    }
-    /** One step of A (33 ms) with a walk of (dx, dy) meters. */
-    void move(float dx, float dy) {
-        walker.position.x += dx;
-        walker.position.y += dy;
-        step();
-    }
-    /** A goes to a place at once (a command of the world), and its client reports that place. */
-    void jump(const state::WorldPosition& place) {
-        host.world.set_position(character()->id, place, false);
-        walker.position = place;
-        step();
-    }
-};
 
 // ---- BT1: the default tree ---------------------------------------------------------------------------------------------------------
 
@@ -144,34 +52,57 @@ void default_tree(const Options& options) {
     tree::TreeSet set;
     tree::LoadReport report;
     const bool loaded = set.load("", report);
-    check(files.size() == 2 && loaded && report.refused.empty() && set.trees().size() == 2 && set.find("default/fight") != nullptr,
-          "the program has the two files of apps/backend/behavior (default.jsonc, default-fight.jsonc); they load and compile");
+    // Stage BT2: the default tree is a set of subtrees, and the program has the binding file.
+    bool subtrees = true;
+    for (const char* name : {"default/rest", "default/fight", "default/status", "default/area", "default/shot", "default/cast", "default/melee"}) {
+        subtrees = subtrees && set.find(name) != nullptr;
+    }
+    check(files.size() == 9 && loaded && report.refused.empty() && set.trees().size() == 8 && subtrees,
+          "the program has the nine files of apps/backend/behavior (the tree default, its subtrees rest, fight, status, area, shot, cast, "
+          "melee, and bindings.jsonc); the eight trees load and compile");
     const std::shared_ptr<const tree::CompiledTree> root = set.default_tree();
     std::string kinds;
     for (const tree::Node& node : root->nodes) {
-        kinds += std::string(node.depth, ' ') + std::string(tree::kind_name(node.kind)) + "\n";
+        kinds += std::string(node.depth, ' ') + std::string(tree::kind_name(node.kind)) + (node.kind == tree::NodeKind::subtree ? " " + node.label : "")
+                 + "\n";
     }
-    check(kinds == "selector\n sequence\n  in_fight\n  subtree\n   sequence\n    keep_target\n    selector\n     status_action\n"
-                   "     area_attack\n     basic_shot\n     melee\n     turn_to_target\n roam\n",
-          "the default tree: a fight (the subtree default/fight: the target checks, then the status action, the area attack, the shot, "
-          "the melee attack, the turn: the order of think before the trees), else the roam\n" + kinds);
+    check(kinds == "selector\n sequence\n  in_fight\n  subtree default/fight\n   sequence\n    keep_target\n    selector\n"
+                   "     subtree default/status\n      status_action\n     subtree default/area\n      area_attack\n"
+                   "     subtree default/shot\n      basic_shot\n     subtree default/cast\n      basic_shot\n"
+                   "     subtree default/melee\n      melee\n     turn_to_target\n subtree default/rest\n  roam\n",
+          "the default tree: a fight (the subtree default/fight: the target checks, then the status action, the area attack, the shot of an "
+          "archer, the cast of a caster, the melee attack, the turn: the order of think before the trees), else the roam (default/rest)\n"
+              + kinds);
     // The values of the namespace behavior_rules before the trees (commit 5174ff8), now node parameters.
     const auto values = [&](tree::NodeKind kind) { return root->first(kind); };
     const float* keep = values(tree::NodeKind::keep_target);
     const float* status = values(tree::NodeKind::status_action);
     const float* area = values(tree::NodeKind::area_attack);
+    // The first basic_shot node has the band of an archer (default/shot), the second one the band of a caster (default/cast).
     const float* shot = values(tree::NodeKind::basic_shot);
+    const float* cast = nullptr;
+    for (std::size_t index = 0; index < root->nodes.size(); ++index) {
+        if (root->nodes[index].kind == tree::NodeKind::basic_shot && root->values(index) != shot) {
+            cast = root->values(index);
+        }
+    }
     const float* melee = values(tree::NodeKind::melee);
+    const float* roam = values(tree::NodeKind::roam);
     using namespace tree::param;
     check(keep[kLoseDistance] == 60.0F && status[kStatusRepeat] == 20.0F && status[kStatusPause] == 1.5F && area[kAreaRepeat] == 10.0F
               && area[kAreaOnlyRepeat] == 5.0F && area[kAreaHoldMargin] == 2.0F && area[kAreaPause] == 1.5F,
           "keep_target: lose_distance 60 (kLoseDistance); status_action: repeat 20 (kStatusRepeat); area_attack: repeat 10, "
           "repeat_area_only 5, hold_margin 2 (kAreaRepeat, kAreaOnlyRepeat, kAreaHoldMargin); each pause 1.5 (kAttackPause)");
-    check(shot[kArcher + kBandFar] == 20.0F && shot[kArcher + kBandHold] == 18.0F && shot[kArcher + kBandNear] == 8.0F
-              && shot[kArcher + kBandMiddle] == 14.0F && shot[kArcher + kBandRepeat] == 3.0F && shot[kCaster + kBandFar] == 16.0F
-              && shot[kCaster + kBandHold] == 14.0F && shot[kCaster + kBandNear] == 6.0F && shot[kCaster + kBandMiddle] == 11.0F
-              && shot[kCaster + kBandRepeat] == 2.5F && shot[kRetreatPause] == 6.0F && shot[kShotPause] == 1.5F,
-          "basic_shot: the band of an archer 20, 18, 8, 14, repeat 3 (kShot*); of a caster 16, 14, 6, 11, repeat 2.5 (kCast*); retreat_pause 6");
+    check(cast != nullptr && shot[kArcher + kBandFar] == 20.0F && shot[kArcher + kBandHold] == 18.0F && shot[kArcher + kBandNear] == 8.0F
+              && shot[kArcher + kBandMiddle] == 14.0F && shot[kArcher + kBandRepeat] == 3.0F && shot[kCaster + kBandFar] == kNoBand
+              && cast[kArcher + kBandFar] == kNoBand && cast[kCaster + kBandFar] == 16.0F && cast[kCaster + kBandHold] == 14.0F
+              && cast[kCaster + kBandNear] == 6.0F && cast[kCaster + kBandMiddle] == 11.0F && cast[kCaster + kBandRepeat] == 2.5F
+              && shot[kRetreatPause] == 6.0F && shot[kShotPause] == 1.5F && cast[kRetreatPause] == 6.0F && cast[kShotPause] == 1.5F,
+          "basic_shot: default/shot has the band of an archer 20, 18, 8, 14, repeat 3 (kShot*); default/cast the band of a caster 16, 14, 6, "
+          "11, repeat 2.5 (kCast*); each one retreat_pause 6, pause 1.5");
+    check(roam != nullptr && roam[kWaitShortest] == 4.0F && roam[kWaitLongest] == 12.0F && roam[kNoWayPause] == 3.0F,
+          "roam (default/rest): wait_shortest 4, wait_longest 12, no_way_pause 3 (kWanderWaitShortest, kWanderWaitLongest, kRoamNoWayPause "
+          "before stage BT2)");
     check(melee[kLightBeforeHeavy] == 3.0F
               && melee[kMeleePause] == std::chrono::duration<float>(world::behavior_rules::kAttackPause).count()
               && melee[kHeavyPause] == std::chrono::duration<float>(world::behavior_rules::kHeavyPause).count()
@@ -192,7 +123,7 @@ void default_tree(const Options& options) {
         }
     }
     for (const char* parameter : {"lose_distance", "repeat", "pause", "repeat_area_only", "hold_margin", "retreat_pause", "light_before_heavy",
-                                  "heavy_pause"}) {
+                                  "heavy_pause", "wait_shortest", "wait_longest", "no_way_pause", "action"}) {
         bool found = false;
         for (const auto& [name, def] : schema["$defs"].items()) {
             found = found || (def.contains("properties") && def["properties"].contains(parameter));
@@ -413,7 +344,9 @@ void blackboard_and_routes(const Options& options) {
     const service::HttpResponse wrong = send("GET", "/v1/dev/creatures/tree", "creature=00000000000000ff");
     const service::HttpResponse reload = send("POST", "/v1/dev/creatures/tree/reload", "");
     const json reloadReply = json::parse(reload.body, nullptr, false);
-    check(wrong.status == 404 && reload.status == 200 && reloadReply["refused"].empty() && reloadReply["loaded"].size() == 2
+    // The trees of the program: each embedded file but the binding file (stage BT2: the default tree and its seven subtrees).
+    check(wrong.status == 404 && reload.status == 200 && reloadReply["refused"].empty()
+              && reloadReply["loaded"].size() == tree::embedded_tree_files().size() - 1
               && reloadReply["folder"] == false && fighter->creature.mind.brain.tree->source == "embedded:default.jsonc"
               && fighter->creature.mind.brain.board.empty(),
           "the route tree/reload with the harness gate: the trees of the program again (no folder in the options of the test world), and "
@@ -823,6 +756,8 @@ void two_sessions(const Options&) {
     behavior.hurt_by(*archer, beta->id);
     const std::size_t aBefore = arena.a.received.size();
     const std::size_t bBefore = arena.b.received.size();
+    const std::size_t aFrom = arena.a.got.size();
+    const std::size_t bFrom = arena.b.got.size();
     arena.until([&] { return fighter->creature.mind.attacks >= 2 && archer->creature.mind.attacks >= 1; }, 600);
     Arena::hardy(*alpha);
     Arena::hardy(*beta);
@@ -833,10 +768,23 @@ void two_sessions(const Options&) {
               && one.cause != world::StepCause::none && two.cause != world::StepCause::none && one.last.data() != two.last.data(),
           "two creatures fight two characters with one tree: each one has its own target and its own state of the nodes (values of the "
           "creature in the world, not of a session)");
-    check(arena.a.received.size() > aBefore + 10 && arena.b.received.size() > bBefore + 10,
-          "each session gets the states of both fights (one path: the encoders of the creatures; a tree has no state in a session)");
+    // Code review of stage BT1, finding R8: a count of packets passed with no creature record at all. Each session decodes the records of
+    // the movement state (the actions of the attacks) of both creatures.
+    const std::size_t aFighter = movement_records(arena, arena.a, 1, *fighter, aFrom);
+    const std::size_t aArcher = movement_records(arena, arena.a, 1, *archer, aFrom);
+    const std::size_t bFighter = movement_records(arena, arena.b, 2, *fighter, bFrom);
+    const std::size_t bArcher = movement_records(arena, arena.b, 2, *archer, bFrom);
+    check(arena.a.received.size() > aBefore + 10 && arena.b.received.size() > bBefore + 10 && aFighter >= 2 && aArcher >= 1 && bFighter >= 2
+              && bArcher >= 1,
+          "each session decodes the records of the movement state of both fights (A: fighter " + std::to_string(aFighter) + ", archer "
+              + std::to_string(aArcher) + "; B: fighter " + std::to_string(bFighter) + ", archer " + std::to_string(bArcher)
+              + "; one path: the encoders of the creatures; a tree has no state in a session)");
+    const std::uint32_t bFighterInterest = range::interest_in(arena.host, 2, fighter->id);
+    const std::uint32_t bArcherInterest = range::interest_in(arena.host, 2, archer->id);
     // B goes 200 m away: only the archer loses its target and goes back; the fighter fights A on.
     const std::uint64_t lostBefore = behavior.counts().targetsLost;
+    const std::size_t aLater = arena.a.got.size();
+    const std::size_t bLater = arena.b.got.size();
     (void)arena.host.world.set_position(beta->id, at(kPlace.x - 200.0F, kPlace.y), false);
     // The shot that plays ends first (2.47 s): the engine holds the archer, then its tree loses the target.
     arena.until([&] { return archer->creature.mind.mode != world::CreatureMode::fight; }, 150);
@@ -845,6 +793,14 @@ void two_sessions(const Options&) {
               && behavior.counts().targetsLost == lostBefore + 1 && fighter->creature.mind.mode == world::CreatureMode::fight
               && fighter->creature.mind.target == alpha->id && log_count("lost its target (the target is too far)") == 1,
           "B goes 200 m away: the archer loses its target (keep_target: too far) and goes back; the fighter keeps A");
+    // The records after the travel: B decodes the stops of both creatures (they are not near it); A decodes the records of the next attack
+    // of the fighter.
+    const std::uint32_t attacks = fighter->creature.mind.attacks;
+    arena.until([&] { return fighter->creature.mind.attacks > attacks; }, 200);
+    arena.step(3);
+    check(range::stops_of(arena.b, bFighterInterest, bLater) >= 1 && range::stops_of(arena.b, bArcherInterest, bLater) >= 1
+              && fighter->creature.mind.attacks > attacks && movement_records(arena, arena.a, 1, *fighter, aLater) >= 1,
+          "after the travel of B: B decodes the stops of both creatures, and A decodes the record of the next attack of the fighter");
 }
 
 } // namespace

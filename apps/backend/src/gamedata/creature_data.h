@@ -622,6 +622,13 @@ struct CreatureSlice {
      * status action starts at it (world/behavior.h). No value: a file of an older tool, or the slice has no such field.
      */
     std::optional<float> lowHealth;
+    /**
+     * The server trees that the slice names (stage BT2; tools/gamedata/creature_behavior.py, read_server_trees): the asset paths of
+     * m_behaviorTreeAssets of its BehaviorTreeComponent, lower case, with no folder and no suffix ("wolf/wolf_base"; research BT0: one in
+     * 500 slices, two in the 3 bombers). The tree files are not in the client: a name is a binding key of the behavior trees
+     * (world/tree_binding.h), not a tree. Empty: a file of an older tool.
+     */
+    std::vector<std::string> serverTrees;
 
     /**
      * @return True when a creature with this slice gets a target and attacks it: the slice has a sense, a speed, and an attack (a

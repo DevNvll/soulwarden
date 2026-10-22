@@ -16,6 +16,7 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 | The cast of a caster (stage 3.4f-B): the cast as the basic shot, the band of a caster, its repeat time; the corrections CR-R1 and CR-R2 of the review of stage 3.4f-A | Protocol notes 4.38, `world/behavior.h` (`behavior_rules::kCast*`, `kSpawnLead`, `Behavior::band_of`), `gamedata/creature_data.h` (`kBasicCastAction`, `CreatureSlice::caster`), test cases CRB1, CRG9, CRG10, RR1, RR2 |
 | The area attack of a creature (stage 3.4f-C): the choice, the range, the repeat, the walk of a creature with only area attacks, the casts and their cancels, the place; the correction CS-R4 (the spawn lead for a new observer) | Protocol notes 4.39, `world/behavior.h` (`behavior_rules::kArea*`, `Behavior::think_area`, `start_area`, `cast`, `area_place`, `command_area`, `spawn_lead_over`), `gamedata/creature_data.h` (`CreatureAreaAttack`, `AreaCast`), [Spell entities](spells.md), `tools/world creature area`, test cases CRA6, RZ4 |
 | The behavior trees (stage BT1): the format of a tree file, the loader and the compiler, the runtime, the leaves, the default tree, the blackboard, the folder of a development run, the reload, the view of a tree | This document, section "Behavior trees" below, `apps/backend/behavior/*.jsonc` and `tree.schema.json`, `world/behavior_tree.h`, `world/behavior.h` (`decide`, `run_tree`, `run_node`), `tools/world creature tree`, test cases BT1 to BT5 and BTD1, research `bt0-ai-data.md` |
+| The binding of a tree to a creature (stage BT2): the binding file and the order of its keys, the server tree of a slice, the subtrees of the default tree, the refusal of a tree that names an action that the slice does not have, the tree command, the tree in the tab "Creatures"; the corrections of the review of BT1 | This document, section "Behavior trees" below, `apps/backend/behavior/bindings.jsonc` and `bindings.schema.json`, `world/tree_binding.h`, `world/behavior.h` (`bind`, `fits`, `set_tree`), `tools/gamedata/creature_behavior.py` (`read_server_trees`), `tools/world creature tree ID --set NAME`, test cases BTB1 to BTB6, RBT1 to RBT7, BT5 |
 | The status actions of a creature (stage 3.4f-D): its heal at low health, its buff, the marks and their cancels, the repeat; the place rule of the client for a cast (at the caster, at the target, at the aim point) | Protocol notes 4.40, `world/behavior.h` (`behavior_rules::kStatusRepeat`, `Behavior::think_status`, `wants`, `start_status_action`, `status_mark`, `command_status_action`, `place_rule`, `area_range`), `gamedata/creature_data.h` (`CreatureStatusAction`, `StatusMark`, `CreatureSlice::lowHealth`), [Creatures](creatures.md), `tools/world creature status-action`, test cases CRH1 to CRH5 |
 
 ## Rules
@@ -296,14 +297,15 @@ protocol notes (sections 4.14, 4.17, and 4.19).
     attack, the crowd, the wait with no way), `turn_to_target`, `roam`. A leaf fails when the slice has no such ability; `area_attack` and
     `basic_shot` fail for a target that is not a character (the rule of stage 3.4f-A). The other nodes: `selector`, `sequence`,
     `invert`, `subtree`, and the conditions `in_fight`, `target_is`, `check` and the action `set` (the blackboard).
-  - The default tree (`apps/backend/behavior/default.jsonc` and `default-fight.jsonc`, a project rule with the order of
+  - The default tree (`apps/backend/behavior/default.jsonc`, `default-fight.jsonc`, and from BT2 its subtree files, a project rule with the order of
     `Behavior::think` before the trees): a creature in a fight runs the subtree `default/fight` (`keep_target`, then the status action,
     the area attack, the shot, the melee attack, the turn), a creature at rest roams. The decision constants of `behavior_rules` are node
     parameters with the same values (the bands `kShot*` and `kCast*`, `kRetreatPause`, `kArea*`, `kStatusRepeat`, `kLightAttacks`,
     `kLoseDistance`); the pause after an action is the `pause` of the node that started it (`heavy_pause` for a heavy melee attack;
     `CreatureMind::actionPause`). `kAttackPause` and `kHeavyPause` stay in the code as names of the values of the default tree (case BT1
     checks them). A development command (`shoot`, `area`, `status-action`) takes the values of the first node of its kind in the tree of
-    the creature, else of the default tree. The roam has no parameter yet (its waits stay in `behavior_rules` until stage BT2).
+    the creature, else of the default tree (no such node in either tree: the command does nothing). From stage BT2 the roam has its
+    parameters, and the default tree is a set of subtrees (below).
   - The format (a decision of the plan): one tree in one file of JSON with comments (`//`, `/* */`). The vendored JSON library 3.12.0 has
     no option for a trailing comma: a trailing comma is an error. `{"format": 1, "tree": NAME, "blackboard": {KEY: {"type": "int" | "float"
     | "bool", "default": V}}, "root": NODE}`, a node `{"node": KIND, "name": TEXT, ...}` with `children` (a list), `child` (one), or `tree`
@@ -316,8 +318,8 @@ protocol notes (sections 4.14, 4.17, and 4.19).
     is refused with one log line `world: behavior tree refused: FILE: PLACE: CAUSE`, and the tree of its name stays the tree of the
     program.
   - The files (a decision of the plan; the brief: the backend starts and works with no file): the build puts the text of
-    `apps/backend/behavior/*.jsonc` into the program (`cmake/embed_behavior.cmake`, a generated source file). No file of the game data
-    folder, nothing for `tools/release.sh`. The tree `default` must be in the set: with no such tree that compiles (a fault of the build)
+    `apps/backend/behavior/*.jsonc` into the program (`cmake/embed_behavior.cmake`, a generated source file; from BT2 also the binding file
+    `bindings.jsonc`). No file of the game data folder, nothing for `tools/release.sh`. The tree `default` must be in the set: with no such tree that compiles (a fault of the build)
     the trees of the world do not change, and with none at the start the creatures do nothing (`StepCause::no_tree`).
   - The state of a tree is in the creature (rule MP-1): `CreatureMind::brain` (the compiled tree, the result of each node in the last
     step, the value of each key). The behavior binds a creature to the tree `default` when it makes the creature and again at a reload:
@@ -334,6 +336,68 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   - The server trees of the original are not in the client files (research BT0: each slice names its tree, for example
     `SharedAssets/AI/BehaviorTrees/Wolf/Wolf_Base.behaviortree`, 128 names; the pak files have no such file). Each tree of this project
     is a project rule.
+- Behavior trees, stage BT2 (the plan `behavior-tree-plan.md`, row BT2). BT2 changes no behavior of a creature with the default binding
+  (BTD1 and its stored trace pass with no change). The rules and the source of each one:
+  - The subtrees of the default tree (a decision of the plan): `default` is a selector of `sequence[in_fight, subtree default/fight]`
+    and `subtree default/rest`; `default/fight` is `keep_target`, then a selector of the subtrees `default/status`, `default/area`,
+    `default/shot`, `default/cast`, `default/melee`, and `turn_to_target`. One file for each subtree (`default-*.jsonc`), with the values of
+    BT1. The default tree has 20 nodes after the compiler (13 in BT1); a subtree node only runs its child.
+  - The shot and the cast (a decision of an agent, BT2): a `basic_shot` node has the band of an archer (`archer`), of a caster (`caster`),
+    or both (the format of BT1). A node with no band of the slice fails with no change of the creature: `default/shot` has only the band
+    of an archer, `default/cast` only the band of a caster. For each slice exactly one of the two runs, thus the behavior is the one of
+    BT1. A development command (`shoot`) takes the first `basic_shot` node with the band of the slice.
+  - The waits of the roam (the open point of BT1): the node `roam` has `wait_shortest` and `wait_longest` (the wait after a walk of the
+    wander, a random time between them) and `no_way_pause` (the pause after a goal with no way), with the values of stage 3.4e (4 s, 12 s,
+    3 s; before, `kWanderWaitShortest`, `kWanderWaitLongest`, `kRoamNoWayPause`). The three parameters are optional (a decision of an
+    agent): a `roam` with no parameter (the files of BT1) has these values. The spread of the first roam of a new creature takes
+    `wait_shortest` of the tree of the creature.
+  - The binding file (`apps/backend/behavior/bindings.jsonc`, project data in the program like the trees; `bindings.schema.json` for an
+    editor; `world/tree_binding.h`): `{"format": 1, "bindings": [{KEY: TEXT or [TEXT, ...], "tree": NAME}, ..., {"tree": NAME}]}`. One key
+    for each binding; the binding with no key is the binding of each other creature (at most one). The keys: `kind` (the id of a kind),
+    `vitals` (its vitals row), `slice` (the path of its slice), `serverTree` (a server tree of its slice), `creatureType`, `family`. The
+    file of BT2 has one binding: `{"tree": "default"}`.
+  - The selection (rules of this project, BT2): the binding of the narrowest key that matches wins, in the order kind, vitals, slice,
+    serverTree, creatureType, family, then the binding with no key, then the tree `default`. Why: a kind is one row of the data, a vitals row
+    has one or more kinds, a slice is one body, a server tree is the AI archetype of some slices (family and weapon), a creature type is a
+    role across the families (a mini boss of each family), and a family is the widest group. The place of a binding in the file does not
+    count: a new line at the end cannot lose to a wide line, and a wide line cannot hide a narrow one. A text matches with no difference of
+    upper and lower case. A value in two bindings of one key is an error of the file (a tie: the file is refused). A slice with two server
+    trees (the 3 bombers) takes the first one of the slice that has a binding.
+  - The server tree of a slice (game data, research BT0): `creatures.json` has the member `serverTrees` of each slice (the asset paths of
+    `m_behaviorTreeAssets` of its `BehaviorTreeComponent`, lower case, with no folder `sharedassets/ai/behaviortrees/` and no suffix:
+    `wolf/wolf_base`; 503 slices, 128 names; `tools/gamedata/creatures.sh`). A file of an older tool has no member: a `serverTree`
+    binding then matches no creature, and the other keys select.
+  - The load (decisions of an agent, BT2): the binding file of the folder of a development run (`SOULWARDEN_BEHAVIOR_DIR/bindings.jsonc`)
+    replaces the file of the program as a whole. The loader checks the form, each key and value, the tie, and the tree of each binding (a
+    tree of the set). A file that is not correct is refused with one log line `world: behavior tree refused: bindings.jsonc: PLACE: CAUSE`,
+    and the binding file of the program stays (a fault of the program file: no binding, each creature has the tree default). The log line
+    `world: behavior tree bindings: SOURCE, N binding(s)` names the file that the world uses.
+  - The named action and the refusal (the plan; the form is a decision of an agent): a `status_action` and an `area_attack` can name the
+    action of the slice that they use (`"action": "Howl"`): the node then uses only that status action or area attack. When the behavior
+    binds a creature (its make, a reload, a command) it checks that the slice has each action that the tree names (`Behavior::fits`, in the
+    status actions or the area attacks of the slice, by the name of the action). A tree that names an action that the slice does not have
+    is refused for that creature: the creature has the tree `default`, `CreatureBrain::refusal` has the cause, and the log has one line
+    for each tree and slice (`world: behavior tree refused for creature ID (KIND, BINDING): the tree "T" names the status action "A" (node N):
+    the slice PATH has no status action of this name; the creature has the tree default`). The count `treeRefusals` counts each one.
+  - The binding is a value of the creature (rule MP-1): `CreatureBrain::binding` (the text of the binding: `family Wolf (binding 3)`,
+    `each creature (binding 1)`, `a command`), `refusal`, and `actions` (the place of each named action in the slice). The behavior sets them
+    when it binds the creature, not in a step: a step looks up no text. The cost of a step does not change (the selection runs at the make
+    of a creature and at a reload only).
+  - The tree command (a development command, the harness gate): `tools/world creature tree ID --set NAME` (route `POST
+    /v1/dev/creatures/tree/set`, `Behavior::set_tree`) gives the creature the tree NAME now, with a new state of the tree, until a reload or
+    the removal of the creature. A tree that names an action that the slice does not have: 409, and the creature keeps its tree; a name that
+    is not a tree: 404; no `SOULWARDEN_HARNESS=1`: 403. `--set default` gives the default tree.
+  - The view: `tools/world creature tree ID` prints the binding and a refusal; the route tree has `binding` and `refused`; the creature rows
+    of the admin state (`creatures_view`) have `tree`, `treeBinding`, and `treeRefused`, and the tool window shows the tree in the tab
+    "Creatures" ([Tool window and admin](tool-window-and-admin.md)). `tools/world creatures` marks a creature whose tree is not the default
+    tree (`TREE NAME`) and a refused tree of a binding.
+  - The corrections of the code review of BT1 (BT2): a JSON number that is too large (`1e400`) is a refusal of the file, not an exception
+    (R1); the set compiles after the last file, so a subtree can be in a later file (R2; a tree that does not compile by a fault of its own
+    file is refused, and the tree of the program of its name comes back); a command (`shoot`, `area`, `status-action`) after a reload of a
+    tree with no node of its kind does nothing (R4); a file of a folder is read with a bound of 1 MiB + 1 byte (R5); an int key of the
+    blackboard takes values from -16777216 to 16777216 (exact in its 32-bit float, R6); a format number is compared before a conversion (R7);
+    case BT5 decodes the creature records of both fights in both sessions (R8). A link in the folder of a development run is read (R3 was
+    not accepted: the folder is a folder of the developer, behind the harness gate, and the program of the user reads no folder).
 - Two switches for the behavior. `SOULWARDEN_CREATURE_BEHAVIOR=0` (backend option
   `--no-creature-behavior`) turns it off for a start: the creatures stand at their spawn
   points. The command `set_creatures_ignore` (`tools/world ignore`, the mark of the tab
@@ -350,7 +414,8 @@ tools/world creature anchor 2c 8585.5 4243.1 173.26   # the anchor of a creature
 tools/world creature area 5e Soulwarden               # the creature casts its next area attack at the character now (stage 3.4f-C)
 tools/world creature status-action 5e Howl            # the creature starts its status action now (stage 3.4f-D: its heal or its buff)
 tools/world creature tree 5e                          # the behavior tree of the creature: its last step, each node, the blackboard (stage BT1)
-tools/world creature tree reload                      # the trees again from the program and SOULWARDEN_BEHAVIOR_DIR (a development run)
+tools/world creature tree reload                      # the trees and the binding file again from the program and SOULWARDEN_BEHAVIOR_DIR
+tools/world creature tree 5e --set test/still         # the creature gets the tree test/still now (stage BT2; default: the default tree)
 tools/test-soulwarden-backend.sh --write-trace BTD1   # the stored trace of the decisions again: only for an intended change of the behavior
 ```
 
@@ -390,7 +455,15 @@ tools/test-soulwarden-backend.sh --write-trace BTD1   # the stored trace of the 
 - The view of `tools/world creature tree` shows the last step of the tree. While an action plays, the engine holds the creature: the
   view then says `an action plays` and no node has a result. Look again after the end of the action.
 - `SOULWARDEN_BEHAVIOR_DIR` replaces a tree by its name (the member `tree` of the file), not by the name of the file. A folder with a
-  file `default.jsonc` whose tree is `default/fight` replaces the subtree.
+  file `default.jsonc` whose tree is `default/fight` replaces the subtree. The file `bindings.jsonc` of the folder is the binding file, not a
+  tree: it replaces the binding file of the program as a whole (a folder with no binding file keeps the binding of the program).
+- A binding selects a tree by the narrowest key, not by the place in the file: a `family` binding at the start of the file does not hide a
+  `kind` binding at its end. Two bindings with one value of one key (also with a different case: `Wolf`, `wolf`) refuse the whole file.
+- A tree of a binding that names an action of a slice (`"action": "Howl"`) is refused for each creature whose slice does not have it: the
+  creature fights with the tree default. The log has one line for each tree and slice, not one for each creature; `tools/world creature
+  tree ID` prints `REFUSED` with the cause.
+- The `serverTree` bindings need a `creatures.json` of stage BT2 or later (`tools/gamedata/creatures.sh`): with an older file no creature has
+  a server tree, and these bindings select nothing (no log line).
 - After the end of its attack a creature stands in the idle of its slice (user test 2): a ghost floats up and down, a wolf crouches.
   Before, it kept the last pose of the attack until its next state. A video of the agent desktop shows it; a still picture does not.
 - In the hit stun of a hit a creature does not turn to its target: a fast series of light hits keeps it in its reactions until the

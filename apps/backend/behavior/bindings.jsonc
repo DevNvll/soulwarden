@@ -1,0 +1,16 @@
+// The binding of a behavior tree to each creature (stage BT2, world/tree_binding.h). A binding has one key and a tree, or only a tree (the
+// binding of each other creature). The keys, from the narrowest to the widest: kind (an id of a kind of creatures.json), vitals (its
+// vitals row), slice (the path of its slice), serverTree (a server tree that its slice names in the client data, the member serverTrees of
+// a slice: "wolf/wolf_base"), creatureType ("EliteMiniBoss"), family ("Wolf"). A value is a text or a list of texts, with no difference of
+// upper and lower case. The narrowest key that matches selects the tree; the place of a binding in the file does not. A value in two
+// bindings of one key is an error of the file. Format: docs/systems/creature-behavior.md, section "Behavior trees".
+//
+// Stage BT2 has no tree other than the default tree: each creature has it. A tree that names an action that the slice of a creature does not
+// have is refused for that creature (one log line), and the creature has the tree default.
+{
+  "$schema": "./bindings.schema.json",
+  "format": 1,
+  "bindings": [
+    { "tree": "default" }
+  ]
+}

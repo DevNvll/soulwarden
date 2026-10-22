@@ -11,6 +11,7 @@
 
 #include "gamedata/creature_data.h"
 #include "world/behavior_tree.h"
+#include "world/tree_binding.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/load_meter.h"
@@ -103,7 +104,9 @@
 // other step of a creature in a fight or at rest the tree of the creature decides (the default tree, apps/backend/behavior/*.jsonc: the
 // order of the rules above, and the values of the bands, the repeats, and the pauses as node parameters). Each leaf calls one rule:
 // keep_target (Back: a target that is gone, the leash, too far), status_action, area_attack, basic_shot (Shoot), melee (Way, Attack,
-// Crowd, No way), turn_to_target, roam (Roam).
+// Crowd, No way), turn_to_target, roam (Roam). Stage BT2: the default tree is a set of subtrees (rest, fight, status, area, shot, cast,
+// melee), and the binding file selects the tree of each creature (world/tree_binding.h); a tree that names an action that the slice of a
+// creature does not have is refused for that creature (one log line), and the creature has the tree default.
 //
 // A creature that stands needs no time: only the creatures of the set `m_active` (a target, the
 // way back) and of the set `m_roaming` (a roam near a character) are in the step, the vision
@@ -187,13 +190,11 @@ inline constexpr std::chrono::milliseconds kRoamScanInterval{1000};
 inline constexpr float kRoamArrival = 0.3F;
 /** The speed of a walk with no target for a slice with no ambient speed and no walk speed (meters in one second). */
 inline constexpr float kDefaultAmbientSpeed = 1.5F;
-/** The wait of a creature after a walk of its wander: a time from the first to the second value. */
-inline constexpr std::chrono::milliseconds kWanderWaitShortest{4000};
-inline constexpr std::chrono::milliseconds kWanderWaitLongest{12000};
 /** Places that a creature tries for a walk of its wander in one step. */
 inline constexpr unsigned kWanderTries = 6;
-/** A creature that found no way to a waypoint or to a place of its wander waits this long before its next goal. */
-inline constexpr std::chrono::milliseconds kRoamNoWayPause{3000};
+// The wait of a creature after a walk of its wander (kWanderWaitShortest 4 s to kWanderWaitLongest 12 s, stage 3.4e) and the pause after a
+// roam goal with no way (kRoamNoWayPause 3 s) are parameters of the node roam of the subtree default/rest from stage BT2
+// (default-rest.jsonc: wait_shortest, wait_longest, no_way_pause), with the same values.
 /** A shot needs the target this near in height (meters): the height limit of the vision of a creature. */
 inline constexpr float kShotHeight = kSenseHeight;
 // The bands of a shot (kShotFar, kShotHold, kShotNear, kShotMiddle, kShotRepeat; kCastFar, kCastHold, kCastNear, kCastMiddle,
@@ -281,6 +282,12 @@ struct BehaviorCounts {
     std::uint64_t treeSteps{0};
     std::uint64_t treeNodes{0};
     std::uint64_t treeReloads{0};
+    /**
+     * Stage BT2: the bindings of a creature to a tree that its slice does not fit (a named action that the slice does not have: the
+     * creature has the tree default), and the trees of a command (`set_tree`).
+     */
+    std::uint64_t treeRefusals{0};
+    std::uint64_t treeCommands{0};
 };
 
 /** Where the client puts the spell of a cast of an AI (stage 3.4f-D, client code 0x679DBB0; Behavior::place_rule). */
@@ -415,6 +422,18 @@ public:
     [[nodiscard]] const tree::TreeSet& trees() const {
         return m_trees;
     }
+    /** The binding file of the world (stage BT2): the program file `bindings.jsonc`, or the file of the folder of the trees. */
+    [[nodiscard]] const tree::BindingSet& bindings() const {
+        return m_bindings;
+    }
+    /** The results of `set_tree`. */
+    enum class TreeCommand : std::uint8_t { done, unknownTree, refused };
+    /**
+     * A development command (stage BT2): the creature gets the tree of this name now (its state starts again), until a reload of the trees
+     * or its removal. A tree that names an action that the slice of the creature does not have is refused (`cause`), and the creature
+     * keeps its tree. The binding of the file is not used for it (CreatureBrain::binding: "a command").
+     */
+    TreeCommand set_tree(Entity& creature, std::string_view name, std::string& cause);
     /** A hit of a character did not hurt a creature on its way back (the combat system): for the counts. */
     void immune_hit() {
         ++m_counts.immuneHits;
@@ -500,6 +519,12 @@ private:
         std::chrono::milliseconds repeat{0};
         std::chrono::milliseconds pause{0};
     };
+    /** The values of the node `roam` (stage BT2): the waits of the wander in milliseconds (a random time between them), the pause with no way. */
+    struct RoamValues {
+        float waitShortest{0.0F};
+        float waitLongest{0.0F};
+        std::chrono::milliseconds noWayPause{0};
+    };
 
     void step(float seconds);
     void sense();
@@ -518,14 +543,34 @@ private:
     /** The leaves (stage BT1): each one is a rule of the behavior before the trees, with the parameters of its node. */
     bool keep_target(Entity& creature, float loseDistance);
     void melee(Entity& creature, Entity& target, float seconds, const MeleeValues& values);
-    /** Binds a creature to the default tree: the lists of its state get one value for each node and each key. */
+    /**
+     * Binds a creature to the tree of its binding (stage BT2, world/tree_binding.h), or to the tree default when its slice does not fit the
+     * tree (`fits`): the lists of its state get one value for each node, each key, and each named action.
+     */
     void bind(Entity& creature);
-    /** @return The parameters of the first node of a kind of the tree of a creature, or of the default tree (a development command). */
+    /** Gives a creature a tree that fits its slice (the named actions in `actions`): its state starts again. */
+    void attach(Entity& creature, const std::shared_ptr<const tree::CompiledTree>& tree, std::vector<std::int32_t> actions);
+    /**
+     * @return True when the slice has each action that the tree names (stage BT2): `actions` gets the index of each one in the status actions
+     *         or the area attacks of the slice. False with `cause` for the first one that the slice does not have.
+     */
+    [[nodiscard]] static bool fits(const tree::CompiledTree& tree, const gamedata::CreatureSlice& body, std::vector<std::int32_t>& actions,
+                                   std::string& cause);
+    /** Loads the binding file of the program and of a folder (stage BT2); a file that is not correct is refused (`report`). */
+    void load_bindings(const std::string& folder, tree::LoadReport& report);
+    /**
+     * @return The parameters of the first node of a kind of the tree of a creature, or of the default tree (a development command; for a
+     *         shot the first node with the band of the slice). Null: neither tree has such a node (a tree of a folder; the command then does
+     *         nothing: code review of stage BT1, finding R4).
+     */
     [[nodiscard]] const float* command_values(const Entity& creature, tree::NodeKind kind) const;
     [[nodiscard]] static MeleeValues melee_values(const float* values);
     [[nodiscard]] static ShotValues shot_values(const gamedata::CreatureSlice& body, const float* values, std::uint32_t lightBeforeHeavy);
     [[nodiscard]] static AreaValues area_values(const float* values);
     [[nodiscard]] static StatusValues status_values(const float* values);
+    [[nodiscard]] static RoamValues roam_values(const float* values);
+    /** @return The named action of a node (its index in the status actions or the area attacks of the slice), or -1 (each one). */
+    [[nodiscard]] static std::int32_t named_action(const Entity& creature, const float* values, std::size_t place);
     /** @return The light attacks before a heavy one of the tree of a creature (the melee rule of a shot), or of the default tree. */
     [[nodiscard]] std::uint32_t cadence_of(const Entity& creature) const;
     /**
@@ -542,18 +587,19 @@ private:
     void release(const PendingRelease& pending);
     /**
      * The area rules of a step of a creature with an area attack and a character as its target (stage 3.4f-C). @return False: the other
-     * rules decide (not ready, not in the CastDistance, or no free line, for a creature with a different attack).
+     * rules decide (not ready, not in the CastDistance, or no free line, for a creature with a different attack). `named`: the area attack
+     * that the node names (stage BT2), or -1 for the next one of the slice.
      */
-    bool think_area(Entity& creature, Entity& target, float seconds, const AreaValues& values);
+    bool think_area(Entity& creature, Entity& target, float seconds, const AreaValues& values, std::int32_t named = -1);
     /** @return The indexes of the area attacks of a slice whose casts the spell system can make (Spells::area_usable). */
     [[nodiscard]] std::vector<std::uint32_t> usable_areas(const gamedata::CreatureSlice& body) const;
     void start_area(Entity& creature, Entity& target, std::uint32_t area, const AreaValues& values);
     void cast(const PendingCast& pending);
     /**
      * The status rules of a step of a creature with a status action (stage 3.4f-D). @return True: the creature started a status action (or
-     * one plays).
+     * one plays). `only`: the status action that the node names (stage BT2), or -1 for each one of the slice.
      */
-    bool think_status(Entity& creature, Entity& target, const StatusValues& values);
+    bool think_status(Entity& creature, Entity& target, const StatusValues& values, std::int32_t only = -1);
     /** @return True when the creature wants this status action now: its heal at low health, or its buff that it does not have. */
     [[nodiscard]] bool wants(const Entity& creature, const gamedata::CreatureStatusAction& action) const;
     void start_status_action(Entity& creature, std::uint32_t index, const StatusValues& values);
@@ -607,12 +653,12 @@ private:
     void select_roamers();
     /** @return True when a creature roams when a character is near: it walks, and it has a route that is not complete, or a wander. */
     [[nodiscard]] bool roams(Entity& creature);
-    /** One step of the roam of a creature: a step to its goal, its wait, or its next goal. */
-    void roam(Entity& creature, float seconds);
+    /** One step of the roam of a creature: a step to its goal, its wait, or its next goal (the values of its node `roam`). */
+    void roam(Entity& creature, float seconds, const RoamValues& values);
     /** Gives a creature the next goal of its roam (CreatureMind::roamGoal). @return False: no goal now. */
-    bool next_roam_goal(Entity& creature);
+    bool next_roam_goal(Entity& creature, const RoamValues& values);
     /** The creature is at the goal of its roam: the wait, the task, the next waypoint. */
-    void at_roam_goal(Entity& creature);
+    void at_roam_goal(Entity& creature, const RoamValues& values);
     /** The next waypoint of a route by its policy. */
     void next_waypoint(CreatureMind& mind, const gamedata::PatrolRoute& route);
     /** A creature that roamed stands where it is: no character is near it, or it took a target. */
@@ -643,6 +689,9 @@ private:
     /** The trees of the creatures (stage BT1), and the default tree of each creature. */
     tree::TreeSet m_trees;
     std::shared_ptr<const tree::CompiledTree> m_default;
+    /** The binding file (stage BT2), and the refusals that have a log line (tree name and slice path: one line for each pair). */
+    tree::BindingSet m_bindings;
+    std::set<std::pair<std::string, std::string>> m_refusalsLogged;
     /**
      * The target of the creature of the tree that runs (stage BT1): the leaves of one step look it up one time. A step does not remove an
      * entity, does not kill a character, and does not change who the creatures ignore; a new target id of the creature looks up again.

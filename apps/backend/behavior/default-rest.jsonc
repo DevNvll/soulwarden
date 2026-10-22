@@ -1,0 +1,11 @@
+// A creature at rest near a character (stage BT2: a subtree of the default tree): its patrol route (game data) or its wander (game data).
+// The leaf fails for a creature that is not at rest, and it waits by the rules of the roam (the wait at a waypoint, a hold, a root, the hit
+// stun). The waits are the values of behavior_rules before stage BT2 (stage 3.4e, project rules): the wait after a walk of the wander, a
+// random time from wait_shortest to wait_longest (kWanderWaitShortest, kWanderWaitLongest), and the pause after a goal with no way
+// (kRoamNoWayPause). Times in seconds.
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "default/rest",
+  "root": { "node": "roam", "wait_shortest": 4, "wait_longest": 12, "no_way_pause": 3 }
+}

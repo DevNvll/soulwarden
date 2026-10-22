@@ -218,6 +218,9 @@ void read_state(const json& reply, Snapshot& snapshot) {
             creature.dead = flag_of(entry, "dead");
             creature.spawnPoint = flag_of(entry, "spawnPoint");
             creature.distance = real_of(entry, "distance");
+            creature.tree = text_of(entry, "tree");
+            creature.treeBinding = text_of(entry, "treeBinding");
+            creature.treeRefused = text_of(entry, "treeRefused");
             snapshot.creatures.push_back(std::move(creature));
         }
     }

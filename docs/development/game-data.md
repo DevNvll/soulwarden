@@ -434,12 +434,15 @@ backend. The tool of each system is also in the document of that system.
   topics; 1.5 MB, 10 s. Without the file the backend starts, and a person has no conversation state.
 
 - The behavior trees of the creatures (stage BT1, [Creature behavior](../systems/creature-behavior.md), section "Behavior trees") are
-  project data, not game data: the files `apps/backend/behavior/*.jsonc` of the repository (the default tree `default` and its subtree
-  `default/fight`, format 1, JSON with comments; the JSON Schema `tree.schema.json`). The build puts their text into the program: the
-  backend has its trees with no file of the game data folder, and `tools/release.sh` takes nothing new. The game files have no server
-  tree (research BT0): each slice names its tree, and the client has no such file. A development run can give a folder of tree files
-  (`SOULWARDEN_BEHAVIOR_DIR`, only with `--dev-commands`) whose trees replace the trees of the program with the same name; a file that is
-  not correct is refused with one log line, and the tree of the program stays.
+  project data, not game data: the files `apps/backend/behavior/*.jsonc` of the repository (the default tree `default` and its subtrees
+  `default/rest`, `default/fight`, `default/status`, `default/area`, `default/shot`, `default/cast`, `default/melee`, format 1, JSON with
+  comments; the JSON Schema `tree.schema.json`), and from stage BT2 the binding file `bindings.jsonc` (`bindings.schema.json`), which
+  selects the tree of each creature. The build puts their text into the program: the backend has its trees with no file of the game data
+  folder, and `tools/release.sh` takes nothing new for them. The game files have no server tree (research BT0): each slice names its tree,
+  and the client has no such file; from stage BT2 `creatures.json` has these names (`serverTrees` of a slice), a binding key. A development
+  run can give a folder of tree files (`SOULWARDEN_BEHAVIOR_DIR`, only with `--dev-commands`) whose trees replace the trees of the program
+  with the same name, and whose `bindings.jsonc` replaces the binding file of the program; a file that is not correct is refused with one
+  log line, and the file of the program stays.
 
 ## Commands
 
@@ -473,6 +476,15 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 ```
 
 ## Traps
+
+- Stage BT2 changes `creatures.json` (still format 4, `tools/gamedata/creatures.sh`): each slice that names a server tree has the member
+  `serverTrees` (the asset paths of `m_behaviorTreeAssets` of its `BehaviorTreeComponent`, the entity "AI Functionality"; lower case, with
+  no folder `sharedassets/ai/behaviortrees/` and no suffix `.behaviortree`: `wolf/wolf_base`; `creature_behavior.py`, `read_server_trees`),
+  and the counts `slicesWithServerTree` (503) and `serverTrees` (128 names; research BT0). An asset value that is not a tree of that folder
+  stops the tool, and the old file stays (`check_creature_tool.py`, cases `trees-*`). The other members are the same bytes as the file of
+  stage 2.2 (a compare of the two files of the supported build). The backend reads the member as a binding key of the behavior trees
+  ([Creature behavior](../systems/creature-behavior.md), section "Behavior trees"); a file with no member works (no creature has a server
+  tree), and a member with a wrong form refuses the file (test case BTB1). `tools/release.sh` takes the new file with the game data folder.
 
 - Stage 1.8b adds `trigger-data.json` and changes `quest-data.json` (11 more columns of a game event, still format 1) and
   `interaction-data.json` (the float rule of the ids of a person child, still format 4). Make `trigger-data.json` after

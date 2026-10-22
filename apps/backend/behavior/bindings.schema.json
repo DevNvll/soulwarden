@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/DevNvll/soulwarden/apps/backend/behavior/bindings.schema.json",
+  "title": "Soulwarden binding of the behavior trees (format 1)",
+  "description": "The binding file bindings.jsonc (stage BT2). The loader of the backend (world/tree_binding.cpp) is the authority; this schema is for an editor. JSON with comments, no trailing comma. The narrowest key that matches selects the tree of a creature: kind, vitals, slice, serverTree, creatureType, family, then the binding with no key, then the tree default. A value in two bindings of one key is an error.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "bindings"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "format": { "const": 1 },
+    "bindings": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/binding" } }
+  },
+  "$defs": {
+    "values": {
+      "description": "A text or a list of texts, with no difference of upper and lower case.",
+      "oneOf": [
+        { "type": "string", "minLength": 1, "maxLength": 160 },
+        { "type": "array", "minItems": 1, "maxItems": 256, "items": { "type": "string", "minLength": 1, "maxLength": 160 } }
+      ]
+    },
+    "binding": {
+      "description": "One key and a tree, or only a tree (the binding of each other creature: at most one).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tree"],
+      "maxProperties": 2,
+      "properties": {
+        "tree": { "type": "string", "pattern": "^[A-Za-z0-9_]+(/[A-Za-z0-9_]+)*$", "maxLength": 64 },
+        "kind": { "$ref": "#/$defs/values", "description": "The id of a kind of the creature data (Wolf_Grey_7)." },
+        "vitals": { "$ref": "#/$defs/values", "description": "The vitals row of a kind." },
+        "slice": { "$ref": "#/$defs/values", "description": "The path of a slice (slices/characters/wolf_grey.dynamicslice)." },
+        "serverTree": { "$ref": "#/$defs/values", "description": "A server tree that the slice names in the client data (wolf/wolf_base)." },
+        "creatureType": { "$ref": "#/$defs/values", "description": "The creature type of a kind (EliteMiniBoss)." },
+        "family": { "$ref": "#/$defs/values", "description": "The family of a kind (Wolf)." }
+      }
+    }
+  }
+}

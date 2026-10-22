@@ -14,12 +14,17 @@ namespace {
 
 using nlohmann::json;
 
-/** One number parameter of a node: its name in the file, its range, and if it must be a whole number. */
+/**
+ * One number parameter of a node: its name in the file, its range, if it must be a whole number, and for a parameter that a file can leave
+ * out its value then (stage BT2: the waits of the roam; a file of stage BT1 has a roam with no parameter).
+ */
 struct NumberSpec {
     const char* name;
     float lowest;
     float highest;
     bool whole{false};
+    bool optional{false};
+    float fallback{0.0F};
 };
 
 /** How a node has children in the file: none, one ("child"), a list ("children"), or the root of a different tree ("tree"). */
@@ -35,6 +40,8 @@ struct KindSpec {
 
 // The ranges are rules of this project (a decision of an agent, stage BT1): they keep a typing error of a file out of the world.
 constexpr float kLongestTime = 600.0F;
+// Code review of stage BT1, finding R6: a value of the blackboard is a 32-bit float, thus an int key keeps each whole number up to 2^24 exact.
+constexpr double kLargestExactInteger = 16777216.0;
 constexpr float kLongestPause = 60.0F;
 constexpr float kFarthest = 200.0F;
 const NumberSpec kBand[] = {{"far", 0.5F, kFarthest}, {"hold", 0.5F, kFarthest}, {"near", 0.0F, kFarthest}, {"middle", 0.0F, kFarthest},
@@ -61,7 +68,12 @@ const std::vector<KindSpec>& specs() {
          Children::none,
          {{"light_before_heavy", 1.0F, 20.0F, true}, {"pause", 0.0F, kLongestPause}, {"heavy_pause", 0.0F, kLongestPause}}},
         {NodeKind::turn_to_target, "turn_to_target", Children::none, {}},
-        {NodeKind::roam, "roam", Children::none, {}},
+        {NodeKind::roam,
+         "roam",
+         Children::none,
+         {{"wait_shortest", 0.0F, kLongestTime, false, true, param::kDefaultWaitShortest},
+          {"wait_longest", 0.0F, kLongestTime, false, true, param::kDefaultWaitLongest},
+          {"no_way_pause", 0.0F, kLongestPause, false, true, param::kDefaultNoWayPause}}},
         {NodeKind::set, "set", Children::none, {}},
     };
     return table;
@@ -140,6 +152,8 @@ public:
         }
         if (spec->kind == NodeKind::basic_shot) {
             allowed.insert(allowed.end(), {"archer", "caster", "retreat_pause", "pause"});
+        } else if (spec->kind == NodeKind::status_action || spec->kind == NodeKind::area_attack) {
+            allowed.emplace_back("action");
         } else if (spec->kind == NodeKind::target_is) {
             allowed.emplace_back("kind");
         } else if (spec->kind == NodeKind::check) {
@@ -161,12 +175,18 @@ public:
             }
         }
         switch (spec->kind) {
-        case NodeKind::basic_shot:
+        case NodeKind::basic_shot: {
+            // Stage BT2: a node has the band of an archer, of a caster, or both; it fails for a slice whose band it does not have.
+            std::size_t bands = 0;
             for (const char* band : {"archer", "caster"}) {
                 const auto found = value.find(band);
-                if (found == value.end() || !found->is_object()) {
-                    return fail(at + "/" + band, std::string("the node basic_shot must have the band \"") + band + "\" (an object)");
+                if (found == value.end()) {
+                    continue;
                 }
+                if (!found->is_object()) {
+                    return fail(at + "/" + band, std::string("the band \"") + band + "\" of the node basic_shot must be an object");
+                }
+                ++bands;
                 for (const auto& [member, item] : found->items()) {
                     if (std::none_of(std::begin(kBand), std::end(kBand), [&](const NumberSpec& spec) { return member == spec.name; })) {
                         return fail(at + "/" + band + "/" + member, "a band has no member \"" + member + "\"");
@@ -185,8 +205,26 @@ public:
                     return fail(at + "/" + band, "the distances of a band must be near <= middle <= hold <= far");
                 }
             }
+            if (bands == 0) {
+                return fail(at, "the node basic_shot must have a band: \"archer\", \"caster\", or both (an object)");
+            }
             if (!numberOf(value, NumberSpec{"retreat_pause", 0.0F, kLongestTime}, at) || !numberOf(value, NumberSpec{"pause", 0.0F, kLongestPause}, at)) {
                 return false;
+            }
+            break;
+        }
+        case NodeKind::status_action:
+        case NodeKind::area_attack:
+            // Stage BT2: the name of the action of the slice that the node uses (no member: each one of the slice).
+            if (const auto action = value.find("action");
+                action != value.end() && (!action->is_string() || !valid_name(action->get<std::string>(), false))) {
+                return fail(at + "/action", "the action must be the name of an action of the slice (letters, digits, and '_', 64 characters at most)");
+            }
+            break;
+        case NodeKind::roam:
+            if (value.value("wait_shortest", static_cast<double>(param::kDefaultWaitShortest))
+                > value.value("wait_longest", static_cast<double>(param::kDefaultWaitLongest))) {
+                return fail(at, "the waits of the roam must be wait_shortest <= wait_longest");
             }
             break;
         case NodeKind::target_is: {
@@ -247,6 +285,7 @@ public:
             if (found == value.end() || !found->is_string() || !valid_name(found->get<std::string>(), true)) {
                 return fail(at + "/tree", "the node subtree must have \"tree\": the name of a tree");
             }
+            m_subtrees.push_back(found->get<std::string>());
             return true;
         }
         case Children::none:
@@ -262,10 +301,16 @@ public:
     [[nodiscard]] const std::string& error() const {
         return m_error;
     }
+    [[nodiscard]] std::vector<std::string>& subtrees() {
+        return m_subtrees;
+    }
 
 private:
     bool numberOf(const json& value, const NumberSpec& spec, const std::string& at) {
         const auto found = value.find(spec.name);
+        if (found == value.end() && spec.optional) {
+            return true;
+        }
         if (found == value.end()) {
             return fail(at, std::string("the parameter \"") + spec.name + "\" is not there");
         }
@@ -305,6 +350,9 @@ private:
         if (!std::isfinite(number) || std::fabs(number) > 1.0e9) {
             return fail(at + "/value", "the value must be a finite number");
         }
+        if (key.type == KeyType::integer && std::fabs(number) > kLargestExactInteger) {
+            return fail(at + "/value", "an int value must be from -16777216 to 16777216 (a value of the blackboard is a 32-bit float)");
+        }
         if ((key.type == KeyType::integer && std::floor(number) != number) || (key.type == KeyType::boolean && number != 0.0 && number != 1.0)) {
             return fail(at + "/value", "the value does not fit the type of the key \"" + key.name + "\"");
         }
@@ -314,6 +362,7 @@ private:
     const std::vector<Key>& m_keys;
     std::size_t m_nodes{0};
     std::string m_error;
+    std::vector<std::string> m_subtrees;
 };
 
 float value_of(const json& value) {
@@ -378,13 +427,16 @@ private:
             node.label = label->get<std::string>();
         }
         for (const NumberSpec& number : spec.numbers) {
-            m_out.params.push_back(value.at(number.name).get<float>());
+            const auto found = value.find(number.name);
+            m_out.params.push_back(found != value.end() ? found->get<float>() : number.fallback);
         }
         switch (spec.kind) {
         case NodeKind::basic_shot:
             for (const char* band : {"archer", "caster"}) {
+                const auto found = value.find(band);
                 for (const NumberSpec& number : kBand) {
-                    m_out.params.push_back(value.at(band).at(number.name).get<float>());
+                    const bool first = &number == &kBand[0];
+                    m_out.params.push_back(found != value.end() ? found->at(number.name).get<float>() : first ? param::kNoBand : 0.0F);
                 }
             }
             m_out.params.push_back(value.at("retreat_pause").get<float>());
@@ -409,6 +461,15 @@ private:
         }
         case NodeKind::subtree:
             node.label = value.at("tree").get<std::string>();
+            break;
+        case NodeKind::status_action:
+        case NodeKind::area_attack:
+            if (const auto action = value.find("action"); action != value.end()) {
+                m_out.params.push_back(static_cast<float>(m_out.actions.size()));
+                m_out.actions.push_back(NamedAction{static_cast<std::uint32_t>(index), spec.kind, action->get<std::string>()});
+            } else {
+                m_out.params.push_back(-1.0F);
+            }
             break;
         default:
             break;
@@ -506,8 +567,12 @@ std::vector<std::pair<std::string, float>> parameters(const CompiledTree& tree, 
     switch (node.kind) {
     case NodeKind::basic_shot:
         for (const char* band : {"archer", "caster"}) {
+            const bool has = values[place] != param::kNoBand;
             for (const NumberSpec& number : kBand) {
-                out.emplace_back(std::string(band) + "." + number.name, values[place++]);
+                if (has) {
+                    out.emplace_back(std::string(band) + "." + number.name, values[place]);
+                }
+                ++place;
             }
         }
         out.emplace_back("retreat_pause", values[place++]);
@@ -525,6 +590,12 @@ std::vector<std::pair<std::string, float>> parameters(const CompiledTree& tree, 
         out.emplace_back("key", values[param::kSetKey]);
         out.emplace_back("value", values[param::kSetValue]);
         break;
+    case NodeKind::status_action:
+    case NodeKind::area_attack:
+        if (values[place] >= 0.0F) {
+            out.emplace_back("action", values[place]);
+        }
+        break;
     default:
         break;
     }
@@ -536,7 +607,8 @@ bool load_tree_file(std::string_view text, const std::string& source, TreeFile& 
     try {
         // JSON with comments (the format of the tree files); a trailing comma is an error of the library (version 3.12.0).
         document = json::parse(text.begin(), text.end(), nullptr, true, true);
-    } catch (const json::parse_error& failure) {
+    } catch (const json::exception& failure) {
+        // Each error of the JSON library (a parse error, a number that is too large: code review of stage BT1, finding R1) is a refusal.
         error = std::string("not JSON with comments: ") + failure.what();
         return false;
     }
@@ -551,7 +623,8 @@ bool load_tree_file(std::string_view text, const std::string& source, TreeFile& 
         }
     }
     const auto format = document.find("format");
-    if (format == document.end() || !format->is_number_integer() || format->get<int>() != kFormat) {
+    // The JSON number is compared with the format, not a narrowed copy (code review of stage BT1, finding R7: 4294967297 was format 1).
+    if (format == document.end() || !format->is_number_integer() || *format != kFormat) {
         error = "format: the file must have \"format\": " + std::to_string(kFormat);
         return false;
     }
@@ -594,8 +667,9 @@ bool load_tree_file(std::string_view text, const std::string& source, TreeFile& 
                 const bool fits = key.type == KeyType::boolean ? initial->is_boolean()
                                   : key.type == KeyType::integer ? initial->is_number_integer()
                                                                  : initial->is_number();
-                if (!fits || (initial->is_number() && std::fabs(initial->get<double>()) > 1.0e9)) {
-                    error = at + "/default: the default value does not fit the type of the key";
+                if (!fits || (initial->is_number() && std::fabs(initial->get<double>()) > 1.0e9)
+                    || (key.type == KeyType::integer && std::fabs(initial->get<double>()) > kLargestExactInteger)) {
+                    error = at + "/default: the default value does not fit the type of the key (an int: -16777216 to 16777216)";
                     return false;
                 }
                 key.initial = value_of(*initial);
@@ -617,6 +691,7 @@ bool load_tree_file(std::string_view text, const std::string& source, TreeFile& 
     out.keys = std::move(keys);
     out.source = source;
     out.root = root->dump();
+    out.subtrees = std::move(checker.subtrees());
     return true;
 }
 
@@ -663,16 +738,48 @@ bool TreeSet::add(std::string_view text, const std::string& source, std::string&
     return true;
 }
 
+bool read_text_file(const std::filesystem::path& path, std::size_t limit, std::string& text, std::string& error) {
+    // At most `limit` + 1 bytes: a larger file is refused with no read of the rest (code review of stage BT1, finding R5).
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        error = "the file cannot be read";
+        return false;
+    }
+    text.assign(limit + 1, '\0');
+    input.read(text.data(), static_cast<std::streamsize>(text.size()));
+    const auto count = static_cast<std::size_t>(input.gcount());
+    if (input.bad()) {
+        error = "the file cannot be read";
+        return false;
+    }
+    if (count > limit) {
+        error = "the file is larger than " + std::to_string(limit / (1024 * 1024)) + " MiB";
+        return false;
+    }
+    text.resize(count);
+    return true;
+}
+
 bool TreeSet::load(const std::string& folder, LoadReport& report) {
     m_files.clear();
     m_compiled.clear();
     std::string error;
+    // Each file is read and checked first, then the set compiles: a subtree can be in a file after the file of its parent (code review of
+    // stage BT1, finding R2). A file of the folder replaces the tree of the program of the same name.
+    std::map<std::string, TreeFile, std::less<>> program;
     for (const EmbeddedFile& file : embedded_tree_files()) {
-        const std::string source = std::string("embedded:") + file.name;
-        if (!add(file.text, source, error)) {
-            report.refused.push_back(source + ": " + error);
+        if (file.name == kBindingFile) {
+            continue; // The binding file (stage BT2, world/tree_binding.h).
         }
+        const std::string source = std::string("embedded:") + file.name;
+        TreeFile tree;
+        if (!load_tree_file(file.text, source, tree, error)) {
+            report.refused.push_back(source + ": " + error);
+            continue;
+        }
+        program[tree.name] = std::move(tree);
     }
+    std::map<std::string, TreeFile, std::less<>> files = program;
     if (!folder.empty()) {
         std::error_code failure;
         std::vector<std::filesystem::path> paths;
@@ -680,23 +787,61 @@ bool TreeSet::load(const std::string& folder, LoadReport& report) {
             report.refused.push_back(folder + ": not a folder (the trees of the program stay)");
         } else {
             for (const auto& entry : std::filesystem::directory_iterator(folder, failure)) {
-                if (entry.is_regular_file() && entry.path().extension() == ".jsonc") {
+                if (entry.is_regular_file() && entry.path().extension() == ".jsonc" && entry.path().filename().string() != kBindingFile) {
                     paths.push_back(entry.path());
                 }
             }
         }
         std::sort(paths.begin(), paths.end());
         for (const std::filesystem::path& path : paths) {
-            std::ifstream input(path, std::ios::binary);
-            std::stringstream text;
-            text << input.rdbuf();
             const std::string source = path.filename().string();
-            if (!input || text.str().size() > 1024 * 1024) {
-                report.refused.push_back(source + ": the file cannot be read, or it is larger than 1 MiB");
+            std::string text;
+            TreeFile tree;
+            if (!read_text_file(path, kMaxFileBytes, text, error) || !load_tree_file(text, source, tree, error)) {
+                report.refused.push_back(source + ": " + error);
                 continue;
             }
-            if (!add(text.str(), source, error)) {
-                report.refused.push_back(source + ": " + error);
+            files[tree.name] = std::move(tree);
+        }
+    }
+    // The compile. A tree that does not compile by a fault of its own file (not by a subtree that does not compile) is refused: the tree
+    // of the program of its name comes back (or no tree), and the set compiles again. A cycle of trees that each fail refuses each one.
+    for (std::size_t round = 0; round <= 2 * files.size() + 1; ++round) {
+        std::map<std::string, std::shared_ptr<const CompiledTree>, std::less<>> compiled;
+        std::map<std::string, std::string, std::less<>> failed;
+        for (const auto& [name, file] : files) {
+            std::shared_ptr<const CompiledTree> tree = compile(file, files, error);
+            if (tree) {
+                compiled.emplace(name, std::move(tree));
+            } else {
+                failed.emplace(name, error);
+            }
+        }
+        if (failed.empty()) {
+            m_files = std::move(files);
+            m_compiled = std::move(compiled);
+            break;
+        }
+        std::vector<std::string> own;
+        for (const auto& [name, cause] : failed) {
+            const std::vector<std::string>& subtrees = files.at(name).subtrees;
+            if (std::none_of(subtrees.begin(), subtrees.end(), [&](const std::string& subtree) { return failed.count(subtree) != 0; })) {
+                own.push_back(name);
+            }
+        }
+        if (own.empty()) {
+            for (const auto& [name, cause] : failed) {
+                own.push_back(name);
+            }
+        }
+        for (const std::string& name : own) {
+            const TreeFile& file = files.at(name);
+            report.refused.push_back(file.source + ": " + failed.at(name));
+            const auto original = program.find(name);
+            if (original != program.end() && original->second.source != file.source) {
+                files[name] = original->second;
+            } else {
+                files.erase(name);
             }
         }
     }

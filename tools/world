@@ -323,8 +323,11 @@ The creatures of the world (protocol notes 4.14):
   tools/world creature tree CREATURE            the behavior tree of a creature (stage BT1): its last step (the tree, or
                                                 the rule of the engine that held it), the result of each node (+ success,
                                                 - failure, . not run), the parameters, the blackboard keys and facts
-  tools/world creature tree reload              the behavior trees again: the program, and the folder SOULWARDEN_BEHAVIOR_DIR
-                                                of a development run (a file that is not correct is refused, with its cause)
+  tools/world creature tree CREATURE --set NAME the creature gets the tree NAME now (stage BT2; default: the default tree), until a
+                                                reload; a tree that names an action that the slice does not have is refused
+  tools/world creature tree reload              the behavior trees and the binding file again: the program, and the folder
+                                                SOULWARDEN_BEHAVIOR_DIR of a development run (a file that is not correct is refused,
+                                                with its cause)
   tools/world creature anchor CREATURE X Y Z    the anchor of a creature in a fight is that place
                                                 (the end of its way back): a test of a way back
                                                 with no path to the anchor
@@ -508,6 +511,15 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             print("  tree " + line)
         for line in document["refused"]:
             print("  REFUSED " + line)
+        if document.get("bindings"):
+            print("  bindings: " + document["bindings"])
+    elif isinstance(document, dict) and "tree" in document and isinstance(document.get("creature"), str) and "message" in document:
+        # The command tree --set (stage BT2): done (200), or refused (409: the creature keeps its tree).
+        if document["message"] == "done":
+            print(f"world: done: creature {document['creature']} ({document['kind']}) has the tree {document['tree']} "
+                  f"(binding: {document['binding']})")
+        else:
+            print(f"world: {document['message']} (HTTP {status}; its tree: {document['tree']})")
     elif isinstance(document, dict) and "worldTime" in document and "scope" in document:
         print(f"world: {document['message']}; " + world_time_text(document["worldTime"]))
     elif isinstance(document, dict) and "objectEntities" in document and "objects" in document:
@@ -947,6 +959,10 @@ def show_tree(document: dict) -> None:
     ago = f"{step['secondsAgo']:.1f} s ago" if step["secondsAgo"] >= 0 else "no step yet"
     print(f"creature {document['creature']} ({document['kind']}), mode {document['mode']}, tree {document.get('tree', '(none)')} "
           f"({document.get('source', '')})")
+    # Stage BT2: the binding that selected the tree, and the cause when the slice did not fit the tree of its binding.
+    print(f"binding: {document.get('binding', '')}")
+    if document.get("refused"):
+        print(f"REFUSED the tree of the binding: {document['refused']}; the creature has the tree default")
     decided = f", the leaf that decided: {step['decided']}" if step["decided"] else ""
     print(f"the last step ({ago}): {step['cause']}{decided}")
     marks = {"success": "+", "failure": "-", "running": "~", "idle": "."}
@@ -1176,6 +1192,11 @@ def creature_text(creature: dict) -> str:
             mode += f", {stands})" if stands else ")"
     elif roam == "wander":
         mode += "  WANDER" + (f" ({stands})" if stands else "")
+    # The behavior tree (stage BT2): only a tree that is not the default tree, and a refusal of the tree of the binding.
+    if creature.get("tree") and creature.get("tree") != "default":
+        mode += f"  TREE {creature['tree']}"
+    if creature.get("treeRefused"):
+        mode += "  TREE OF ITS BINDING REFUSED"
     kind = "" if creature.get("fights", True) else "  no attack"
     rooted = creature.get("groundKnown", True) and not creature.get("walks", True)
     kind += "  stays at its place" if rooted and creature.get("fights", True) else ""
@@ -1341,6 +1362,10 @@ def creature_command(data_dir: Path, arguments: list[str]) -> None:
         request(data_dir, "POST", "/v1/dev/creatures/tree/reload")
     elif action == "tree" and len(arguments) == 2:
         request(data_dir, "GET", f"/v1/dev/creatures/tree?creature={creature_id(data_dir, arguments[1])}")
+    elif action == "tree" and len(arguments) == 4 and arguments[2] == "--set":
+        if not re.fullmatch(r"[A-Za-z0-9_]+(/[A-Za-z0-9_]+)*", arguments[3]) or len(arguments[3]) > 64:
+            fail("the tree must be a name of a tree (letters, digits, _, parts with /): default, default/fight")
+        request(data_dir, "POST", f"/v1/dev/creatures/tree/set?creature={creature_id(data_dir, arguments[1])}&tree={arguments[3]}")
     elif action == "anchor" and len(arguments) == 5:
         x, y, z = numbers(arguments[2:5], 3)
         request(data_dir, "POST", f"/v1/dev/creatures/anchor?creature={creature_id(data_dir, arguments[1])}&x={x}&y={y}&z={z}")

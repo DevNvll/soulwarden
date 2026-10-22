@@ -35,7 +35,10 @@ protocol notes (section 6).
   its cap, a field, and "Set": the command `set_currency`; [Crafting](crafting.md)), the button "Heal", which
   has the text "Revive" for a dead character, the mark "Creatures ignore this
   character", the mark "Each kill drops loot and coin", the attributes, and at its end the group "Build presets" of stage B0:
-  [Build presets](build-presets.md)), "Skills", "Creatures", "Travel" (the position of the
+  [Build presets](build-presets.md)), "Skills", "Creatures" (from stage BT2 the column "Tree": the behavior tree of each creature, the
+  member `tree` of its row in the state; its tooltip has the binding that selected it, `treeBinding`; a tree of a binding that the slice did
+  not fit shows red with "(refused)" and its cause in the tooltip, `treeRefused`; [Creature behavior](creature-behavior.md), section
+  "Behavior trees"; a backend of an earlier stage gives no tree: "-"), "Travel" (the position of the
   character, the list of the travel places with a filter and the distance of each place, a
   button "Travel" for the selected place, and a form with three numbers), and "World" (stage 2.2: the time of the world and
   its phase, a form with the hour and the minute and the button "Set", and the buttons 06:00, 12:00, 19:00, 00:00; the time

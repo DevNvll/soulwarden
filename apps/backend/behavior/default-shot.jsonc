@@ -1,0 +1,14 @@
+// The basic shot of an archer (stage 3.4f-A: the band kShot*, kRetreatPause; stage BT2: a subtree of default/fight). The node has only the
+// band of an archer: it fails for a caster (default/cast). The melee attack of the slice wins in its reach: the leaf then fails. Times in
+// seconds, distances in meters.
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "default/shot",
+  "root": {
+    "node": "basic_shot",
+    "archer": { "far": 20, "hold": 18, "near": 8, "middle": 14, "repeat": 3 },
+    "retreat_pause": 6,
+    "pause": 1.5
+  }
+}

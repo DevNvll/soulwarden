@@ -498,6 +498,19 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
     if (entry.contains("spawnAction")) {
         slice.spawnActionName = entry["spawnAction"].get<std::string>();
     }
+    // The server trees of the slice (stage BT2): a list of names. A member with a wrong form is a fault.
+    if (entry.contains("serverTrees")) {
+        const json& names = entry["serverTrees"];
+        if (!names.is_array() || names.empty() || names.size() > 8) {
+            return false;
+        }
+        for (const json& name : names) {
+            if (!name.is_string() || name.get<std::string>().empty() || name.get<std::string>().size() > 160) {
+                return false;
+            }
+            slice.serverTrees.push_back(name.get<std::string>());
+        }
+    }
     // The capsule of the character (stage 3.3b-S3): a member of a slice that has one. A member with a wrong form is a fault.
     if (entry.contains("capsule")) {
         CreatureCapsule capsule;
