@@ -89,6 +89,9 @@ contracts are in the protocol notes (sections 4.6 and 4.7).
   prints each entry with a list item one time (the melee contacts of a run: the target, the
   facet, the point), with its action bits. The tool reads each entry to its last byte: a
   report that does not decode is in the output as `NOT DECODED`.
+- An accepted position of a character is an event of the quests (stage 1.8c): `World::place` marks the character, and the tick of the
+  quests looks one time at its place tasks (TaskGoToPOITag, TaskExitPOITag) with the shapes of the points of interest. A camera
+  estimate and the estimated position of a travel change no place task ([Quests](quests.md), case QE6).
 
 ## Traps
 

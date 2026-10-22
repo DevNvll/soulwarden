@@ -446,6 +446,17 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_cutscene_request(body);
         break;
+    case kTypeTerritoryEntered:
+    case kTypeTerritoryLeft:
+        check_route(route, type, body, firstOfType);
+        handle_territory_report(body, type == kTypeTerritoryEntered);
+        break;
+    case kTypeUiScreenOpened:
+    case kTypeAbandonObjective:
+    case kTypeResetObjective:
+        check_route(route, type, body, firstOfType);
+        handle_objective_call(body, type);
+        break;
     default:
         check_route(route, type, body, firstOfType);
         if (firstOfType) {
@@ -1289,6 +1300,7 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
     known.sent = m_world.revision();
     if (owner && m_objectivesEnabled) {
         known.gatedSent = known.sent;
+        m_objectivesSent = true;
     }
     if (owner && std::any_of(fragments.begin(), fragments.end(),
                              [](const PendingFragment& fragment) { return fragment.slot == kStatMultiplierSlot && fragment.type == kTypeStatMultiplierState; })) {
@@ -2532,6 +2544,13 @@ void RepSession::handle_tracked_objectives(std::span<const std::uint8_t> body) {
     if (!own_facet(*own, message->target, message->entity, kObjectivesComponentName, kTypeUpdateTrackedObjectives, "pin message")) {
         return;
     }
+    if (!m_objectivesSent) {
+        // Code review of stage 1.8a, finding QR8A-R1: the client sends 1458 (an empty list) before its facet has the saved quests. A list
+        // before the first quest state of the session is not a choice of the player: the saved pins stay.
+        log::write("rep: the client pins %zu objective(s) (message %u) before the first quest state of the session: no change",
+                   message->instances.size(), kTypeUpdateTrackedObjectives);
+        return;
+    }
     const bool stored = m_world.quests().client_tracked(*own, message->instances);
     log::write("rep: the client pins %zu objective(s) (message %u): %s", message->instances.size(), kTypeUpdateTrackedObjectives,
                stored ? "stored" : "no change");
@@ -2550,6 +2569,55 @@ void RepSession::handle_cutscene_request(std::span<const std::uint8_t> body) {
     // The answer (6707) is stage 1.8b: the client waits for it (live check L2 of stage 1.8a).
     log::write("rep: the client asks for the cutscene %08x (message %u): no answer before stage 1.8b", message->cutscene,
                kTypeRequestStartCutscene);
+}
+
+void RepSession::handle_territory_report(std::span<const std::uint8_t> body, bool entered) {
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const std::uint32_t type = entered ? kTypeTerritoryEntered : kTypeTerritoryLeft;
+    const std::optional<TerritoryReport> message = read_territory_report(body, entered);
+    if (!message) {
+        log::write("rep: place report (type %u, %zu bytes) does not have the form of the message: no change", type, body.size());
+        return;
+    }
+    if (!own_facet(*own, message->target, message->entity, kTerritoryDetectorComponentName, type, "place report")) {
+        return;
+    }
+    // Stage 1.8c: a cue for the tasks of a place (the server tests the shapes of the data with the accepted position). The discovery
+    // achievement of the message is the map of stage 2.7: no bit now.
+    m_world.quests().place_reported(*own, message->territory, entered);
+}
+
+void RepSession::handle_objective_call(std::span<const std::uint8_t> body, std::uint32_t type) {
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const bool wide = type != kTypeUiScreenOpened;
+    const char* name = type == kTypeUiScreenOpened ? "screen message" : type == kTypeAbandonObjective ? "abandon request" : "reset request";
+    const std::optional<ObjectiveCall> message = read_objective_call(body, wide);
+    if (!message) {
+        log::write("rep: %s (type %u, %zu bytes) does not have the form of the message: no change", name, type, body.size());
+        return;
+    }
+    if (!own_facet(*own, message->target, message->entity, kObjectivesComponentName, type, name)) {
+        return;
+    }
+    if (type == kTypeUiScreenOpened) {
+        world::QuestEvent event;
+        event.kind = world::QuestEventKind::screen;
+        event.screenCrc = static_cast<std::uint32_t>(message->value);
+        m_world.quests().event(*own, event);
+        log::write("rep: the client opened the screen %08x (message %u)", static_cast<unsigned>(message->value), type);
+        return;
+    }
+    const world::QuestResult result =
+        type == kTypeAbandonObjective ? m_world.quests().abandon(*own, message->value) : m_world.quests().reset(*own, message->value);
+    log::write("rep: the client asks for the %s of the quest %016llx (message %u): %s%s", type == kTypeAbandonObjective ? "abandon" : "reset",
+               static_cast<unsigned long long>(message->value), type, world::quest_error_text(result.error),
+               result.ok() && type == kTypeResetObjective ? (", new instance " + std::to_string(result.instance)).c_str() : "");
 }
 
 std::optional<bool> RepSession::auto_pin(std::uint8_t type) const {

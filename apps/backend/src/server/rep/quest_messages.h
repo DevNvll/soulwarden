@@ -16,12 +16,31 @@
 //   6703 PlayerCutsceneComponentServerFacet_OnClientRequestStartCutscene (sender 0x2EDA740): cutscene:u32 (CRC-32 of the name). Stage
 //        1.8a only writes it to the log (live check L2: the client sends it 2 s after the bit Start_IGC_Aelstrom_WW, CRC 4817DD08; the
 //        answer is stage 1.8b).
+// Stage 1.8c (research quest-engine.md Q3, map.md 2.1; live checks POI1 and the captures of stage 1.8c):
+//   2297 TerritoryDetectorComponentServerFacet_AttemptTerritoryUnlock (writer 0x29C0E70, reader 0x29C0F20): reference (actor:16 raw,
+//        group:u64, local:u64) territory:u16 achievement:u32 (CRC-32 of the lower-case achievement name; 0 for none). The client sends it
+//        when its player goes into the shape of a point of interest (the "charted" achievement) or into the sphere of DiscoveryRadius
+//        around its placement (the "discovered" achievement): live check POI1 (40142: d66d9b33 at 150 m from the placement, 39eec8c7 at
+//        the shape). Component TerritoryDetector of RootPlayer.
+//   6416 TerritoryDetectorComponentServerFacet_AttemptTerritoryExit (writer 0x29C2440): the same with no achievement. The client sends
+//        it when its player leaves a shape or a sphere (live check POI1: two 6416 for 40140, at its shape and at 150 m).
+//   2617 ObjectivesComponentServerFacet_NotifyOpenUiScreen (sender 0x3A055A0, caller 0x3A50F50): screen:u32 (CRC-32 of the lower-case UI
+//        state name: a1126b78 "hud" in the captures of stage 1.8c).
+//   3836 ObjectivesComponentServerFacet_AbandonSingleObjective (sender 0x3A04130, reader 0x39E8A10): instance:u64.
+//   5600 ObjectivesComponentServerFacet_ResetObjective (handler 0x3A62210, reader 0x39E8A10): instance:u64.
 
 namespace soulwarden::backend::server::rep {
 
 inline constexpr std::uint32_t kTypeObjectiveAutoPinning = 2709;
 inline constexpr std::uint32_t kTypeUpdateTrackedObjectives = 1458;
 inline constexpr std::uint32_t kTypeRequestStartCutscene = 6703;
+inline constexpr std::uint32_t kTypeTerritoryEntered = 2297;
+inline constexpr std::uint32_t kTypeTerritoryLeft = 6416;
+inline constexpr std::uint32_t kTypeUiScreenOpened = 2617;
+inline constexpr std::uint32_t kTypeAbandonObjective = 3836;
+inline constexpr std::uint32_t kTypeResetObjective = 5600;
+/** The TerritoryDetector component of the player slice (entity RootPlayer), by its name in slice-ids.json (live log of stage 1.8c). */
+inline constexpr const char* kTerritoryDetectorComponentName = "RootPlayer/efc5d83c-a790-6a1f-f6f2-150e05d4d093";
 
 /** The Objectives component (entity RootPlayer) and the PlayerCutscene component of the player slice, by their names in slice-ids.json. */
 inline constexpr const char* kObjectivesComponentName = "RootPlayer/a42a47db-4f14-41c6-81d1-19a95ba99f84";
@@ -55,5 +74,24 @@ struct CutsceneRequest {
 };
 /** @return The body of 6703, or no value. */
 [[nodiscard]] std::optional<CutsceneRequest> read_cutscene_request(std::span<const std::uint8_t> body);
+
+struct TerritoryReport {
+    std::uint64_t target{0};
+    std::uint64_t entity{0};
+    std::uint16_t territory{0};
+    /** The CRC-32 of the achievement of 2297 (0 for none, and for 6416). */
+    std::uint32_t achievement{0};
+};
+/** @return The body of 2297 (`entered`) or of 6416, or no value. */
+[[nodiscard]] std::optional<TerritoryReport> read_territory_report(std::span<const std::uint8_t> body, bool entered);
+
+/** The body of 2617 (`value` is the screen CRC), 3836 and 5600 (`value` is the instance). */
+struct ObjectiveCall {
+    std::uint64_t target{0};
+    std::uint64_t entity{0};
+    std::uint64_t value{0};
+};
+/** @return The body, or no value. `wide`: an instance (u64); else a screen CRC (u32). */
+[[nodiscard]] std::optional<ObjectiveCall> read_objective_call(std::span<const std::uint8_t> body, bool wide);
 
 } // namespace soulwarden::backend::server::rep

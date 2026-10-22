@@ -349,3 +349,9 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   charge, of the swing, and of the ability. Compare it with the log line of the cast (`in 33 ms`).
 - The development character carries more than its weight limit: the HUD shows "Encumbered" during a gather. It does not stop a
   gather (the action Gather has no weight condition).
+- `gamescopectl screenshot NAME.png` with a relative name writes the file into the folder of the shell that started the run (stage
+  1.8c: a picture came into the working copy). Give an absolute path in the evidence folder.
+- `tools/world travel` turns the camera to the north (stage 1.8c). To have a creature or an object in front of the camera after a
+  travel, travel to a point to the south of it. `'look DX DY'`: a positive `DY` turns the camera down.
+- A kill while the creatures ignore the character (`tools/world ignore CHARACTER on`) gives no reward and no quest count (stage 1.8c,
+  live K1). Turn the mode on again after the kill, before a gather or a picture near other creatures.

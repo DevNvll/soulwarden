@@ -518,6 +518,22 @@ public:
     [[nodiscard]] Plan plan_craft(const std::string& characterId, const std::vector<CraftCost>& costs, const CraftOutput& output,
                                   std::uint32_t jobs);
     /**
+     * Plans the item actions of a quest (stage 1.8c, world/quests.h; docs/systems/quests.md): each take leaves the stacks of its item id
+     * in the bag, then in the quick slots (also a locked or a protected item: the quest takes its own items; client 0x8260370: "only from
+     * the inventory, not the global storage"); a take of more than the character has takes what it has. Each give goes into the bag with
+     * the cause ItemGathered (the loot notice), whole or not at all (bagFull). No write, no change of the entity.
+     * @param taken Gets the quantity that each take took.
+     */
+    [[nodiscard]] Plan plan_quest_items(const std::string& characterId, const std::vector<GrantItem>& gives,
+                                        const std::vector<std::pair<std::string, std::uint32_t>>& takes, std::vector<std::uint32_t>* taken);
+    /** @return The quantity of an item id (any case) in the bag and in the paperdoll of a character (stage 1.8c: a possession task). */
+    [[nodiscard]] static std::uint64_t count(const Entity& entity, std::string_view itemId);
+    /** @return True when an item of the paperdoll has this id (any case) and a gear score of `minGearScore` or more (TaskEquipItem). */
+    [[nodiscard]] static bool equipped(const Entity& entity, std::string_view itemId, std::uint32_t minGearScore);
+    /** @return True for an item that the catalog marks as a quest item (Nonremovable: the quest items of the data have it). */
+    [[nodiscard]] bool quest_item(std::string_view itemId) const;
+
+    /**
      * Sets the coin of a character in the world after a written change of a different system (stage 3.7a: the fee of a craft, written in
      * the transaction of its items) and marks the currency state. A character that is not in the world: nothing (the row has it).
      */

@@ -15,7 +15,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 15;
+constexpr int kSchemaVersion = 16;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -374,12 +374,26 @@ CREATE TABLE IF NOT EXISTS character_quest_undo(
 );
 )sql";
 
+/**
+ * Version 16 (stage 1.8c: docs/systems/quests.md). The items that an AwardOnlyOnce task of an objective gave (`character_quest_awards`:
+ * the objective id, the task index, the number of items; client 0x825EEF0, 0x825F8F0): a reset keeps the row, an abandon removes it.
+ */
+constexpr const char* kMigration16QuestAwards = R"sql(
+CREATE TABLE IF NOT EXISTS character_quest_awards(
+    character_id TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    task_index INTEGER NOT NULL,
+    amount INTEGER NOT NULL,
+    PRIMARY KEY(character_id, objective, task_index)
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
                                             "loot_claims",   "loot_claim_items",    "loot_bags",          "loot_bag_items",
                                             "craft_cooldowns", "character_quests",  "character_quest_tasks", "character_quest_pins",
-                                            "character_quest_grants", "character_quest_undo"};
+                                            "character_quest_grants", "character_quest_undo", "character_quest_awards"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -656,6 +670,13 @@ bool Store::migrate() {
     if (version < 15) {
         // Stage 1.8a: the quests of the characters.
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration15Quests) || !execute("PRAGMA user_version=15") || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 16) {
+        // Stage 1.8c: the award rows of the quests.
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration16QuestAwards) || !execute("PRAGMA user_version=16") || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
         }
@@ -1255,7 +1276,9 @@ std::vector<std::string> Store::list_achievements(const std::string& characterId
 }
 
 bool Store::grant_achievements(const std::string& characterId, const std::vector<std::string>& ids, std::vector<std::string>* added) {
-    return insert_texts("INSERT OR IGNORE INTO achievements(character_id, achievement, granted_date) VALUES(?1,?2,?3)",
+    // One row for each id in any spelling (finding QR8A-R4): a row of a different case is the same achievement.
+    return insert_texts("INSERT INTO achievements(character_id, achievement, granted_date) SELECT ?1,?2,?3 WHERE NOT EXISTS (SELECT 1 FROM "
+                        "achievements WHERE character_id=?1 AND achievement=?2 COLLATE NOCASE)",
                         characterId, ids, "", added);
 }
 
@@ -1795,6 +1818,72 @@ bool Store::write_quest_undo(const std::string& characterId, const QuestUndoRow&
     return end_write(ok);
 }
 
+bool Store::delete_quest(const std::string& characterId, std::uint64_t instance) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    bool ok = true;
+    for (const char* sql : {"DELETE FROM character_quests WHERE character_id=?1 AND instance_id=?2",
+                            "DELETE FROM character_quest_tasks WHERE character_id=?1 AND instance_id=?2",
+                            "DELETE FROM character_quest_undo WHERE character_id=?1 AND instance_id=?2"}) {
+        Statement statement(m_database, sql);
+        statement.bind(1, characterId);
+        bind_instance(statement.handle, 2, instance);
+        ok = ok && sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    if (!ok) {
+        log::write("store: no delete of a quest of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::vector<QuestAwardRow> Store::list_quest_awards(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<QuestAwardRow> rows;
+    Statement statement(m_database,
+                        "SELECT objective, task_index, amount FROM character_quest_awards WHERE character_id=?1 ORDER BY objective, task_index");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        QuestAwardRow row;
+        row.objective = column_text(statement.handle, 0);
+        row.index = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 1), 0, 255));
+        row.amount = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 2), 0, 0x7FFFFFFF));
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+bool Store::write_quest_award(const std::string& characterId, const QuestAwardRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database,
+                        "INSERT INTO character_quest_awards(character_id, objective, task_index, amount) VALUES(?1,?2,?3,?4) "
+                        "ON CONFLICT(character_id, objective, task_index) DO UPDATE SET amount=excluded.amount");
+    statement.bind(1, characterId);
+    statement.bind(2, row.objective);
+    sqlite3_bind_int64(statement.handle, 3, row.index);
+    sqlite3_bind_int64(statement.handle, 4, row.amount);
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of an award row of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+bool Store::delete_quest_awards(const std::string& characterId, const std::string& objective) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "DELETE FROM character_quest_awards WHERE character_id=?1 AND objective=?2");
+    statement.bind(1, characterId);
+    statement.bind(2, objective);
+    return end_write(sqlite3_step(statement.handle) == SQLITE_DONE);
+}
+
 std::uint64_t Store::largest_quest_instance() {
     std::lock_guard lock(m_mutex);
     Statement statement(m_database, "SELECT max(instance_id) FROM character_quests");
@@ -1809,11 +1898,14 @@ bool Store::remove_achievements(const std::string& characterId, const std::vecto
     bool ok = true;
     std::vector<std::string> gone;
     for (const std::string& id : ids) {
-        Statement statement(m_database, "DELETE FROM achievements WHERE character_id=?1 AND achievement=?2");
+        // The lookup of an achievement ignores the case of the letters (the quest data, Ownership::achievement_bit): the delete too, so
+        // that each spelling of the id goes (code review of stage 1.8a, finding QR8A-R4: a lock of `SwapActive_09A_Kurok_On` must remove
+        // a row `SwapActive_09a_Kurok_On`, or the bit comes back at the next entry).
+        Statement statement(m_database, "DELETE FROM achievements WHERE character_id=?1 AND achievement=?2 COLLATE NOCASE");
         statement.bind(1, characterId);
         statement.bind(2, id);
         ok = ok && sqlite3_step(statement.handle) == SQLITE_DONE;
-        if (ok && sqlite3_changes(m_database) == 1) {
+        if (ok && sqlite3_changes(m_database) >= 1) {
             gone.push_back(id);
         }
     }

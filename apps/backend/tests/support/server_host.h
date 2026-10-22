@@ -95,8 +95,10 @@ struct ServerHost {
     gamedata::CraftingData crafting;
     /** The quest data (stage 1.8a). It is empty until a case loads it: no quest, and no quest state. */
     gamedata::QuestData quests;
+    /** The points of interest (stage 1.8c). They are empty until a case loads them: no quest task of a place progresses. */
+    gamedata::PoiData pois;
     world::World world{clock, store, tables,
-                       with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
+                       with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
                                                                                                               combat, places, terrain, navigation,
                                                                                                               loot, abilities, perks, spells,
                                                                                                               projectiles, weaponActions),
@@ -105,7 +107,8 @@ struct ServerHost {
                                                                 chests),
                                                     gathering),
                                      crafting),
-                                     quests)};
+                                     quests),
+                                     pois)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -283,6 +286,10 @@ struct ServerHost {
     }
     static world::WorldOptions with_quests(world::WorldOptions options, const gamedata::QuestData& quests) {
         options.questData = &quests;
+        return options;
+    }
+    static world::WorldOptions with_pois(world::WorldOptions options, const gamedata::PoiData& pois) {
+        options.poiData = &pois;
         return options;
     }
 

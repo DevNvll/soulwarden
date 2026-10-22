@@ -254,6 +254,8 @@ struct CraftJob {
     WorldClock::time_point accepted{};
     /** Stage 3.7b: a craft-all recipe (CraftAll): each job before the last one gives its output with the cause ItemAdded (live check L4). */
     bool craftAll{false};
+    /** Stage 1.8c: a refining recipe (the event of the quests: TaskRefineRecipe, not TaskCraftRecipe; client 0x825E080). */
+    bool refining{false};
     /**
      * Decision D2 of the orchestrator (option A): the expected extra units of one job (OutputQty x the bonus item chance of the request) and
      * the largest extra of one job (its ceiling: the plan of the request reserves it). The extra units that the completed jobs gave.
@@ -1649,6 +1651,11 @@ struct QuestLog {
     std::vector<QuestInstance> active;
     /** The pinned instances, in the order of the client (8 at most; message 1458 sets it). */
     std::vector<std::uint64_t> tracked;
+    /**
+     * Stage 1.8c: the items that AwardOnlyOnce tasks gave (the rows of `character_quest_awards`): the key is the CRC-32 of the objective
+     * and the task index; the value the number of items. A reset keeps them (client 0x825EEF0, 0x825F8F0); an abandon removes them.
+     */
+    std::map<std::pair<std::uint32_t, std::uint8_t>, std::uint32_t> awards;
     /** True when the quest system loaded the rows of the character (it has quest data). */
     bool loaded{false};
     /** The quest data of the world (the trees and the task CRCs of the encoder). Null when not loaded. */

@@ -78,6 +78,12 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
   MaxRewardLevelDelta from 0 to 1,000, and the odds of a bucket candidate not below 0.
 - The respawn: a command removal of a dead creature (`tools/world creature remove`) clears the
   respawn time of its spawn point (finding F8, case RL8): the point stays empty until a reset.
+- The kill of the quests (stage 1.8c, [Quests](quests.md)): after the rewards, `Rewards::killed` gives each character of the credit list (the
+  creditors of this rule, not each character with a hit) the kill with the vitals categories of the victim (the member VitalsCategories of
+  its base vitals row in `loot-tables.json`; a file of before: the vitals row and the category row of the kind) and its kill event, with a
+  result id (the creature and the revision of its death). The quest drops of the character (`Quests::plan_drops`: a possession task whose
+  ItemDropVC names a category of the victim) go with its loot (its part of the loot bag, or its bag), in the transaction of its reward with
+  the award rows of AwardOnlyOnce. A kill with no credit (no creditor, no loot tables) gives the quests nothing.
   The removal of a body by the distance keeps the respawn time.
 - The loot file is complete as a whole (finding F2, case RL2). The backend refuses the file
   (and gives no reward) when a base row names a creature type that the reward modifiers do

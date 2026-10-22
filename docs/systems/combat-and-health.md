@@ -384,6 +384,9 @@ tools/world list                     # the line "basic attacks": the sequences, 
   says at the start if the tables are loaded. With no file the backend starts, and each hit
   claim is refused (`no combat tables`). The damage rows of the abilities (the rows
   `GreatAxe_*` and `Warhammer_Damage_*`) are in the same file (`CombatTables::row_index`).
+- The death of a character is an event of the quests (stage 1.8c): after the health system sets the death, it calls
+  `Quests::died`. A TaskDie of the character fails its objective (FailOnCondition) or resets it (ResetOnCondition); the quest system
+  changes nothing of the health ([Quests](quests.md), case QE12).
 
 ## Traps
 

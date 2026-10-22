@@ -1,5 +1,6 @@
 #include "gamedata/quest_data.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -70,6 +71,30 @@ std::optional<double> number(const std::string& text) {
         return std::nullopt;
     }
     return value;
+}
+
+std::string trimmed(const std::string& text) {
+    const std::size_t first = text.find_first_not_of(" \t");
+    if (first == std::string::npos) {
+        return {};
+    }
+    const std::size_t last = text.find_last_not_of(" \t");
+    return text.substr(first, last - first + 1);
+}
+
+/** @return The parts of a list cell ("a, b,c"): each part trimmed and in lower case; an empty part is left out. */
+std::vector<std::string> lower_list(const std::string& text) {
+    std::vector<std::string> parts;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = std::min(text.find(',', start), text.size());
+        std::string part = lower_text(trimmed(text.substr(start, end - start)));
+        if (!part.empty()) {
+            parts.push_back(std::move(part));
+        }
+        start = end + 1;
+    }
+    return parts;
 }
 
 std::vector<std::string> text_list(const json& value) {
@@ -160,6 +185,29 @@ bool QuestData::load_text(const std::string& text) {
             return fail("the task " + task.id + " has a Duration below 0");
         }
         task.description = cell(cells, "TP_DescriptionTag");
+        // Stage 1.8c: the cells of the event tasks.
+        task.targets = lower_list(cell(cells, "KillEnemyType"));
+        task.weapon = lower_text(trimmed(cell(cells, "KillEnemyWeaponID")));
+        task.poiTags = lower_list(cell(cells, "POITag"));
+        if (const std::optional<double> territory = number(cell(cells, "TerritoryID"));
+            territory && *territory > 0.0 && *territory <= 65535.0 && *territory == std::floor(*territory)) {
+            task.territory = static_cast<std::uint16_t>(*territory);
+        }
+        task.enforceLocation = flag(cell(cells, "EnforceLocationRequirement"));
+        task.dropSources = lower_list(cell(cells, "ItemDropVC"));
+        task.dropChance = std::clamp(number(cell(cells, "ItemDropProbability")).value_or(0.0), 0.0, 100.0);
+        task.guaranteedAttempts = static_cast<std::uint32_t>(std::clamp(number(cell(cells, "GuranteedDropAttempts")).value_or(0.0), 0.0, 1e6));
+        task.awardOnce = flag(cell(cells, "AwardOnlyOnce"));
+        task.pauseLoot = flag(cell(cells, "PauseAndClearLootOnTaskComplete"));
+        task.useGlobalStorage = flag(cell(cells, "UseGlobalStorage"));
+        task.minGearScore = static_cast<std::uint32_t>(std::clamp(number(cell(cells, "MinGearScore")).value_or(0.0), 0.0, 1e6));
+        task.resetOnCondition = flag(cell(cells, "ResetOnCondition"));
+        task.recipe = lower_text(trimmed(cell(cells, "CraftingRecipeId")));
+        task.anyRecipe = flag(cell(cells, "CraftAnyRecipe"));
+        task.interactTag = lower_text(trimmed(cell(cells, "InteractTag")));
+        task.onInteractStart = flag(cell(cells, "OnInteractStart"));
+        task.screen = trimmed(cell(cells, "UIScreenTag"));
+        task.screenCrc = task.screen.empty() ? 0U : quest_crc(task.screen);
         taskByKey.emplace(key, static_cast<std::uint32_t>(m_tasks.size()));
         m_tasks.push_back(std::move(task));
     }
@@ -249,7 +297,9 @@ bool QuestData::load_text(const std::string& text) {
                 continue;
             }
             const QuestTask& task = m_tasks[node.task];
-            node.stayActive = task.stayActive || (task.type == task_type::kTimer && task.failOnCondition);
+            // Stage 1.8c: TaskDie is a condition that stays active (its death fails or resets the objective: client 0x825E5F0, 0x825E628;
+            // a decision of an agent: a satisfied TaskDie with no StayActive would stop watching the death).
+            node.stayActive = task.stayActive || (task.type == task_type::kTimer && task.failOnCondition) || task.type == task_type::kDie;
             for (const std::uint8_t child : node.children) {
                 node.stayActive = node.stayActive || objective.nodes[child].stayActive;
             }
@@ -264,6 +314,13 @@ bool QuestData::load_text(const std::string& text) {
         objective.root = static_cast<std::uint8_t>(objective.nodes.size() - 1);
         if (objective.nodes[objective.root].parent) {
             return fail("the root of the objective " + objective.id + " has a container");
+        }
+        // One root (code review of stage 1.8a, finding QR8A-R6): each other node of a task has a container. A task that no container
+        // reaches never runs (an achievement action of its start would be lost): the file is not complete. A hole stays a hole.
+        for (std::size_t index = 0; index + 1 < objective.nodes.size(); ++index) {
+            if (objective.nodes[index].task != kNoTask && !objective.nodes[index].parent) {
+                return fail("the objective " + objective.id + " has the task index " + std::to_string(index) + ", which no container reaches");
+            }
         }
         m_objectiveById.emplace(key, m_objectives.size());
         m_objectiveByCrc.emplace(objective.crc, m_objectives.size());

@@ -198,6 +198,10 @@ not, as for the items):
                                                 option C), with their start objectives
   tools/world quest template CHARACTER ID       the achievements and the start objectives of a template
   tools/world quest grant CHARACTER OBJECTIVE   a new instance of an objective (development only)
+  tools/world quest abandon CHARACTER INSTANCE  the abandon of a quest (stage 1.8c: the rule of message 3836; an
+                                                objective with CanBeAbandoned 0 refuses it)
+  tools/world quest reset CHARACTER INSTANCE    the reset of a quest (stage 1.8c: the rule of message 5600: a new
+                                                instance, the award rows stay)
   tools/world achievement CHARACTER ID on|off   unlock or lock an achievement (development only: the
                                                 change event of the quests, the empty list fragment)
   tools/world ownership CHARACTER               the DLC of a character (stage 1.1b): the expansion
@@ -657,6 +661,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
                 print(f"    {task['index']:>3} {names.get(task['state'], task['state']):<15} {task['progress']:>3} {task['task']}{start}")
         for grant in document["grants"]:
             print(f"  one-time grant {grant['source']} {grant['key']}: {grant['objective']} ({grant['state']})")
+        for award in document.get("awards", []):
+            print(f"  award (AwardOnlyOnce) {award['objective']} task {award['index']}: {award['amount']} item(s)")
         print("  counts: " + ", ".join(f"{name} {value}" for name, value in document["counts"].items()))
     elif isinstance(document, dict) and "templates" in document:
         for entry in document["templates"]:
@@ -1474,6 +1480,10 @@ def main() -> None:
         request(data_dir, "GET", f"/v1/dev/quests?character={character_id(data_dir, arguments[1])}")
     elif command == "quest" and len(arguments) == 2 and arguments[1] == "templates":
         request(data_dir, "GET", "/v1/dev/quests/templates")
+    elif command == "quest" and len(arguments) == 4 and arguments[1] in ("abandon", "reset"):
+        if not re.fullmatch(r"[0-9A-Fa-f]{16}", arguments[3]):
+            fail("the instance must be 16 hexadecimal digits (tools/world quests CHARACTER)")
+        request(data_dir, "POST", f"/v1/dev/quests/{arguments[1]}?character={character_id(data_dir, arguments[2])}&instance={arguments[3].lower()}")
     elif command == "quest" and len(arguments) == 4 and arguments[1] in ("template", "grant"):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[3]):
             fail("the template or the objective must be an id of the quest data")

@@ -221,6 +221,12 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
 - When the source of a use goes (a body that left the world), the base ends the use with no call of the handler (the object is gone):
   a handler with its own state of the use must check its works itself (the gathering ends such a work at its next tick).
 
+- Stage 1.8c (the quests, [Quests](quests.md)): a bound with InteractOnlyOnQuest and a tag is open only while an Active quest task of the
+  character has the tag (the verdict `notOnQuest` else; before stage 1.8c such a bound was refused as unsupported). A bound with
+  InteractOnlyOnQuest and no tag stays unsupported. After the start of a use of a bound with a tag the quest system gets the interaction
+  (TaskInteract with OnInteractStart 1); after its completion, or at its start for a use with no Delay Time, it gets the completed
+  interaction (TaskInteract with OnInteractStart 0).
+
 ## Commands
 
 ```sh

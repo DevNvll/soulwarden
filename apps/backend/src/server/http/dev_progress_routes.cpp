@@ -56,6 +56,9 @@
 //   POST /v1/dev/quests/achievement?character=ID&id=ID&on=1|0
 //                                                         unlock or lock an achievement of a character in the world (development
 //                                                         only: the change event of the quest system, the empty list fragment)
+//   POST /v1/dev/quests/abandon?character=ID&instance=HEX the abandon of a quest (stage 1.8c; the command abandon_quest of the admin
+//                                                         interface)
+//   POST /v1/dev/quests/reset?character=ID&instance=HEX   the reset of a quest (stage 1.8c; the command reset_quest)
 // tools/world sends these requests to the backend of a development run.
 
 namespace soulwarden::backend::server::http {
@@ -142,6 +145,8 @@ void register_dev_progress_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/quests/template", "dev.quest_template", command_route(services, commands::apply_backstory));
     router.add("POST", "", "/v1/dev/quests/grant", "dev.quest_grant", command_route(services, commands::grant_objective));
     router.add("POST", "", "/v1/dev/quests/achievement", "dev.quest_achievement", command_route(services, commands::set_achievement));
+    router.add("POST", "", "/v1/dev/quests/abandon", "dev.quest_abandon", command_route(services, commands::abandon_quest));
+    router.add("POST", "", "/v1/dev/quests/reset", "dev.quest_reset", command_route(services, commands::reset_quest));
 }
 
 } // namespace soulwarden::backend::server::http

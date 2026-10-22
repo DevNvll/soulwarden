@@ -77,6 +77,8 @@ std::vector<Case> user_test_2_cases();
 std::vector<Case> review_gathering_cases();
 std::vector<Case> crafting_cases();
 std::vector<Case> quest_cases();
+std::vector<Case> review_quests_18a_cases();
+std::vector<Case> quest_event_cases();
 std::vector<Case> review_b4_cases();
 std::vector<Case> build_preset_cases();
 std::vector<Case> review_user_test_2_cases();
@@ -106,7 +108,7 @@ std::vector<Case> all_cases() {
                               review_corrections_cases(), patrol_cases(), review_patrol_cases(), loot_cases(), ability_cases(), review_loot_cases(), review_scope_cases(), itemization_cases(),
                               review_itemization_cases(), status_cases(), review_status_cases(), spell_cases(), motion_cases(), review_spell_cases(),
                               review_motion_cases(), projectile_cases(), review_projectile_cases(), spell_kind_cases(), review_spells2_cases(),
-                              ownership_cases(), review_dlc_cases(), crit_cases(), passive_cases(), review_crit_cases(), heal_cases(), attack_sequence_cases(), review_heal_cases(), review_combos_cases(), gawh_cases(), review_gawh_cases(), review_wrecking_cases(), interaction_cases(), review_interaction_cases(), station_cases(), ranged_cases(), review_station_cases(), ranged_b_cases(), review_ranged_cases(), review_casters_cases(), ranged_c_cases(), review_areas_cases(), support_cases(), chest_cases(), review_support_cases(), loot_bag_cases(), mana_cases(), review_chests_cases(), world_time_cases(), review_loot_bags_cases(), review_world_time_cases(), gathering_cases(), user_test_2_cases(), review_gathering_cases(), build_preset_cases(), review_user_test_2_cases(), bow_cases(), review_b0_cases(), review_b1_cases(), combat_feel_cases(), boltcaster_cases(), review_u3_cases(), haste_cases(), review_b2_cases(), bow_rules_cases(), review_b3_cases(), crafting_cases(), review_b4_cases(), menu_equipment_cases(), review_37a_cases(), refining_cases(), review_u4_cases(), procedural_cases(), review_37b_cases(), quest_cases()}) {
+                              ownership_cases(), review_dlc_cases(), crit_cases(), passive_cases(), review_crit_cases(), heal_cases(), attack_sequence_cases(), review_heal_cases(), review_combos_cases(), gawh_cases(), review_gawh_cases(), review_wrecking_cases(), interaction_cases(), review_interaction_cases(), station_cases(), ranged_cases(), review_station_cases(), ranged_b_cases(), review_ranged_cases(), review_casters_cases(), ranged_c_cases(), review_areas_cases(), support_cases(), chest_cases(), review_support_cases(), loot_bag_cases(), mana_cases(), review_chests_cases(), world_time_cases(), review_loot_bags_cases(), review_world_time_cases(), gathering_cases(), user_test_2_cases(), review_gathering_cases(), build_preset_cases(), review_user_test_2_cases(), bow_cases(), review_b0_cases(), review_b1_cases(), combat_feel_cases(), boltcaster_cases(), review_u3_cases(), haste_cases(), review_b2_cases(), bow_rules_cases(), review_b3_cases(), crafting_cases(), review_b4_cases(), menu_equipment_cases(), review_37a_cases(), refining_cases(), review_u4_cases(), procedural_cases(), review_37b_cases(), quest_cases(), review_quests_18a_cases(), quest_event_cases()}) {
         cases.insert(cases.end(), group.begin(), group.end());
     }
     return cases;

@@ -139,8 +139,13 @@ enum class InteractionVerdict : std::uint8_t {
     noMainInteraction,
     /** The handler refused (the database did not take the row, a station key with no row). */
     refused,
+    /**
+     * Stage 1.8c: a bound with InteractOnlyOnQuest and no active quest task of the character with its tag (client 0x8261FC0: the interact
+     * is enabled only while such a task is active).
+     */
+    notOnQuest,
 };
-inline constexpr std::size_t kInteractionVerdictCount = 16;
+inline constexpr std::size_t kInteractionVerdictCount = 17;
 
 [[nodiscard]] const char* interaction_verdict_text(InteractionVerdict verdict);
 

@@ -156,6 +156,8 @@ const char* interaction_verdict_text(InteractionVerdict verdict) {
         return "no committed interaction on the object for this part";
     case InteractionVerdict::refused:
         return "the handler refused";
+    case InteractionVerdict::notOnQuest:
+        return "the bound is open only during a quest task with its tag, and the character has none";
     }
     return "?";
 }
@@ -370,9 +372,13 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     // A handler that owns the sight rule of its bounds checks it itself (stage 3.5b.1: a chest).
     InteractionHandler* const owner = handler_of(object.kind, option->id);
     const bool sightOwned = owner != nullptr && owner->owns_sight();
-    if (!bound.unresolved.empty() || !option->unresolved.empty() || option->statusRules || bound.onlyOnQuest || bound.condition
-        || (bound.lineOfSight && !sightOwned) || bound.arcRequired) {
+    if (!bound.unresolved.empty() || !option->unresolved.empty() || option->statusRules || (bound.onlyOnQuest && bound.tag.empty())
+        || bound.condition || (bound.lineOfSight && !sightOwned) || bound.arcRequired) {
         return InteractionVerdict::unsupported;
+    }
+    // Stage 1.8c: InteractOnlyOnQuest (client 0x8261FC0): the bound is open while an active task of the character has its tag.
+    if (bound.onlyOnQuest && !m_world.quests().quest_object_open(character, bound.tag)) {
+        return InteractionVerdict::notOnQuest;
     }
     if (boundState != nullptr && !boundState->enabled) {
         return InteractionVerdict::disabled;
@@ -516,6 +522,19 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
     }
     // The handler after the base registered the use (stage 3.5b.2: the Take All of a loot bag).
     handler->started(*character, context);
+    // Stage 1.8c: the start of an interaction with a tag (TaskInteract with OnInteractStart; 0x825E470). A use with no time completes at
+    // its start too (the open of a storage or of a station screen: the authoring text names the storage screen as a success).
+    if (!context.bound->tag.empty()) {
+        QuestEvent interacted;
+        interacted.kind = QuestEventKind::interact;
+        interacted.keys = {context.bound->tag};
+        interacted.started = true;
+        m_world.quests().event(*character, interacted);
+        if (context.option->delay <= 0.0F) {
+            interacted.started = false;
+            m_world.quests().event(*character, interacted);
+        }
+    }
     return InteractionVerdict::accepted;
 }
 
@@ -699,6 +718,15 @@ void Interactions::timed_due(const std::string& characterId, std::uint64_t seria
                character->characterId.c_str(), option.name.c_str(), site.object->key.c_str(), seconds, completions);
     if (InteractionHandler* handler = handler_of(site.object->kind, option.id)) {
         handler->complete(*character, context);
+    }
+    // Stage 1.8c: the completion of a timed interaction with a tag (TaskInteract with OnInteractStart false).
+    if (!context.bound->tag.empty()) {
+        if (Entity* own = m_world.find_character(character->characterId)) {
+            QuestEvent interacted;
+            interacted.kind = QuestEventKind::interact;
+            interacted.keys = {context.bound->tag};
+            m_world.quests().event(*own, interacted);
+        }
     }
 }
 

@@ -25,19 +25,52 @@ namespace soulwarden::backend::gamedata {
 /** File name of the quest data in the game data directory of the backend. */
 inline constexpr const char* kQuestDataFile = "quest-data.json";
 
-/** The task types of the client enum (table 0x3AA6A80; research quest-engine.md Q1) that the engine of stage 1.8a evaluates. */
+/** The task types of the client enum (table 0x3AA6A80; research quest-engine.md Q1) that the engine evaluates (stages 1.8a and 1.8c). */
 namespace task_type {
 inline constexpr std::uint8_t kSimpleContainer = 0;
 inline constexpr std::uint8_t kConsecutiveContainer = 1;
 inline constexpr std::uint8_t kPartialContainer = 2;
 inline constexpr std::uint8_t kTriggerArea = 3;
+inline constexpr std::uint8_t kGoToPoi = 6;
+inline constexpr std::uint8_t kGoToPoiOnTerritory = 7;
+inline constexpr std::uint8_t kExitPoi = 9;
+inline constexpr std::uint8_t kKillContribution = 13;
+inline constexpr std::uint8_t kGameEvent = 14;
+inline constexpr std::uint8_t kTriggerGameEvent = 15;
 inline constexpr std::uint8_t kAchievement = 18;
 inline constexpr std::uint8_t kLockAchievement = 19;
 inline constexpr std::uint8_t kUnlockAchievement = 20;
 inline constexpr std::uint8_t kTemporaryUnlockAchievement = 22;
+inline constexpr std::uint8_t kInteract = 23;
+inline constexpr std::uint8_t kHaveItems = 25;
+inline constexpr std::uint8_t kHaveAndReturnItems = 26;
+inline constexpr std::uint8_t kGatherItems = 29;
+inline constexpr std::uint8_t kGatherAndReturnItems = 30;
+inline constexpr std::uint8_t kRequireGatherItems = 31;
+inline constexpr std::uint8_t kGiveItem = 33;
+inline constexpr std::uint8_t kGiveAndTakeItem = 34;
+inline constexpr std::uint8_t kRemoveItem = 36;
+inline constexpr std::uint8_t kCraftRecipe = 38;
+inline constexpr std::uint8_t kRefineRecipe = 42;
+inline constexpr std::uint8_t kEquipItem = 45;
 inline constexpr std::uint8_t kCutsceneComplete = 49;
+inline constexpr std::uint8_t kObjective = 52;
+inline constexpr std::uint8_t kOpenUiScreen = 62;
 inline constexpr std::uint8_t kTimer = 64;
+inline constexpr std::uint8_t kDie = 65;
+inline constexpr std::uint8_t kCraftMultipleRecipes = 86;
 } // namespace task_type
+
+/** @return True for the possession tasks: the count of an item in the bag (stage 1.8c). */
+[[nodiscard]] constexpr bool is_possession(std::uint8_t type) {
+    return type == task_type::kHaveItems || type == task_type::kHaveAndReturnItems || type == task_type::kGatherItems
+           || type == task_type::kGatherAndReturnItems;
+}
+
+/** @return True for the possession tasks that remove their target count at the end of the objective (client 0x825F730, 0x825FB70). */
+[[nodiscard]] constexpr bool is_return(std::uint8_t type) {
+    return type == task_type::kHaveAndReturnItems || type == task_type::kGatherAndReturnItems;
+}
 
 /** @return True for the three container types. */
 [[nodiscard]] constexpr bool is_container(std::uint8_t type) {
@@ -63,6 +96,44 @@ struct QuestTask {
     std::optional<double> duration;
     /** TP_DescriptionTag: the text of the task line (empty: no line). */
     std::string description;
+    // Stage 1.8c: the cells of the event tasks (the authoring texts of the client, 0x825DAD0 to 0x8262500; research quest-engine.md Q1).
+    // A list cell is split at "," and each part is trimmed and in lower case.
+    /** KillEnemyType: the vitals categories of TaskKillContribution, the game event of TaskGameEvent and TaskTriggerGameEvent. */
+    std::vector<std::string> targets;
+    /** KillEnemyWeaponID (lower case): the item of the kill. Empty: any. */
+    std::string weapon;
+    /** POITag: the tags of the points of interest of TaskGoToPOITag and TaskExitPOITag, and of EnforceLocationRequirement. */
+    std::vector<std::string> poiTags;
+    /**
+     * TerritoryID: limits the points of interest of the tags to this territory (0x8262460). 0: none (a blank cell, "0", or a text that is
+     * not a number: 23 rows of the data have a name such as "greatcleave4"; the engine of stage 1.8c reads only a number).
+     */
+    std::uint16_t territory{0};
+    /** EnforceLocationRequirement: progress only inside a point of interest of `poiTags` (0x825DAD0, 0x825E860). */
+    bool enforceLocation{false};
+    /** ItemDropVC: the vitals categories (a possession task) or the gatherable ids (a gather task) of a quest drop. */
+    std::vector<std::string> dropSources;
+    /** ItemDropProbability: 0 to 100 (a blank cell: 0). */
+    double dropChance{0.0};
+    /** GuranteedDropAttempts (the spelling of the data): the next drop after this many misses is sure. 0: none. */
+    std::uint32_t guaranteedAttempts{0};
+    bool awardOnce{false};
+    /** PauseAndClearLootOnTaskComplete: no drop when the character has the target count (0x825F3B0). */
+    bool pauseLoot{false};
+    bool useGlobalStorage{false};
+    /** MinGearScore: the smallest gear score of an item (equip, craft); another value than 0 also stops the quest drops (0x825F5C0). */
+    std::uint32_t minGearScore{0};
+    bool resetOnCondition{false};
+    /** CraftingRecipeId (lower case) of a craft or refine task; CraftAnyRecipe: each recipe counts. */
+    std::string recipe;
+    bool anyRecipe{false};
+    /** InteractTag (lower case): the tag of an interaction of TaskInteract and of the quest objects of the task (0x8261FC0). */
+    std::string interactTag;
+    /** OnInteractStart: TaskInteract progresses at the start of the interaction, not at its end (0x825E470). */
+    bool onInteractStart{false};
+    /** UIScreenTag: the screen of TaskOpenUiScreen (message 2617 has the CRC-32 of the lower-case text). */
+    std::string screen;
+    std::uint32_t screenCrc{0};
 };
 
 /** One node of a tree: the task at an index, and the indexes of its children (a container). */

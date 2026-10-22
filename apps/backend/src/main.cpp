@@ -30,6 +30,7 @@
 #include "gamedata/perk_data.h"
 #include "gamedata/navigation_data.h"
 #include "gamedata/progression_tables.h"
+#include "gamedata/poi_data.h"
 #include "gamedata/quest_data.h"
 #include "gamedata/slice_ids.h"
 #include "gamedata/chest_data.h"
@@ -666,6 +667,16 @@ int main(int argc, char** argv) {
         log::write("backend: no quest data at %s (%s): no quest. Make the file with tools/gamedata/quests.sh", questDataPath.c_str(),
                    questData.error().c_str());
     }
+    // The points of interest (stage 1.8c): the shapes of the quest tasks of a place. Without the file no task of a place progresses.
+    const std::string poiDataPath = (gameDataDirectory / gamedata::kPoiDataFile).string();
+    gamedata::PoiData poiData;
+    if (poiData.load(poiDataPath)) {
+        log::write("backend: point of interest data %s: %zu points of interest with a shape", poiDataPath.c_str(), poiData.pois().size());
+    } else {
+        log::write("backend: no point of interest data at %s (%s): no quest task of a place progresses. Make the file with "
+                   "tools/gamedata/pois.sh",
+                   poiDataPath.c_str(), poiData.error().c_str());
+    }
     // Decision D1 of stage 3.7a (a decision of the orchestrator): the stations whose authored key has no row of the station database use the
     // _t2 variant of their family. One log line names each override.
     if (interactionData.loaded()) {
@@ -737,6 +748,7 @@ int main(int argc, char** argv) {
     worldOptions.interactionData = &interactionData;
     worldOptions.craftingData = &craftingData;
     worldOptions.questData = &questData;
+    worldOptions.poiData = &poiData;
     worldOptions.chestData = &chestData;
     worldOptions.gatheringData = &gatheringData;
     worldOptions.lootTables = &lootTables;

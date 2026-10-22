@@ -297,6 +297,8 @@ struct WorldOptions {
     const gamedata::CraftingData* craftingData{nullptr};
     /** The quest data (game data, stage 1.8a). Null or not loaded: no quest, and the states of a character do not change (rule A5a). */
     const gamedata::QuestData* questData{nullptr};
+    /** Stage 1.8c: the points of interest of the world (game data poi-data.json), or null: no task of a place progresses. */
+    const gamedata::PoiData* poiData{nullptr};
     /** The perk data (game data, stage 1.3b). Null: an item has no perk, and no perk has an effect. */
     const gamedata::PerkData* perkData{nullptr};
     /** The spell entity data (game data, stage 3.3b-S2a). Null or not loaded: a spell entity has its hits and no record. */

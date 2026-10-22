@@ -85,6 +85,7 @@ World::World(const WorldClock& clock,
       m_quests(*this, store, options.questData),
       m_presets(*this, project_presets()) {
     m_random = options.randomSeed;
+    m_quests.set_pois(options.poiData);
 }
 
 World::~World() {
@@ -153,6 +154,8 @@ void World::tick() {
         m_lootBags.tick();
         // The depleted nodes of the store at the first tick, and the nodes whose respawn came (stage 3.6a).
         m_gathering.tick();
+        // The characters whose items or place changed: their possession, equip, and place tasks (stage 1.8c; one look each).
+        m_quests.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -305,6 +308,8 @@ void World::remove_entity(EntityId id) {
         m_gathering.left(entity);
         // The craft batch ends (stage 3.7a: the completed jobs are in the store; the base ended the station use before).
         m_crafting.left(entity);
+        // The task index of the character goes (stage 1.8c: its quests stay in the store; its timers end themselves).
+        m_quests.left(entity);
     }
     // The auras that follow the entity end with it (stage 3.3b-S2b: no aura stays with no attachment).
     if (entity.kind == EntityKind::creature || entity.kind == EntityKind::player) {
@@ -1035,6 +1040,8 @@ void World::place(Entity& entity, const state::WorldPosition& position, bool est
         m_chests.moved(entity);
         // The GlobalStorage selection of its loot bags after a walk (code review of stage 3.5b.2, finding LB-R3; O(1) for a short walk).
         m_lootBags.moved(entity);
+        // The tasks of a place of its quests look at the next tick (stage 1.8c; O(1) for a character with no such task).
+        m_quests.moved(entity);
     }
 }
 
@@ -1044,6 +1051,11 @@ Revision World::touch(EntityId id, ComponentKey key) {
         return 0;
     }
     entity->changed[key] = ++m_revision;
+    // Stage 1.8c: a change of the items of a character (each system marks the bag or the paperdoll state after its own change) is the one
+    // event of its possession and equip tasks: they look at the next tick (O(1) for a character with no such task).
+    if (entity->kind == EntityKind::player && (key == ComponentKey::container || key == ComponentKey::paperdoll)) {
+        m_quests.items_touched(*entity);
+    }
     return m_revision;
 }
 

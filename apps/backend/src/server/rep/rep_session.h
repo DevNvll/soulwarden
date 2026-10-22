@@ -364,6 +364,9 @@ private:
     void handle_auto_pinning(std::span<const std::uint8_t> body);
     void handle_tracked_objectives(std::span<const std::uint8_t> body);
     void handle_cutscene_request(std::span<const std::uint8_t> body);
+    /** Stage 1.8c: 2297 and 6416 (a cue of a place), 2617 (a screen), 3836 (an abandon), 5600 (a reset). */
+    void handle_territory_report(std::span<const std::uint8_t> body, bool entered);
+    void handle_objective_call(std::span<const std::uint8_t> body, std::uint32_t type);
     void handle_storage_search(std::uint32_t type, std::span<const std::uint8_t> body);
     /**
      * @return True when a facet call names a component of the character of the session: its entity, and with the ids of the player slice
@@ -514,6 +517,11 @@ private:
      * (StateCodec::afterObjectivesEnable) go out only from then (live check L1).
      */
     bool m_objectivesEnabled{false};
+    /**
+     * True when the session sent the first quest states after the first 2709 (code review of stage 1.8a, finding QR8A-R1): a 1458 before
+     * that is not a list of the client about the saved pins, and it changes nothing.
+     */
+    bool m_objectivesSent{false};
     /** The auto-pin flags of the last 2709 (one for each objective type). Empty: none. */
     std::vector<bool> m_autoPin;
     std::optional<Closing> m_closing;

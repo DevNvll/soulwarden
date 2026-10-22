@@ -93,6 +93,11 @@ struct LootVitals {
     bool noExperienceNoCoin{false};
     /** KillEventIdOverride in lower case. Empty: the kill event of the game (KillEvent). */
     std::string event;
+    /**
+     * Stage 1.8c: VitalsCategories of the base row (each in lower case, no repeat; client 0x825E7C0: the categories of a kill task). Empty:
+     * a file of the tool of before (the kill uses the vitals row and the category row of the kind).
+     */
+    std::vector<std::string> categories;
 };
 
 enum class LootEntryKind : std::uint8_t {

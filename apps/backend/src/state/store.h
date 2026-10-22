@@ -258,6 +258,16 @@ struct QuestUndoRow {
     std::string achievement;
 };
 
+/**
+ * The items that an AwardOnlyOnce task of an objective gave to a character (stage 1.8c, table `character_quest_awards`; client 0x825EEF0,
+ * 0x825F8F0): the objective (its id, not an instance: the row survives a reset), the task index, and the number of items.
+ */
+struct QuestAwardRow {
+    std::string objective;
+    std::uint32_t index{0};
+    std::uint32_t amount{0};
+};
+
 /** The rows of a new character that the create route writes in the transaction of the character (stage 1.8a: the start of the quests). */
 struct NewCharacterRows {
     /** The achievements of the character (the archetype achievement of its backstory row). */
@@ -535,6 +545,14 @@ public:
     [[nodiscard]] std::vector<QuestUndoRow> list_quest_undo(const std::string& characterId);
     /** Writes the undo row of an achievement action. */
     [[nodiscard]] bool write_quest_undo(const std::string& characterId, const QuestUndoRow& row);
+    /** Stage 1.8c: removes a quest of a character with its task rows and its undo rows (an abandon, a reset, a failure). */
+    [[nodiscard]] bool delete_quest(const std::string& characterId, std::uint64_t instance);
+    /** @return The award rows of a character (stage 1.8c). */
+    [[nodiscard]] std::vector<QuestAwardRow> list_quest_awards(const std::string& characterId);
+    /** Writes the award row of a task (the amount replaces the amount of the row). */
+    [[nodiscard]] bool write_quest_award(const std::string& characterId, const QuestAwardRow& row);
+    /** Removes the award rows of an objective of a character (an abandon). */
+    [[nodiscard]] bool delete_quest_awards(const std::string& characterId, const std::string& objective);
     /** @return The largest instance id of the saved quests of all characters (0: none). */
     [[nodiscard]] std::uint64_t largest_quest_instance();
     /** Removes achievements of a character (stage 1.8a: the lock of a quest task). A row that is not there changes nothing. */

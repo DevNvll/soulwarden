@@ -56,4 +56,36 @@ std::optional<CutsceneRequest> read_cutscene_request(std::span<const std::uint8_
     return message;
 }
 
+std::optional<TerritoryReport> read_territory_report(std::span<const std::uint8_t> body, bool entered) {
+    hub::Reader reader(body);
+    TerritoryReport message;
+    message.target = reader.u64();
+    message.entity = reader.u64();
+    for (int part = 0; part < 16; ++part) {
+        (void)reader.u8(); // reference.actor: a level entity of the client (the server does not need it: research map.md 2.1).
+    }
+    (void)reader.u64(); // reference.group
+    (void)reader.u64(); // reference.local
+    message.territory = reader.u16();
+    if (entered) {
+        message.achievement = reader.u32();
+    }
+    if (!reader.ok() || reader.left() != 0) {
+        return std::nullopt;
+    }
+    return message;
+}
+
+std::optional<ObjectiveCall> read_objective_call(std::span<const std::uint8_t> body, bool wide) {
+    hub::Reader reader(body);
+    ObjectiveCall message;
+    message.target = reader.u64();
+    message.entity = reader.u64();
+    message.value = wide ? reader.u64() : reader.u32();
+    if (!reader.ok() || reader.left() != 0) {
+        return std::nullopt;
+    }
+    return message;
+}
+
 } // namespace soulwarden::backend::server::rep

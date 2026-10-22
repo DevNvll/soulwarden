@@ -50,6 +50,8 @@ HealthResult Health::apply(Entity& target, float damage) {
         // The committed interaction of the character ends (stage 2.5a): its client gets 3746.
         if (target.kind == EntityKind::player) {
             m_world.interactions().died(target);
+            // TaskDie of its quests (stage 1.8c): a failure or a reset of the objective.
+            m_world.quests().died(target);
         }
     } else if (damage > 0.0F && target.kind == EntityKind::player) {
         // The damage rule of the committed interaction of the character (stage 2.5b, world/interactions.h).

@@ -340,6 +340,10 @@ decision of the user, decision of the orchestrator, decision of an agent.
   visits only the buckets of the output and of its perk items (test case CRAFTC-LOAD: 20,000 more buckets and 100 more characters give
   the same visits; 200 jobs in 17 ms; 1,000 rolls in 3 ms). Test case CRAFTC-MP.
 
+- Stage 1.8c (the quests, [Quests](quests.md)): after the commit of each job the quest system gets the craft (or the refine, for a refining
+  recipe) with the recipe, the units of the output of the job (with its bonus units), and the gear score of the output (TaskCraftRecipe,
+  TaskCraftMultipleRecipes, TaskRefineRecipe). A refused or a stopped job is no event.
+
 ## Commands
 
 ```sh

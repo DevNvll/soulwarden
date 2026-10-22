@@ -355,7 +355,28 @@ backend. The tool of each system is also in the document of that system.
   task link, a cycle, two ids with one CRC-32 (objectives, tasks, achievements, whispers), an unknown task type, an index above 255, two
   achievements with one bit, or a bit above 65535 (`check_quests_tool.py`, case QG-TOOL); the loader of the backend refuses the same
   faults (case QG11). The counted diagnostics: 7 achievements of a task action with no row (research U10), 2 TaskObjective children with no
-  objective, 8 start objectives of the backstory templates with no objective row. With no file the backend has no quest.
+  objective, 8 start objectives of the backstory templates with no objective row. With no file the backend has no quest. Stage 1.8c reads
+  more cells of the task rows of the same file (the format stays 1): KillEnemyType, KillEnemyWeaponID, POITag, TerritoryID,
+  EnforceLocationRequirement, ItemDropVC, ItemDropProbability, GuranteedDropAttempts, AwardOnlyOnce, PauseAndClearLootOnTaskComplete,
+  UseGlobalStorage, MinGearScore, ResetOnCondition, CraftingRecipeId, CraftAnyRecipe, InteractTag, OnInteractStart, UIScreenTag (a list
+  cell is split at ","; each part trimmed and in lower case). The loader also refuses a tree with a task that no container reaches (code
+  review of stage 1.8a, finding QR8A-R6, case QRV6).
+- `poi-data.json` (stage 1.8c, `tools/gamedata/pois.sh`, `check_pois_tool.py` (case QE-TOOL), [Quests](../systems/quests.md)): format 1. The
+  points of interest with a shape: the shape files `objects/worldprisms/pois/REGION/poi_ID_NAME.vshapec` (points relative to an origin, not
+  turned; a tail of 20 bytes), the origin of each one (the POI placement of the layer "pois" of its region for which the entries of the
+  region metadata agree: an entry that names the id inside the shape, an entry that does not name it outside, with a margin of 6 m at the
+  border), the tags (POITag), the territory (the first id of the TerritoryIds of its entries), the center and the DiscoveryRadius. The build:
+  476 of the 761 shape files in 22 regions (266,700 entries of the check); 285 are left out (no placement agrees). The tool stops for a
+  shape file with a wrong size and when no shape gets an origin. Without the file the backend starts, and no quest task of a place
+  progresses.
+- `loot-tables.json`, stage 1.8c: each base vitals row has a tenth member, its VitalsCategories (the categories of a kill task of the
+  quests, client 0x825E7C0); the format stays 2, and the loader takes a row of 9 members (a kill then has the vitals row and the category
+  row of its kind as its categories). `check_loot_tool.py` has the case.
+- `gathering-data.json`, stage 1.8c: the quest objects of the variation table Gatherable_Quest (the slice Master_Quest_Instanced of the
+  layers): a capital entry `[TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST]`, its row with the member `"quest": true` (a loot container with the
+  loot table Empty is not a refusal for it), and its game event with no row of the event tables (the event of the quests). The format stays
+  1: a file of before has no quest object (each one is refused, as before). The build: 1,634 quest capitals, 707 quest rows (341 with a
+  different refusal).
 
 ## Commands
 
@@ -378,6 +399,7 @@ tools/gamedata/chests.sh             # one time: the chests of the world for the
 tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, the stations, ...; 25 MB, 2 to 4 minutes); needs an Oodle source
 tools/gamedata/crafting.sh           # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits, the gear score and perk data for the backend (format 3 of stage 3.7c; 9 MB, 5 s); needs an Oodle source
 tools/gamedata/quests.sh             # one time: the quest data for the backend (objectives, compiled task trees, achievement table, territory starts, backstories; 9 MB, 10 s); needs an Oodle source
+tools/gamedata/pois.sh               # one time: the shapes of the points of interest (the quest tasks of a place; 15 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
 tools/gamedata/gathering.sh --region r_+04_+02 --near 8817 4281 30   # the gathering nodes near a place, with their G (no file)

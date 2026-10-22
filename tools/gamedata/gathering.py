@@ -69,7 +69,7 @@ Output:
    "tools": {ITEM_ID: {"types": [TYPE, ...], "min", "max", "efficiency", "multiplier"}, ...},
    "templates": [{"slice", "asset", "sub", "root", "controllerSlot", "table", "bound": {"entity", "component", "slot", "rangeSq",
                   "capacity", "translation": [X, Y, Z], "option": OPTION_ENTITY}}, ...],
-   "capitals": {PLACEMENT_UUID: [TEMPLATE, ROW], ...},
+   "capitals": {PLACEMENT_UUID: [TEMPLATE, ROW] or [TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST] (a quest object), ...},
    "regions": [{"name", "x", "y", "file", "records", "tails", "version", "digest", "types": [[TEMPLATE, ROW, VARIANT], ...]}, ...],
    "creatures": {ASSET:SUB: {"slice", "template", "row"}, ...},
    "counts": {...}}
@@ -140,6 +140,14 @@ SLOT_FIELD = field_id("m_replicationIndex")
 # dye plants). The other gathering tables (quests, chests, cyclic, events, holidays, cinematics) belong to their own stages.
 ORDINARY_TABLES = ("Gatherable_Trees", "Gatherable_Bushes", "Gatherable_Minerals", "Gatherable_Alchemy", "Gatherable_Plants",
                    "Gatherable_Logs", "Gatherable_Stones", "Gatherable_DyePlants")
+# Stage 1.8c (docs/systems/quests.md): the variation table of the quest objects of the slice Master_Quest_Instanced (MSQ_Treasure_A of the
+# beach chain). A placement of a layer with such a variant is a quest object: its row gets the member "quest" (its result is the quest
+# drops of the tasks of its character and its game event; the loot container of the row with the loot table Empty is not a refusal), and its
+# capital entry gets the InteractTag and InteractOnlyOnQuest of the variation row (the client shows the object only during a task with the
+# tag: live check G1 of stage 1.8c). The other quest tables (proximity, glyphs, damageable objects) belong to later stages.
+QUEST_TABLES = ("Gatherable_Quest",)
+# The cause of a loot container that a quest object does not have (its loot is the quest drops).
+LOOT_CONTAINER_CAUSE = "a loot container (a chest: stage 3.5b)"
 # The causes of a row that the backend refuses (a rule of the data that the backend has no predicate for).
 UNSUPPORTED_COLUMNS = (("RequiredSongId", "a song"), ("RequiredWhisperId", "a whisper"), ("UsableEmoteTags", "an emote"),
                        ("AddedStatusEffect", "a status effect"), ("RequiredStatusEffect", "a status effect"),
@@ -278,15 +286,18 @@ class Tables:
                                                               if sheet.source(row, name) != ""})
 
     def _variations(self, sheet: Sheet, path: str) -> None:
-        if sheet.name not in ORDINARY_TABLES:
+        if sheet.name not in ORDINARY_TABLES and sheet.name not in QUEST_TABLES:
             return
-        need(sheet, path, ("VariantID", "GatherableEntryID"))
+        need(sheet, path, ("VariantID", "GatherableEntryID") + (("InteractTag", "InteractOnlyOnQuest") if sheet.name in QUEST_TABLES else ()))
         rows = self.variations.setdefault(sheet.name, {})
         for row in range(sheet.row_count):
             identifier = sheet.source(row, "VariantID").strip()
             if not identifier:
                 continue
             cells = {"row": row, "gatherable": sheet.source(row, "GatherableEntryID").strip()}
+            if sheet.name in QUEST_TABLES:
+                cells["tag"] = sheet.source(row, "InteractTag").strip()
+                cells["onlyOnQuest"] = flag(sheet.source(row, "InteractOnlyOnQuest"), f"{path}: InteractOnlyOnQuest of {identifier}")
             if identifier.lower() in rows and rows[identifier.lower()]["gatherable"] != cells["gatherable"]:
                 raise Failure(f"{path}: the table {sheet.name} has two rows {identifier} with different content")
             rows.setdefault(identifier.lower(), cells)
@@ -632,13 +643,19 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
 
     def variant_row(template: int, variant: str, what: str) -> int:
         table = slices.templates[template]["table"]
-        if table not in ORDINARY_TABLES:
+        if table not in ORDINARY_TABLES and table not in QUEST_TABLES:
             return -1
         entry = tables.variations.get(table, {}).get(variant.lower())
         if entry is None or not entry["gatherable"]:
             counts["unknownVariants"] += 1
             return -1
-        return row_of(entry["gatherable"], f"{what}: the variation row {table}/{variant}")
+        row = row_of(entry["gatherable"], f"{what}: the variation row {table}/{variant}")
+        if table in QUEST_TABLES:
+            # A quest object (stage 1.8c): its loot is the quest drops; a loot container with the loot table Empty is not a refusal.
+            rows[row]["quest"] = True
+            rows[row]["unsupported"] = [cause for cause in rows[row]["unsupported"]
+                                        if not (cause == LOOT_CONTAINER_CAUSE and rows[row]["loot"] in ("", "Empty"))]
+        return row
 
     # The natural nodes: the distribution file of each region.
     heights = Heights(gamedata / "heights", sources)
@@ -724,16 +741,22 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
                 if slice_path is None or not slice_path.startswith("slices/gatherables/"):
                     continue
                 template = slices.template_of(slice_path)
-                if template is None or slices.templates[template]["table"] not in ORDINARY_TABLES:
+                table = slices.templates[template]["table"] if template is not None else ""
+                if template is None or (table not in ORDINARY_TABLES and table not in QUEST_TABLES):
                     continue
                 key = str(placement.get("id", "")).strip().lower()
                 if not re.fullmatch(r"[0-9a-f-]{36}", key):
                     raise Failure(f"{path}: a gathering placement has no UUID")
-                row = variant_row(template, str(placement.get("variantName", "")), f"{path}: the placement {key}")
+                variant = str(placement.get("variantName", ""))
+                row = variant_row(template, variant, f"{path}: the placement {key}")
                 if row < 0:
                     continue
-                capitals[key] = [template, row]
-                table = slices.templates[template]["table"]
+                if table in QUEST_TABLES:
+                    entry = tables.variations[table][variant.lower()]
+                    capitals[key] = [template, row, entry["tag"], entry["onlyOnQuest"]]
+                    counts["questCapitals"] = counts.get("questCapitals", 0) + 1
+                else:
+                    capitals[key] = [template, row]
                 counts["capitalsByTable"][table] = counts["capitalsByTable"].get(table, 0) + 1
     counts["capitals"] = len(capitals)
 
@@ -768,6 +791,8 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
     for row in rows:
         if row["event"]:
             entry = tables.events.get(row["event"].lower())
+            if entry is None and row.get("quest"):
+                continue  # A quest object (stage 1.8c): its event is the game event of the quests (no trade skill experience).
             if entry is None:
                 raise Failure(f"the gatherable row {row['id']} names the event {row['event']}, and no event table has it")
             events[entry[0]] = [entry[1], entry[2]]
@@ -778,11 +803,11 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
             tools[item["id"]] = weapon
     # Only the slices that a node or a creature names (a quest slice of a capital placement is read and not used).
     used = sorted({template for region in region_list for template, _, _ in region["types"] if template >= 0}
-                  | {template for template, _ in capitals.values()} | {entry["template"] for entry in creatures.values()})
+                  | {entry[0] for entry in capitals.values()} | {entry["template"] for entry in creatures.values()})
     renumber = {old: new for new, old in enumerate(used)}
     for region in region_list:
         region["types"] = [[renumber[template] if template >= 0 else -1, row, variant] for template, row, variant in region["types"]]
-    capitals = {key: [renumber[template], row] for key, (template, row) in capitals.items()}
+    capitals = {key: [renumber[entry[0]]] + entry[1:] for key, entry in capitals.items()}
     for entry in creatures.values():
         entry["template"] = renumber[entry["template"]]
     templates = [slices.templates[old] for old in used]

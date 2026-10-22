@@ -165,8 +165,13 @@ enum class GatherRefusal : std::uint8_t {
     noLoot,
     /** The trade skill of the event of the row is not a trade skill of the progression tables. */
     noSkill,
+    /**
+     * Stage 1.8c: a quest object (InteractOnlyOnQuest) and no active task of the character with its InteractTag (client 0x8261FC0: the
+     * client shows no prompt then; live check G1).
+     */
+    notOnQuest,
 };
-inline constexpr std::size_t kGatherRefusalCount = 10;
+inline constexpr std::size_t kGatherRefusalCount = 11;
 
 [[nodiscard]] const char* gather_refusal_text(GatherRefusal refusal);
 
@@ -336,6 +341,9 @@ private:
         EntityId group{0};
         std::string source;
         state::WorldPosition position;
+        /** Stage 1.8c: the InteractTag of a quest object (lower case), and InteractOnlyOnQuest. */
+        std::string interactTag;
+        bool onlyOnQuest{false};
     };
 
     [[nodiscard]] std::optional<Target> target_of(const InteractionContext& context) const;
@@ -345,6 +353,8 @@ private:
                                                                    std::string& detail) const;
     void set_gather(Entity& character, std::uint8_t status, float remaining, float speed, bool active, std::uint64_t target);
     void fail_work(Entity& character);
+    /** Stage 1.8c: the events of the quests after a gather (the items of the roll, the game event of the row, the tag of a quest object). */
+    void quest_events(Entity& character, const gamedata::GatherableRow& row, const std::vector<GrantItem>& items, const std::string& interactTag);
     [[nodiscard]] bool is_depleted(const std::string& key) const;
     /** Gives a node its state on its entity (the node state of its GatherableController): each observer gets it. */
     void publish(GatherNode& node);

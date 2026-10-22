@@ -1,10 +1,18 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
+#include <map>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <tuple>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
+#include "gamedata/poi_data.h"
 #include "gamedata/quest_data.h"
 #include "state/store.h"
 #include "world/entity.h"
@@ -19,8 +27,9 @@
 // achievements, the undo rows, the grant rows), and only then gives the entity the new values and marks the states (World::touch). A plan
 // that the database does not take changes nothing.
 //
-// The cost depends on the character and its active quests, not on the size of the world (rule MP-8): an achievement change visits the
-// active TaskAchievement tasks of that character only; a timer is one timer of the world clock.
+// The cost depends on the character and its active quests, not on the size of the world (rule MP-8). Each character in the world has an
+// index of its active tasks by the key of their event (Subscriptions): an event visits only the tasks of its key, and a plan copies only
+// the quests that it changes (code review of stage 1.8a, finding QR8A-R7). A timer is one timer of the world clock.
 //
 // The rules of the tasks (client code, research quest-engine.md Q1; the sources of each rule are in docs/systems/quests.md):
 // - ConsecutiveTaskContainer: the children in data order; SimpleTaskContainer: all children, complete when each child is complete;
@@ -28,7 +37,12 @@
 // - TaskUnlockAchievement, TaskLockAchievement, TaskTemporaryUnlockAchievement: the action at the activation, then complete.
 // - TaskAchievement: complete when its conditional (achievement ids and non-persisted achievements with !, &&, ||, parentheses) is true.
 // - TaskTimer: complete at its start plus Duration on the world clock. The start is a time of the synced wall clock (field 0 of the state).
-// - Each other type stays active: its supplier is a later part (1.8b to 1.8d).
+//   A failure timer (FailOnCondition) is satisfied while it runs and fails the objective at its end.
+// - Stage 1.8c: the counters (a credited kill, a game event, a gather, a craft, a refine, a screen, an interaction), the predicates (the
+//   items in the bag, the equipment, the points of interest, the achievements: evaluated at the activation and at each change, with the
+//   regression of a CompleteActive task), the item actions (TaskGiveItem, TaskGiveAndTakeItem, TaskRemoveItem), the quest drops of a kill
+//   and of a gather, TaskObjective, TaskDie, the abandon, the reset, and the failure of an objective.
+// - Each other type stays active: its supplier is a later part (1.8b: persons, conversations, cutscenes, trigger areas, whispers).
 //
 // World thread only. A route gives the world a task (World::call).
 
@@ -61,6 +75,12 @@ enum class QuestError {
     storeFailed,
     /** The rules of the tasks did not end (a loop of achievement actions): nothing changed. */
     noFixedPoint,
+    /** Stage 1.8c: the character has no active quest with this instance id. */
+    unknownInstance,
+    /** Stage 1.8c: the objective has CanBeAbandoned 0 (a reset is the way back of such a quest; client 0x825EEF0). */
+    notAbandonable,
+    /** Stage 1.8c: the character is not in the world. */
+    notInWorld,
 };
 
 [[nodiscard]] const char* quest_error_text(QuestError error);
@@ -87,19 +107,37 @@ struct TemplateResult {
     }
 };
 
-/** The counts of the quest system (the load case QG2 and `tools/world quests`). */
+/** The counts of the quest system (the load cases QG2 and QE9, and `tools/world quests`). */
 struct QuestCounts {
     std::uint64_t grants{0};
     std::uint64_t plans{0};
     std::uint64_t storeFailures{0};
     /** Task activations and completions of all plans. */
     std::uint64_t steps{0};
-    /** Achievement change events, and the TaskAchievement tasks that they visited. */
+    /** Achievement change events, and the TaskAchievement tasks that they visited (each visit, before any filter: finding QR8A-R7). */
     std::uint64_t events{0};
     std::uint64_t waitsVisited{0};
     std::uint64_t timersStarted{0};
     std::uint64_t timersDone{0};
+    /** Stage 1.8c: timers whose completion write the store refused (a retry follows on the world clock: finding QR8A-R5). */
+    std::uint64_t timerRetries{0};
     std::uint64_t trackedUpdates{0};
+    /** Stage 1.8c: the events of the other systems (kills, items, gathers, crafts, places, screens, interactions, game events, deaths). */
+    std::uint64_t worldEvents{0};
+    /** The subscribers (indexed tasks) that the events visited, before any filter; and the progress changes that they made. */
+    std::uint64_t subscribersVisited{0};
+    std::uint64_t progressChanges{0};
+    /** Events with a result id that came a second time: no change. */
+    std::uint64_t repeatedResults{0};
+    /** Quest drops given (kills and gathers), and the drops that a roll did not give. */
+    std::uint64_t drops{0};
+    std::uint64_t dropMisses{0};
+    std::uint64_t abandons{0};
+    std::uint64_t resets{0};
+    std::uint64_t failures{0};
+    /** Characters whose items or places the tick looked at (one look for each character and tick at most). */
+    std::uint64_t itemLooks{0};
+    std::uint64_t placeLooks{0};
 };
 
 /** The quests of a character for a reader (a command). */
@@ -108,22 +146,78 @@ struct QuestView {
     std::vector<state::QuestRow> quests;
     std::vector<std::uint64_t> tracked;
     std::vector<state::QuestGrantRow> grants;
+    std::vector<state::QuestAwardRow> awards;
+};
+
+/** The kinds of the events of the other systems (stage 1.8c). */
+enum class QuestEventKind : std::uint8_t {
+    /** A credited kill: `keys` are the vitals categories of the victim (each in lower case). */
+    kill,
+    /** A game event applied to the character (the event of a kill, of a gatherable): `keys` has the event id. */
+    gameEvent,
+    /** A gather: `keys` are the item ids that the gather gave (TaskRequireGatherItems), `amounts` their quantities. */
+    gather,
+    /** A craft or a refine: `keys` has the recipe id; `amount` is the number of the crafted items, `gearScore` their gear score. */
+    craft,
+    refine,
+    /** The client opened a screen (message 2617): `screenCrc`. */
+    screen,
+    /** An interaction with a tag started (`started` true) or completed: `keys` has the tag. */
+    interact,
+};
+
+/** One event of a different system for one character (stage 1.8c; research quest-progress.md 8: the values that a task needs). */
+struct QuestEvent {
+    QuestEventKind kind{QuestEventKind::kill};
+    std::vector<std::string> keys;
+    /** The amount of each key (empty: 1 for each key). */
+    std::vector<std::uint32_t> amounts;
+    std::uint32_t gearScore{0};
+    std::uint32_t screenCrc{0};
+    bool started{false};
+    /** The item of the kill (KillEnemyWeaponID; empty: not known). */
+    std::string weapon;
+    /** The result id of the source (a kill: the creature and its death; 0: none): an event with a result id counts one time. */
+    std::uint64_t result{0};
+};
+
+/** One quest drop of a kill or of a gather (stage 1.8c): an item of a possession or gather task of the character. */
+struct QuestDrop {
+    std::string itemId;
+    std::uint32_t quantity{0};
+    std::uint32_t objectiveCrc{0};
+    std::string objective;
+    std::uint64_t instance{0};
+    std::uint8_t index{0};
+    /** AwardOnlyOnce: the drop counts in the award row of the task (it survives a reset). */
+    bool counted{false};
 };
 
 class Quests {
 public:
     Quests(World& world, state::Store& store, const gamedata::QuestData* data);
+    ~Quests();
+    Quests(const Quests&) = delete;
+    Quests& operator=(const Quests&) = delete;
 
     /** @return The quest data, or null when the backend has none. */
     [[nodiscard]] const gamedata::QuestData* data() const {
         return m_data != nullptr && m_data->loaded() ? m_data : nullptr;
     }
+    /** Stage 1.8c: the points of interest (game data poi-data.json), or null: no task of a place progresses. */
+    void set_pois(const gamedata::PoiData* pois) {
+        m_pois = pois;
+    }
+    [[nodiscard]] const gamedata::PoiData* pois() const;
 
     /**
      * The entity of a character comes into the world (after its achievement bits, before its first record): its saved quests, its pins,
      * its timers, and its pending one-time grants (the start objective of a new character, a template objective). No data: nothing.
+     * Stage 1.8c: its task index, and the predicates of its active tasks (its items, its place, its bits can have changed while away).
      */
     void entered(Entity& entity);
+    /** The character leaves the world: its index and its marks go (its rows stay; its timers end themselves). */
+    void left(const Entity& entity);
 
     /**
      * Grants an objective to a character in the world: a new instance, its tree activated to a fixed point, one transaction.
@@ -133,7 +227,8 @@ public:
 
     /**
      * The achievement bits of a character changed (the ownership system calls it after each change that this system did not make: a lore
-     * page, a first craft, a build preset, the DLC). The active TaskAchievement tasks of the character that the bits complete complete.
+     * page, a first craft, a build preset, the DLC). The active TaskAchievement tasks of the character (Active or CompleteActive: the
+     * regression of finding QR8A-R3) get the new value.
      */
     void achievements_changed(Entity& entity);
 
@@ -166,12 +261,72 @@ public:
     /** Timer task of the world clock: a TaskTimer of a character is due. */
     void timer_due(const std::string& characterId, std::uint64_t instance, std::uint8_t index, std::uint64_t startNs);
 
+    // Stage 1.8c: the events of the other systems. Each system stays the only writer of its own state: it calls the quest system after
+    // its own successful change, and the quest system changes only the quests (and, in its own transaction, the items of an item task).
+
+    /**
+     * An event of a different system for one character (a kill of its credit list, a game event, a gather, a craft, a screen, an
+     * interaction). Only the tasks of the index of its key are visited; a task that the event changes gets one plan.
+     */
+    void event(Entity& entity, const QuestEvent& event);
+    /**
+     * A creature died by the hits of the characters of its credit list (Rewards::killed): each of them gets the kill (its vitals
+     * categories) and the kill event of its vitals row. A character that is not in the list gets nothing.
+     */
+    void killed(const Entity& creature, const std::vector<Entity*>& credited, const std::vector<std::string>& categories,
+                const std::string& killEvent, std::uint64_t result);
+    /**
+     * The quest drops of a kill (TaskHaveItems, TaskHaveAndReturnItems: ItemDropVC names a vitals category of the victim) or of a gather
+     * (TaskGatherItems, TaskGatherAndReturnItems: ItemDropVC names the gatherable id) for one character: the roll of each matching
+     * active task with its ItemDropProbability, PauseAndClearLootOnTaskComplete, AwardOnlyOnce, and GuranteedDropAttempts. No change: the
+     * caller gives the items in its own transaction, writes the award rows there (write_drops), and calls drops_done after the commit.
+     */
+    [[nodiscard]] std::vector<QuestDrop> plan_drops(Entity& entity, bool gather, const std::vector<std::string>& sources);
+    /** Writes the award rows of the counted drops (in the batch of the caller). */
+    [[nodiscard]] bool write_drops(const Entity& entity, const std::vector<QuestDrop>& drops);
+    /** The drops are in the database: the award counts of the entity, the counters of the guaranteed drops, the log. */
+    void drops_done(Entity& entity, const std::vector<QuestDrop>& drops);
+    /**
+     * @return True when an active task of the character has this InteractTag (a quest object that InteractOnlyOnQuest shows only during
+     *         the task: client 0x8261FC0). An empty tag: false.
+     */
+    [[nodiscard]] bool quest_object_open(const Entity& entity, const std::string& interactTag) const;
+    /** The items (bag or paperdoll) of a character changed (World::touch): its possession and equip tasks look again at the next tick. */
+    void items_touched(const Entity& entity);
+    /** The accepted position of a character changed (World::place): its tasks of a place look again at the next tick. */
+    void moved(const Entity& entity);
+    /** The client reported a point of interest (2297 entered, 6416 left): a cue; the server looks at the shapes itself. */
+    void place_reported(Entity& entity, std::uint16_t territory, bool entered);
+    /** The character died (the health system): TaskDie with FailOnCondition fails its objective, with ResetOnCondition resets it. */
+    void died(Entity& entity);
+    /** The world tick: the characters whose items or place changed (one look each). */
+    void tick();
+
+    /**
+     * The client abandons an instance (message 3836): only an objective with CanBeAbandoned. The instance goes, with the undo of its
+     * achievement actions, the return of its items, and its pin; the award rows of the objective go (a new grant awards again: client
+     * 0x825EEF0).
+     */
+    [[nodiscard]] QuestResult abandon(Entity& entity, std::uint64_t instance);
+    /**
+     * The client resets an instance (message 5600): the instance goes as at an abandon, but the award rows stay, and a new instance of the
+     * objective starts (state 0 and state 4 on the wire do not reset a task of the client: live finding of stage 1.8a).
+     * @return The new instance in `instance`.
+     */
+    [[nodiscard]] QuestResult reset(Entity& entity, std::uint64_t instance);
+
+    /** @return True when the character has an active task of a place or a location rule (a test of the index). */
+    [[nodiscard]] bool has_place_tasks(const Entity& entity) const;
+    /** @return The number of indexed subscribers of a character (a test of the index; 0 for a character with no index). */
+    [[nodiscard]] std::size_t subscriber_count(const Entity& entity) const;
+
     [[nodiscard]] const QuestCounts& counts() const {
         return m_counts;
     }
 
 private:
     struct Plan;
+    struct Subscriptions;
     /** Commits a plan (one transaction), then gives the entity the values. */
     [[nodiscard]] QuestError commit(Entity& entity, Plan& plan, const std::vector<state::QuestGrantRow>& grants);
     /** Runs the pending grants of a character in the world. */
@@ -179,12 +334,30 @@ private:
     [[nodiscard]] std::uint64_t next_instance();
     void schedule(const std::string& characterId, std::uint64_t instance, std::uint8_t index, std::uint64_t startNs, double seconds);
     [[nodiscard]] std::uint64_t now_ns() const;
+    /** Builds the index of a character again for the instances of a plan (all instances: `all`). */
+    void index(const Entity& entity, const std::set<std::uint64_t>& instances, bool all);
+    /** The predicates of the indexed tasks of some kinds (items, places, achievements) of a character: one plan when one changed. */
+    void refresh(Entity& entity, bool items, bool places, bool achievements, const char* cause);
+    /** Ends an instance (abandon, reset, failure) in a plan: the undo, the returns, the pin. */
+    void end_instance(Plan& plan, std::uint64_t instance, bool keepAwards, const char* cause);
+    /** @return True for a result id that came before (it is kept now): the event changes nothing. */
+    bool repeated(std::uint64_t result);
 
     World& m_world;
     state::Store& m_store;
     const gamedata::QuestData* m_data;
+    const gamedata::PoiData* m_pois{nullptr};
     std::uint64_t m_nextInstance{0};
     QuestCounts m_counts;
+    /** The task index of each character in the world (a cache of its active tasks; MP-1: the state stays in the entity). */
+    std::unordered_map<EntityId, std::unique_ptr<Subscriptions>> m_subscriptions;
+    std::set<EntityId> m_itemsDirty;
+    std::set<EntityId> m_placesDirty;
+    /** The misses of each task with GuranteedDropAttempts since its last drop (key: the character, the instance, the index). */
+    std::map<std::tuple<std::string, std::uint64_t, std::uint8_t>, std::uint32_t> m_misses;
+    /** The result ids of the last events (a ring of kResultWindow ids): a repeated delivery counts one time, with a bound store. */
+    std::unordered_set<std::uint64_t> m_results;
+    std::deque<std::uint64_t> m_resultOrder;
 };
 
 } // namespace soulwarden::backend::world

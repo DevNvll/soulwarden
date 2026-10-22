@@ -141,9 +141,9 @@ def sheets(case: str) -> dict:
                                   [["TestLimit", "10", "", "", "86400", "86400", "86400", "0.2"]])],
         lt.BASE_TYPE: [FakeSheet("BaseVitals_Common", ["VitalsID", "CreatureType", "CanDropLoot", "LootDropChance",
                                                        "IgnoreLootDropModifier", "LootTableId", "LootTags", "NoExpNoCoin",
-                                                       "KillEventIdOverride"],
-                                 [["Wolf", "Solo", "True", "0.1", "FALSE", base_table, "Beast,Common", "", ""],
-                                  ["Rock", rock_type, "False", "", "", "", "", rock_flag, rock_event]])],
+                                                       "KillEventIdOverride", "VitalsCategories"],
+                                 [["Wolf", "Solo", "True", "0.1", "FALSE", base_table, "Beast,Common", "", "", "Wolf, Hostile,Beast,Wolf"],
+                                  ["Rock", rock_type, "False", "", "", "", "", rock_flag, rock_event, ""]])],
         lt.VARIANT_TYPE: [FakeSheet("LevelVariantVitals_Common", ["VitalsID", "BaseVitalsId"], variants)],
         lt.LOOT_TABLE_TYPE: [loot_table_sheet(case)],
         lt.LOOT_BUCKET_TYPE: [bucket_sheet(case)],
@@ -194,8 +194,12 @@ def valid_values(document: dict) -> list[str]:
     if vitals.get("wolf_grey_7") != vitals.get("wolf") or "ghost_1" in vitals:
         wrong.append(f"the vitals ids {vitals}")
     rock = bases[vitals["rock"]] if "rock" in vitals else None
-    if rock != ["Rock", "Critter", False, 0.0, False, "", [], True, "KillStructure"]:
+    if rock != ["Rock", "Critter", False, 0.0, False, "", [], True, "KillStructure", []]:
         wrong.append(f"the base row Rock {rock}")
+    # Stage 1.8c: the vitals categories of a base row (the categories of a kill task of the quests), trimmed, no repeat, in their order.
+    wolf = bases[vitals["wolf"]] if "wolf" in vitals else None
+    if wolf is None or wolf[9] != ["Wolf", "Hostile", "Beast"]:
+        wrong.append(f"the vitals categories of the base row Wolf {wolf}")
     if document["events"] != {"killevent": 0.05, "killstructure": 0.0}:
         wrong.append(f"the events {document['events']}")
     if document["rewards"] != [[1, 10, 310, 1], [2, 11, 320, 1], [3, 12, 330, 1]] or document["disparity"] != [[-10, -0.4, 0], [10, 0.0, 10]]:

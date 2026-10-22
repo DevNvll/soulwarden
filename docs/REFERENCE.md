@@ -139,6 +139,7 @@ tools/gamedata/chests.sh           # one time: the chests of the world (without 
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/gathering.sh        # one time, after heights.sh: the gathering nodes of the world (without them each gather is refused); 40 MB, 1 minute; needs an Oodle library
 tools/gamedata/quests.sh           # one time: the quests, the achievement table, the backstory templates (without it no quest); 9 MB, 10 s; needs an Oodle library
+tools/gamedata/pois.sh             # one time: the shapes of the points of interest (without it no quest task of a place counts); 15 s; needs an Oodle library
 tools/gamedata/crafting.sh         # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits (without it each craft is refused; format 2 of stage 3.7b for refining, format 3 of stage 3.7c for procedural gear and Azoth); 9 MB, 5 s; needs an Oodle library
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
@@ -507,6 +508,10 @@ button on "Confirm").
   the objectives with their compiled task trees (the index rule of the client), the task cells, the achievement table, the non-persisted
   achievements, the start objectives of the territories, the backstory templates, the game events, the whispers, and the schedules.
   `--objective ID` prints a tree and writes no file. Without the file the backend has no quest ([Quests](systems/quests.md)).
+- `tools/gamedata/pois.sh` makes the points of interest (stage 1.8c; `poi-data.json`, format 1): the shape of each point of interest of the
+  territory tables with its origin (the POI placement that the entries of the region metadata confirm), its tags, and its territory: 476
+  points of interest in the supported build. Without the file the quest tasks of a place wait. Stage 1.8c also adds the vitals categories
+  to `loot.sh` (the kill tasks of the quests) and the quest objects to `gathering.sh` (run the two tools again).
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -842,7 +847,17 @@ button on "Confirm").
   quest template NAME TEMPLATE` give it the achievements and the start objective of one backstory template of the game data (decision D2
   option C; `GET /admin/v1/catalog/backstories`, `tools/world quest templates` list them). In a development run `tools/world quests NAME`
   shows the quests and their tasks, `tools/world quest grant NAME OBJECTIVE` gives an objective, and `tools/world achievement NAME ID
-  on|off` changes a bit. The persons, the hand-in, the rewards, and the counters of the tasks are later parts (1.8b to 1.8d).
+  on|off` changes a bit. The persons, the hand-in, and the rewards are later parts (1.8b, 1.8d).
+- Quest events (stage 1.8c, [Quests](systems/quests.md)). The tasks count the events of the other systems: a credited kill (each vitals
+  category of the victim and its kill event; only the characters of the credit list), the items in the bag and the paperdoll (the
+  possession tasks, also back below the target for a StayActive task), an equip, a gather (the items of the roll, the game event of the
+  row, the tag of a quest object), the quest drops of a kill or a gather (ItemDropVC, ItemDropProbability, AwardOnlyOnce,
+  PauseAndClearLootOnTaskComplete), a craft or a refine, the places (the shapes of `pois.sh` with the accepted position), a screen (2617),
+  an interaction with a tag, a child objective (TaskObjective), and the death (TaskDie). The quest objects (`MSQ_Treasure_A` and the other
+  objects of the variation table Gatherable_Quest) are open only during a task with their tag. The client messages 3836 (abandon) and 5600
+  (reset) end an instance (the undo of its achievement actions, the return of its items, its pin; a reset makes a new instance and keeps the
+  award rows of AwardOnlyOnce), and a failure timer or a TaskDie fails or resets its objective. The award rows are in schema 16. The
+  admin commands `abandon_quest` and `reset_quest` (argument `instance`) and `tools/world quest abandon|reset NAME INSTANCE` do the same.
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
   abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar
   of the HUD goes away at full mana ([Combat and health](systems/combat-and-health.md)).

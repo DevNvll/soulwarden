@@ -26,8 +26,10 @@ entries, the pak entries with an Oodle library, or the files that tools/research
   VitalsLevels (VitalsLevelData)                  AILootGSCeiling of each creature level
   the vitals tables (VitalsBaseData,              for each base row: CanDropLoot, LootDropChance,
   VitalsLevelVariantData)                         IgnoreLootDropModifier, LootTableId, LootTags,
-                                                  NoExpNoCoin, KillEventIdOverride, CreatureType; and the
-                                                  base row of each level variant row
+                                                  NoExpNoCoin, KillEventIdOverride, CreatureType,
+                                                  VitalsCategories (stage 1.8c: the categories of a kill
+                                                  task of the quests; a table with no such column: none);
+                                                  and the base row of each level variant row
   the loot tables (LootTablesData)                each table that a vitals row can reach: AND or OR, the
                                                   roll bonus setting, MaxRoll (the row NAME_Probs), the
                                                   conditions, ConditionOverridesRoll, UseLevelGS, GSBonus,
@@ -50,7 +52,7 @@ Output: {"format": 1,
 "credit": {"timeLimit": S, "healthShare": F, "range": M, "receivers": N, "modifiers": [[xp, loot, coin], ...]},
 "gearScore": [[t1min, t1max, ..., t5min, t5max], ...]   (entry K: the level K + 1),
 "lootCeiling": [[level, ceiling], ...],
-"bases": [[id, creatureType, canDropLoot, dropChance, ignoreDropModifier, table, [tags], noExpNoCoin, event], ...],
+"bases": [[id, creatureType, canDropLoot, dropChance, ignoreDropModifier, table, [tags], noExpNoCoin, event, [categories]], ...],
 "vitals": {"<vitals row id in lower case>": base, ...},
 "tables": {"<table id>": [and, bonus, maxRoll, [conditions], overridesRoll, useLevelGS, gsBonus,
            [[kind, id, threshold, quantityMin, quantityMax, gearScoreMin, gearScoreMax], ...]], ...},
@@ -444,9 +446,14 @@ def read_vitals(sheets: dict[str, list[Sheet]]) -> tuple[list, dict, dict]:
                 chance = 0.0
             else:
                 chance = rounded(number_of(chance_text, f"the cell LootDropChance of {what}"))
+            # Stage 1.8c: VitalsCategories (the categories of a kill task of the quests, client 0x825E7C0), in the order of the cell.
+            categories = []
+            for category in (sheet.source(row, "VitalsCategories") if "VitalsCategories" in sheet.columns else "").split(","):
+                if category.strip() and category.strip() not in categories:
+                    categories.append(category.strip())
             bases.append([identifier, sheet.source(row, "CreatureType").strip(), flag(sheet, row, "CanDropLoot"), chance,
                           flag(sheet, row, "IgnoreLootDropModifier"), sheet.source(row, "LootTableId").strip(), tags,
-                          flag(sheet, row, "NoExpNoCoin"), sheet.source(row, "KillEventIdOverride").strip()])
+                          flag(sheet, row, "NoExpNoCoin"), sheet.source(row, "KillEventIdOverride").strip(), categories])
     vitals = dict(base_index)
     missing = 0
     for sheet in sheets[VARIANT_TYPE]:

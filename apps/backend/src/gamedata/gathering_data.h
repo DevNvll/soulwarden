@@ -85,6 +85,12 @@ struct GatherableRow {
     bool waitForImpact{false};
     /** The rules of the data that the backend has no predicate for: a use is refused with the first one. Empty: supported. */
     std::vector<std::string> unsupported;
+    /**
+     * Stage 1.8c: a quest gatherable (a row of a quest variation table: MSQ_Treasure_A, a loot container with the loot table Empty). Its
+     * result is the quest drops of the tasks of the character (ItemDropVC names the row) and its game event; each character gathers its own
+     * object (InstancedLootType 4 of the layer metadata: no shared depletion). A member "quest" of the row; a file of before: false.
+     */
+    bool quest{false};
 };
 
 /** A game event of a gatherable row: the trade skill (CategoricalProgressionId) and its experience (CategoricalProgressionReward). */
@@ -182,6 +188,12 @@ struct NaturalNode {
 struct GatheringLink {
     std::uint32_t templateIndex{0};
     std::uint32_t row{0};
+    /**
+     * Stage 1.8c: the InteractTag of the variation row of a quest object (lower case), and InteractOnlyOnQuest: the client shows the object
+     * only while an active task of its character has the tag (client 0x8261FC0; live check G1 of stage 1.8c). Empty: none.
+     */
+    std::string interactTag;
+    bool onlyOnQuest{false};
 };
 
 /** The work of the lookups (the load case). */

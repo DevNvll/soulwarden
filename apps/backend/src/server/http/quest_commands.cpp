@@ -26,6 +26,7 @@ int status_of(world::QuestError error) {
     case world::QuestError::unknownCharacter:
     case world::QuestError::unknownObjective:
     case world::QuestError::unknownTemplate:
+    case world::QuestError::unknownInstance:
         return 404;
     case world::QuestError::storeFailed:
         return 500;
@@ -116,6 +117,42 @@ WorldCommand set_achievement(const std::string& character, const Arguments& argu
     };
 }
 
+namespace {
+
+WorldCommand end_quest(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal, bool reset) {
+    const auto text = arguments.text("instance");
+    std::uint64_t instance = 0;
+    if (!text || text->size() != 16 || std::sscanf(text->c_str(), "%16llx", reinterpret_cast<unsigned long long*>(&instance)) != 1 || instance == 0) {
+        refusal = message(400, "give instance=HEX (16 hexadecimal digits: an active quest of the character, GET the quests of the character)");
+        return {};
+    }
+    return [character, instance, reset](world::World& target) {
+        world::Entity* entity = target.find_character(character);
+        if (entity == nullptr) {
+            return message(409, "the character is not in the world");
+        }
+        const world::QuestResult result = reset ? target.quests().reset(*entity, instance) : target.quests().abandon(*entity, instance);
+        if (!result.ok()) {
+            return json_reply(status_of(result.error), json{{"message", world::quest_error_text(result.error)}}.dump());
+        }
+        json reply = {{"message", "done"}, {"instance", hex(instance)}};
+        if (reset) {
+            reply["newInstance"] = hex(result.instance);
+        }
+        return json_reply(200, reply.dump());
+    };
+}
+
+} // namespace
+
+WorldCommand abandon_quest(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    return end_quest(character, arguments, refusal, false);
+}
+
+WorldCommand reset_quest(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    return end_quest(character, arguments, refusal, true);
+}
+
 std::optional<json> quests_view(world::World& target, const std::string& character) {
     const auto view = target.quests().view(character);
     if (!view) {
@@ -145,12 +182,17 @@ std::optional<json> quests_view(world::World& target, const std::string& charact
     for (const state::QuestGrantRow& grant : view->grants) {
         grants.push_back({{"source", grant.source}, {"key", grant.key}, {"objective", grant.objective}, {"state", grant.state}});
     }
+    json awards = json::array();
+    for (const state::QuestAwardRow& award : view->awards) {
+        awards.push_back({{"objective", award.objective}, {"index", award.index}, {"amount", award.amount}});
+    }
     const world::QuestCounts& counts = target.quests().counts();
     return json{{"character", character},
                 {"inWorld", view->inWorld},
                 {"data", data != nullptr},
                 {"quests", quests},
                 {"grants", grants},
+                {"awards", awards},
                 {"counts",
                  {{"grants", counts.grants},
                   {"plans", counts.plans},
@@ -160,7 +202,19 @@ std::optional<json> quests_view(world::World& target, const std::string& charact
                   {"timersStarted", counts.timersStarted},
                   {"timersDone", counts.timersDone},
                   {"trackedUpdates", counts.trackedUpdates},
-                  {"storeFailures", counts.storeFailures}}}};
+                  {"storeFailures", counts.storeFailures},
+                  {"worldEvents", counts.worldEvents},
+                  {"subscribersVisited", counts.subscribersVisited},
+                  {"progressChanges", counts.progressChanges},
+                  {"repeatedResults", counts.repeatedResults},
+                  {"drops", counts.drops},
+                  {"dropMisses", counts.dropMisses},
+                  {"abandons", counts.abandons},
+                  {"resets", counts.resets},
+                  {"failures", counts.failures},
+                  {"timerRetries", counts.timerRetries},
+                  {"itemLooks", counts.itemLooks},
+                  {"placeLooks", counts.placeLooks}}}};
 }
 
 json backstories_json(world::World& target) {

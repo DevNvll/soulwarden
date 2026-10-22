@@ -420,6 +420,12 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
     const gamedata::CreditData::Modifier& share = credit.modifiers[std::min(creditors.size(), credit.modifiers.size()) - 1];
     const std::string& creatureType = vitals != nullptr && !vitals->creatureType.empty() ? vitals->creatureType : body.kind->creatureType;
     const gamedata::RewardModifier* type = m_tables->modifier(creatureType);
+    // The vitals categories of the victim (stage 1.8c: the VitalsCategories of its base vitals row, in lower case; a file of the loot tool
+    // of before: the vitals row and the category row of the kind, the two categories that the backend knows).
+    std::vector<std::string> categories = vitals != nullptr ? vitals->categories : std::vector<std::string>{};
+    if (categories.empty()) {
+        categories = {gamedata::lower_text(body.kind->vitals), gamedata::lower_text(body.kind->category)};
+    }
     const gamedata::CombatTables* combat = m_world.options().combatTables;
     // The personal loot bag of the kill (stage 3.5b.2, docs/systems/loot-bags.md): the items of each character go into its own part of one
     // bag at the place of the creature. With no personal container in the interaction data (a file of format 1 or 2) the items go into
@@ -465,6 +471,12 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
             const std::uint64_t gates = m_counts.lootGates;
             reward.items = roll(*vitals, context, forced, share.loot);
             reward.lootGate = m_counts.lootGates != gates;
+        }
+        // The quest drops of the character (stage 1.8c, world/quests.h): an item of a possession task whose ItemDropVC names a vitals
+        // category of the victim. They go with the loot (its part of the loot bag), in the transaction of the reward.
+        const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, false, categories);
+        for (const QuestDrop& drop : drops) {
+            reward.items.push_back(LootDrop{drop.itemId, drop.quantity, std::nullopt});
         }
         // The reward of one character is one change (code review of stage 3.5a, finding F1; roadmap
         // rule MP-7): the experience, the mastery, and the items and the coin are written in one
@@ -528,6 +540,7 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
                 itemsLost += item.quantity;
             }
         }
+        written = written && m_world.quests().write_drops(character, drops);
         written = written && batch.commit();
         if (!written) {
             m_world.loot_bags().forget_part(bag, character.characterId);
@@ -549,6 +562,7 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
                        id_number(creature.id));
             continue;
         }
+        m_world.quests().drops_done(character, drops);
         m_counts.experience += gained ? reward.experience : 0;
         m_counts.masteryExperience += reward.mastery.empty() ? 0 : reward.experience;
         if (!reward.items.empty() || reward.coin != 0) {
@@ -595,6 +609,15 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
     if (bagged) {
         m_world.loot_bags().finish_kill(bag);
     }
+    // The kill of the quests (stage 1.8c, finding G10 of research quest-engine-3.md): each character of the credit list gets the kill with
+    // each vitals category of the victim and the kill event of its vitals row (TaskKillContribution, TaskGameEvent). A character that is
+    // not in the list gets nothing. The result id is the creature and the revision of its death: a second delivery counts one time.
+    std::vector<Entity*> credited;
+    for (const Creditor& creditor : creditors) {
+        credited.push_back(creditor.entity);
+    }
+    m_world.quests().killed(creature, credited, categories, vitals != nullptr && !vitals->event.empty() ? vitals->event : std::string(gamedata::kKillEvent),
+                            (static_cast<std::uint64_t>(id_number(creature.id)) << 20) ^ m_world.revision());
     return rewards;
 }
 

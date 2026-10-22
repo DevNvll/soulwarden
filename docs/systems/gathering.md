@@ -162,7 +162,16 @@ The source of each rule is in brackets: game data, client code, live check (the 
   `soulwarden-backend` runs (case `prune` of `check_gathering_tool.py`).
 - Not in this stage: fishing (3.6b); the durability loss, the refining, and the crafting (3.7); the observer action of a gather (the
   animation of a different player: type 11, not derived); the yield multiplier (GatheringMultiplier, MULT) and the instant gather
-  (INS); the quest, event, and special nodes (the unsupported rows).
+  (INS); the event and special nodes (the unsupported rows).
+- Stage 1.8c (the quest objects, [Quests](quests.md)): a placement of Master_Quest_Instanced (the variation table Gatherable_Quest) is a quest
+  object. Its capital entry has the InteractTag and InteractOnlyOnQuest of its variant; its row is marked quest. A gather of it needs an Active
+  quest task of the character with the tag (else the refusal `notOnQuest`; live check G1: the client shows no prompt then); it needs no tool
+  and no loot table; its result is the quest drops of the tasks of the character (no roll of the loot root Empty); it writes no node row and
+  sends no node state (each character gathers its own object: InstancedLootType 4). After the commit of each gather the quest system gets
+  the items of the roll (TaskRequireGatherItems), the game event of the row (TaskGameEvent), and the tag of a quest object (TaskInteract).
+- Stage 1.8c (the quest drops): `Quests::plan_drops` gives the quest drops of the tasks of the character whose ItemDropVC names the gatherable
+  row (a skinning of a Boar: the row Boar); they are a part of the result (one transaction with the award rows of AwardOnlyOnce; a full bag
+  refuses the whole gather) and not a part of a kept roll.
 
 ## Commands
 
@@ -181,6 +190,11 @@ The admin interface has the member `gathering` of the state of a character (the 
   Axe", and E sends nothing (no request in the log). Equip the tool and look away and back (a new focus).
 - The prompt of a body (skinning) shows only with the knife in slot 35. A body of a creature that the backend killed by command has it
   too.
+- Stage 1.8c, live L2: the client showed the prompt "E BLACK BOAR" of one boar body (on the third shipwreck), and no prompt for four
+  later boar bodies of `Boar_StarterBeach` at the beach (the white outline of a body was there, the knife was in slot 35, also after
+  a new equip, a look away and back, the gather of a near flint, the reset of `06_boarfeast`, and the lock of
+  `tutorial_skinning_basic`). The client sent no request, so the backend refused nothing. The cause is open (a rule of the
+  client, or a state of the body that the backend does not send).
 - The key of a natural node in a command has `#` (`r_+04_+02#18627`): quote it in the shell. The command also takes the G in 16
   hexadecimal digits.
 - A tree falls at its depletion with this backend (the stage run: also at its second depletion, on a record of the node that the

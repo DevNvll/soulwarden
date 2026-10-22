@@ -483,14 +483,14 @@ bool LootTables::load(const std::string& path) {
         data.buckets.push_back(std::move(bucket));
     }
     // The base rows: [id, creature type, can drop loot, drop chance, ignore the modifier, table, [tags], no experience
-    // and no coin, kill event].
+    // and no coin, kill event, ([categories]: stage 1.8c, the VitalsCategories of the row; a file of before has 9 members)].
     if (!document["bases"].is_array()) {
         return fail("the base vitals rows are not a list");
     }
     for (const json& row : document["bases"]) {
         LootVitals base;
         std::string table;
-        if (!row.is_array() || row.size() != 9 || !read_text(row[0], base.id) || !read_text(row[1], base.creatureType)
+        if (!row.is_array() || (row.size() != 9 && row.size() != 10) || !read_text(row[0], base.id) || !read_text(row[1], base.creatureType)
             || !row[2].is_boolean() || !read_float(row[3], base.dropChance) || !row[4].is_boolean() || !read_text(row[5], table)
             || !row[6].is_array() || !row[7].is_boolean() || !read_text(row[8], base.event)) {
             return fail("a base vitals row does not have the form of the tool");
@@ -505,6 +505,21 @@ bool LootTables::load(const std::string& path) {
                 return fail("a loot tag of the vitals row " + base.id + " is not a text");
             }
             base.tags.push_back(std::move(text));
+        }
+        if (row.size() == 10) {
+            if (!row[9].is_array()) {
+                return fail("the vitals categories of the vitals row " + base.id + " are not a list");
+            }
+            for (const json& category : row[9]) {
+                std::string text;
+                if (!read_text(category, text)) {
+                    return fail("a vitals category of the vitals row " + base.id + " is not a text");
+                }
+                text = lower_text(text);
+                if (!text.empty() && std::find(base.categories.begin(), base.categories.end(), text) == base.categories.end()) {
+                    base.categories.push_back(std::move(text));
+                }
+            }
         }
         if (!table.empty()) {
             const auto found = tableKeys.find(lower_text(table));

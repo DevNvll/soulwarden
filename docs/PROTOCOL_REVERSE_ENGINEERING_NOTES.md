@@ -6966,6 +6966,69 @@ source of that row (the `TimeLimit` data of a task row, 0x3AD7BE0) is open (U-L4
 **A removed objective** [live]: a full active list that drops an objective with no completed entry shows the banner "Objective Failed"
 (apply 0x3A43530, 0x3A559B0).
 
+### 4.54 The quest events: the places of the client, the screens, the abandon and the reset, the quest objects, the kill counter (live proof of stage 1.8c; static proof for the client code and the game data; the rules are project rules with the values of the game data)
+
+Research: `~/Games/soulwarden/work/research/quest-engine.md` (Q1, Q3), `quest-progress.md`, `map.md` 2.1. The system: `world/quests.h`,
+[Quests](systems/quests.md). Live checks of stage 1.8c: `~/Games/soulwarden/work/evidence/quests/18c/implement/live/` and `RESULT.md`.
+Client build 1.400.6031.6004151; all addresses are image-relative. No new message or state goes from the server to the client: the
+changes of a quest are the task elements of the Objectives state (4.53).
+
+**2297** (`TerritoryDetectorComponentServerFacet_AttemptTerritoryUnlock`, writer 0x29C0E70, reader 0x29C0F20; component TerritoryDetector
+of the player slice, `RootPlayer/efc5d83c-a790-6a1f-f6f2-150e05d4d093`) [static; live POI1]:
+
+```text
+target:u64 entity:u64 reference(actor:16 raw, group:u64, local:u64) territory:u16 achievement:u32
+```
+
+`achievement` is the CRC-32 of the lower-case achievement name (0 for none). The client sends it when its player goes into the sphere of
+the DiscoveryRadius of a point of interest (the "discovered" achievement) and into the shape of the point of interest (the "charted"
+achievement) [live POI1: 40142 sends `d66d9b33` at 150 m from its placement and `39eec8c7` at the shape, 1.5 m inside the border of the
+shape of the data]. While the discovery achievement is not set, the client sends 2297 again at each entry (the map of stage 2.7 sets no
+bit).
+
+**6416** (`TerritoryDetectorComponentServerFacet_AttemptTerritoryExit`, writer 0x29C2440) [static; live POI1]: the same body with no
+achievement. The client sends it when its player leaves the sphere and when it leaves the shape, with no difference in the body (live
+POI1: two 6416 for 40140). The backend uses 2297 and 6416 only as a cue and a log line: the membership of a place task is the shape of the
+data and the accepted position of the server (a client report is no proof of a place).
+
+**The shape of a point of interest** [data; live POI1]: `objects/worldprisms/pois/REGION/poi_ID_NAME.vshapec`: `u32 0, u32 count`,
+`count` points of 3 `f32` (x, y, z; the z is 0), then 20 bytes. The points are local to the POI placement (`POI_CapitalPlot` of the
+capitals of the region, `pois.capitals.json`); the height of the prism is not in the file (the tool uses 180 m). A placement is the origin
+of a shape when the entries of `region.metadata` with the territory id are in the shape and the entries without it are not (6 m tolerance
+at the border: the metadata has entries 0 to 5.4 m on the wrong side). 476 of 761 shape files of the build get an origin. The tool:
+`tools/gamedata/pois.py`, the file `poi-data.json`.
+
+**2617** (`ObjectivesComponentServerFacet_NotifyOpenUiScreen`, sender 0x3A055A0, caller 0x3A50F50; the Objectives facet of the player,
+`RootPlayer/a42a47db-4f14-41c6-81d1-19a95ba99f84`) [static; live L1, L2]: `target:u64 entity:u64 screen:u32`. `screen` is the CRC-32 of the
+lower-case name of the UI state: `a1126b78` is "hud" (the UIScreenTag `HUD` of the quest data). The client sends it at the world entry
+(`a1126b78`, then `8d922292`), when the journal opens (`002f27e8`, then `6cb0696c`), and again with `a1126b78` when it closes (live L2;
+the names of the other three values are open). TaskOpenUiScreen counts the CRC of its UIScreenTag.
+
+**3836** (`ObjectivesComponentServerFacet_AbandonSingleObjective`, sender 0x3A04130, reader 0x39E8A10) [static; live L2]:
+`target:u64 entity:u64 instance:u64`. The journal shows the button "Abandon" for an objective with CanBeAbandoned 1 (a faction mission in
+live L2) and asks "Are you sure you want to abandon your current mission?"; "Yes" sends 3836 with the instance. After the removal of the
+instance the journal shows the section with 0 objectives and the banner "PvP Missions Failed" (live L2, `AB-3-after.png`).
+
+**5600** (`ObjectivesComponentServerFacet_ResetObjective`, handler 0x3A62210, reader 0x39E8A10) [static; live L2]: `target:u64 entity:u64
+instance:u64`. The journal shows the button "Reset" for the main story objectives (CanBeAbandoned 0) and asks "Are you sure that you want
+to reset your current mission? Resetting will result in the loss of all progress."; "Yes" sends 5600. The backend ends the instance and
+adds a new instance of the objective; the client shows the banner of a new quest ("MAIN STORY QUEST / SOUL SURVIVOR", live L2,
+`RS-2-after.png`).
+
+**A quest object** [static 0x8261FC0; data `javelindata_variations_gatherables_quest`; live G1 of stage 1.8c]: a placement of
+`slices/gatherables/master_quest_instanced.dynamicslice` shows its prompt, its beam, and its world pin only while the character has an
+Active task with the InteractTag of its variation (`IO_MSQ_Treasure_A` of `06_pillageship` task 5). The client sends the request of the
+gathering (4.44) for it. With the new backend the gather completes after 1 s and gives the quest drop (`0601_0104_Treasure_A`, the loot
+notice "+1 Champlain's Astrolabe"); the HUD marks the task line, and the object goes out of the view of that character only (live L2,
+`G1-L2-c-after.png`). After the third object the root of `06_pillageship` is complete, and the HUD shows "Talk to Grace O'Malley" (the
+hand-in of stage 1.8b; `G1-L2-f-all.png`).
+
+**The kill counter** [live K1]: the kill of a `Corrupted_Sailor_1H_Club` ("Corrupted Mariner") by a character with the credit changes the
+task element of `06_crewmates` task 8 (progress 1 of 5); the HUD shows "1 / 5 - Defeat Corrupted Mariners" (`K1-1of5.png`), then
+"2 / 5" (`K1-2of5.png`). A kill while the creatures ignore the character (`tools/world ignore on`) gives no credit and so no count. When
+the character leaves the place of the StayActive task 6 (TaskGoToPOITag), task 6 returns to Active, task 8 becomes Inactive with its
+progress, and the HUD shows the text of task 6; in the place again, task 8 is Active with progress 1 (`K1-back-1of5.png`).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

@@ -306,6 +306,10 @@ bool GatheringData::parse(const std::string& text) {
             }
             row.unsupported.push_back(cause.get<std::string>());
         }
+        // Stage 1.8c: a quest gatherable (a member of the tool of stage 1.8c; a file of before has none).
+        if (entry.contains("quest") && !flag_of(entry, "quest", row.quest)) {
+            return fail("the member quest of the row " + row.id + " is not a flag");
+        }
         // The item of the restriction (code review of stage 3.6a, finding GA-R5). A file of before the review can have no member: then
         // the row names no item that the loader can check.
         const bool itemKnown = entry.contains("item");
@@ -362,7 +366,7 @@ bool GatheringData::parse(const std::string& text) {
         m_events.emplace(lower_ascii(id), std::move(event));
     }
     for (const GatherableRow& row : m_rows) {
-        if (!row.event.empty() && m_events.count(lower_ascii(row.event)) == 0) {
+        if (!row.event.empty() && !row.quest && m_events.count(lower_ascii(row.event)) == 0) {
             return fail("the row " + row.id + " names the event " + row.event + ", and the file does not have it");
         }
     }
@@ -456,7 +460,15 @@ bool GatheringData::parse(const std::string& text) {
             || !index_in(entry[1], m_rows.size(), row, false)) {
             return false;
         }
-        link = GatheringLink{static_cast<std::uint32_t>(templateIndex), static_cast<std::uint32_t>(row)};
+        link = GatheringLink{static_cast<std::uint32_t>(templateIndex), static_cast<std::uint32_t>(row), {}, false};
+        // Stage 1.8c: [template, row, interactTag, onlyOnQuest] for a quest object.
+        if (entry.size() >= 4) {
+            if (!entry[2].is_string() || !entry[3].is_boolean()) {
+                return false;
+            }
+            link.interactTag = lower_ascii(entry[2].get<std::string>());
+            link.onlyOnQuest = entry[3].get<bool>();
+        }
         return true;
     };
     if (!document["capitals"].is_object()) {
@@ -487,7 +499,7 @@ bool GatheringData::parse(const std::string& text) {
         } catch (const std::exception&) {
             return fail("the creature slice " + key + " has no sub id");
         }
-        m_creatures[{asset, sub}] = GatheringLink{static_cast<std::uint32_t>(templateIndex), static_cast<std::uint32_t>(row)};
+        m_creatures[{asset, sub}] = GatheringLink{static_cast<std::uint32_t>(templateIndex), static_cast<std::uint32_t>(row), {}, false};
     }
     if (!document["regions"].is_array()) {
         return fail("the member regions is not a list");

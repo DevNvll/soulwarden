@@ -1346,6 +1346,87 @@ ItemError Inventory::equip_into(Carried& items,
     return ItemError::none;
 }
 
+namespace {
+
+bool same_id(std::string_view one, std::string_view two) {
+    return one.size() == two.size() && std::equal(one.begin(), one.end(), two.begin(), [](char left, char right) {
+               return std::tolower(static_cast<unsigned char>(left)) == std::tolower(static_cast<unsigned char>(right));
+           });
+}
+
+} // namespace
+
+Inventory::Plan Inventory::plan_quest_items(const std::string& characterId, const std::vector<GrantItem>& gives,
+                                            const std::vector<std::pair<std::string, std::uint32_t>>& takes, std::vector<std::uint32_t>* taken) {
+    if (taken != nullptr) {
+        taken->assign(takes.size(), 0);
+    }
+    return stage(characterId, [&](Carried& items, Touched& touched) {
+        for (std::size_t position = 0; position < takes.size(); ++position) {
+            std::uint32_t left = takes[position].second;
+            const auto take_from = [&](BagSlot& slot) {
+                if (left == 0 || !slot.item || !same_id(slot.item->itemId, takes[position].first)) {
+                    return false;
+                }
+                const std::uint32_t part = std::min(left, slot.item->quantity);
+                left -= part;
+                slot.item->quantity -= part;
+                if (slot.item->quantity == 0) {
+                    slot.item.reset();
+                }
+                slot.action = sync::kItemRemoved;
+                return true;
+            };
+            for (std::uint32_t slot = 0; slot < items.bag.slots.size(); ++slot) {
+                if (take_from(items.bag.slots[slot])) {
+                    touched.bag.insert(slot);
+                }
+            }
+            for (std::uint32_t slot = paperdoll::kQuickFirst; slot <= paperdoll::kQuickLast; ++slot) {
+                const auto found = items.equipment.slots.find(slot);
+                if (found != items.equipment.slots.end() && take_from(found->second)) {
+                    touched.equipment.insert(slot);
+                }
+            }
+            if (taken != nullptr) {
+                (*taken)[position] = takes[position].second - left;
+            }
+        }
+        for (const GrantItem& give : gives) {
+            GiveOptions options;
+            options.action = sync::kItemGathered;
+            options.gearScore = give.gearScore;
+            const ItemError error = give_into(items.bag, touched.bag, give.itemId, give.quantity, options);
+            if (error != ItemError::none) {
+                return error;
+            }
+        }
+        return ItemError::none;
+    });
+}
+
+std::uint64_t Inventory::count(const Entity& entity, std::string_view itemId) {
+    std::uint64_t total = 0;
+    for (const BagSlot& slot : entity.bag.slots) {
+        total += slot.item && same_id(slot.item->itemId, itemId) ? slot.item->quantity : 0;
+    }
+    for (const auto& [number, slot] : entity.equipment.slots) {
+        total += slot.item && same_id(slot.item->itemId, itemId) ? slot.item->quantity : 0;
+    }
+    return total;
+}
+
+bool Inventory::equipped(const Entity& entity, std::string_view itemId, std::uint32_t minGearScore) {
+    return std::any_of(entity.equipment.slots.begin(), entity.equipment.slots.end(), [&](const auto& entry) {
+        return entry.second.item && same_id(entry.second.item->itemId, itemId) && entry.second.item->gearScore >= minGearScore;
+    });
+}
+
+bool Inventory::quest_item(std::string_view itemId) const {
+    const gamedata::ItemDefinition* definition = m_catalog != nullptr ? m_catalog->find(itemId) : nullptr;
+    return definition != nullptr && definition->nonRemovable;
+}
+
 Inventory::Plan Inventory::plan_build(const std::string& characterId, const std::vector<BuildItem>& build) {
     return stage(characterId, [&](Carried& items, Touched& touched) { return build_into(items, touched, build); });
 }

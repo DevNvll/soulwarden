@@ -78,6 +78,9 @@
 //                              player gets it; the character of the command names who gives it
 //          apply_backstory     template (a backstory template of the quest data, Level60_PTR): its achievements and its start
 //                              objectives (stage 1.8a, decision D2 option C), not its level, items, or faction
+//          abandon_quest       instance (16 hexadecimal digits): the abandon of an active quest (stage 1.8c: the undo of its
+//                              achievement actions, the return of its items, its pin; CanBeAbandoned 0 gives 409)
+//          reset_quest         instance: the reset of an active quest (stage 1.8c: a new instance; the award rows stay)
 //          apply_preset        preset (the name of a build preset, bow-boltcaster), variant (pve or pvp; no value: the
 //                              first variant): the whole build of the preset (stage B0): the equipment (the old items go
 //                              into the bag), the level, the attributes, the masteries, the trees, the bars, and the
@@ -191,6 +194,9 @@ constexpr NamedCommand kCommands[] = {
     // Stage 1.8a: a backstory template of the game data for the character (decision D2 option C): its achievements and its start
     // objectives. The user selects the template (GET /admin/v1/catalog/backstories).
     {"apply_backstory", commands::apply_backstory},
+    // Stage 1.8c: the abandon and the reset of a quest of the character (the rules of the client messages 3836 and 5600).
+    {"abandon_quest", commands::abandon_quest},
+    {"reset_quest", commands::reset_quest},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */

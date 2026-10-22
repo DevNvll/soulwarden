@@ -166,6 +166,11 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand apply_backstory(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand grant_objective(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand set_achievement(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+// Stage 1.8c: abandon_quest and reset_quest: `instance` (16 hexadecimal digits: an active instance of the character in the world): the rule of
+// the client messages 3836 and 5600 (world/quests.h: the undo of the achievement actions, the return of the items, the pin; a reset makes a
+// new instance and keeps the award rows). An objective with CanBeAbandoned 0 refuses the abandon (409).
+[[nodiscard]] WorldCommand abandon_quest(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand reset_quest(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /** @return The quests of a character (world thread): each quest with its tasks and its pin, the one-time grants, and the counts. */
 [[nodiscard]] std::optional<nlohmann::json> quests_view(world::World& world, const std::string& character);
 /** @return The backstory templates of the quest data (world thread): each one with its start objectives (and if the data has each one). */

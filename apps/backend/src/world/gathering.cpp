@@ -152,6 +152,8 @@ const char* gather_refusal_text(GatherRefusal refusal) {
         return "the loot tables have no table of the root of the row";
     case GatherRefusal::noSkill:
         return "the progression tables have no trade skill of the event of the row";
+    case GatherRefusal::notOnQuest:
+        return "the object is a quest object, and no active quest task of the character has its tag";
     }
     return "?";
 }
@@ -345,6 +347,8 @@ std::optional<Gathering::Target> Gathering::target_of(const InteractionContext& 
         target.group = context.object->group;
         target.source = kCapitalSource;
         target.position = context.object->position;
+        target.interactTag = link->interactTag;
+        target.onlyOnQuest = link->onlyOnQuest;
         return target;
     }
     if (const std::optional<gamedata::NaturalNode> node = m_data->natural(context.instance)) {
@@ -577,7 +581,12 @@ InteractionVerdict Gathering::begin(Entity& character, const InteractionContext&
             return refuse(GatherRefusal::depleted, character, key, row.id);
         }
     }
-    if (is_depleted(target->key)) {
+    // Stage 1.8c: a quest object is open only while an active task of the character has its tag (InteractOnlyOnQuest; client 0x8261FC0,
+    // live check G1). Each character gathers its own object: no shared depletion (InstancedLootType 4).
+    if (target->onlyOnQuest && !m_world.quests().quest_object_open(character, target->interactTag)) {
+        return refuse(GatherRefusal::notOnQuest, character, key, row.id + ": " + target->interactTag);
+    }
+    if (!row.quest && is_depleted(target->key)) {
         return refuse(GatherRefusal::depleted, character, key, row.id);
     }
     std::string detail;
@@ -585,13 +594,15 @@ InteractionVerdict Gathering::begin(Entity& character, const InteractionContext&
         return refuse(*refusal, character, key, row.id + ": " + detail);
     }
     const gamedata::LootTables* tables = m_world.rewards().tables();
-    if (tables == nullptr || !tables->table_index(row.loot)) {
+    if (!row.quest && (tables == nullptr || !tables->table_index(row.loot))) {
         return refuse(GatherRefusal::noLoot, character, key, row.id + ": " + row.loot);
     }
     if (!row.event.empty()) {
+        // Stage 1.8c: the event of a quest object is a game event of the quests (MSQ_Treasure_B_interact has no row of the event tables):
+        // no trade skill experience.
         const gamedata::GatheringEvent* event = m_data->event(row.event);
         const gamedata::ProgressionTables* progression = m_world.options().progressionTables;
-        if (event == nullptr || (event->amount > 0 && (progression == nullptr || !progression->loaded()
+        if ((event == nullptr && !row.quest) || (event != nullptr && event->amount > 0 && (progression == nullptr || !progression->loaded()
                                                        || progression->progression(event->progression) == nullptr))) {
             return refuse(GatherRefusal::noSkill, character, key, row.id + ": " + row.event);
         }
@@ -750,7 +761,9 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
     std::vector<Rest>& rests = m_rests[characterId];
     std::vector<KeptRoll>& kept = m_kept[characterId];
     const auto roll = std::find_if(kept.begin(), kept.end(), [&](const KeptRoll& entry) { return entry.node == work.node; });
-    if (roll != kept.end() && roll->generation == work.nodeGeneration) {
+    if (row.quest) {
+        // Stage 1.8c: a quest object has no loot of its own (the loot table Empty): its result is the quest drops below.
+    } else if (roll != kept.end() && roll->generation == work.nodeGeneration) {
         items = roll->items;
     } else {
         LootContext loot;
@@ -763,6 +776,14 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
         ++m_counts.rolls;
     }
     const gamedata::GatheringEvent* event = row.event.empty() ? nullptr : m_data->event(row.event);
+    // Stage 1.8c: the quest drops of the character (TaskGatherItems, TaskGatherAndReturnItems: ItemDropVC names the gatherable row). They
+    // are a part of the result (one transaction; a full bag refuses the whole gather) and not a part of a kept roll (a later gather rolls
+    // them again).
+    const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, true, {row.id});
+    std::vector<GrantItem> given = items;
+    for (const QuestDrop& drop : drops) {
+        given.push_back(GrantItem{drop.itemId, drop.quantity, std::nullopt, {}});
+    }
     // One transaction of the store (MP-7): the items, the trade skill experience, and the row of the depleted node.
     const Bag bagBefore = character.bag;
     const Wallet walletBefore = character.wallet;
@@ -793,20 +814,21 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
     next.depletedAt = wall_ms(now);
     state::Store::Batch batch(m_world.store());
     bool written = batch.open();
-    ItemResult given;
-    if (written && !items.empty()) {
-        given = m_world.inventory().grant(characterId, items, 0, nullptr, true);
-        written = given.error != ItemError::storeFailed;
+    ItemResult grant;
+    if (written && !given.empty()) {
+        grant = m_world.inventory().grant(characterId, given, 0, nullptr, true);
+        written = grant.error != ItemError::storeFailed;
     }
     // A full bag, or an item of the roll that the item catalog does not have: the gather is refused before the commit (decision of the
     // orchestrator: no material, no experience, no depletion; the node stays). The roll stays with the character for its next
     // completion on this node (no item is lost, nothing is rolled again; the rule of the chests, finding CH-R3).
-    const bool full = given.error == ItemError::bagFull || given.error == ItemError::unknownItem || given.error == ItemError::noItemType;
+    const bool full = grant.error == ItemError::bagFull || grant.error == ItemError::unknownItem || grant.error == ItemError::noItemType;
     if (written && !full && event != nullptr && event->amount > 0) {
         const SkillResult skill = m_world.skills().add_experience(characterId, event->progression, event->amount);
         written = skill.ok();
     }
-    if (written && !full && target->kind != NodeKind::body) {
+    written = written && !full && m_world.quests().write_drops(character, drops);
+    if (written && !full && target->kind != NodeKind::body && !row.quest) {
         state::GatheringNodeRow stored;
         stored.key = next.key;
         stored.source = next.source;
@@ -833,8 +855,8 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
                        kept.end());
             kept.push_back(KeptRoll{work.node, work.nodeGeneration, items});
             log::write("world: gathering: %s character %s for the roll of %s (%s): no item, no experience, the node stays",
-                       given.error == ItemError::bagFull ? "the bag has no place for" : "the item catalog has no item of the roll of",
-                       characterId.c_str(), work.node.c_str(), item_list(items).c_str());
+                       grant.error == ItemError::bagFull ? "the bag has no place for" : "the item catalog has no item of the roll of",
+                       characterId.c_str(), work.node.c_str(), item_list(given).c_str());
         } else {
             ++m_counts.storeFailures;
             log::write("world: gathering: the store did not write the gather of %s by character %s: no item, no experience, no depletion",
@@ -854,6 +876,17 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
     }
     rests.erase(std::remove_if(rests.begin(), rests.end(), [&](const Rest& rest) { return rest.node == work.node; }), rests.end());
     m_work.erase(characterId);
+    m_world.quests().drops_done(character, drops);
+    if (row.quest) {
+        // Stage 1.8c: a quest object stays for the other characters (InstancedLootType 4): no depletion, no node state.
+        ++m_counts.completions;
+        m_counts.itemsGiven += given.size();
+        set_gather(character, gathering_rules::kStatusDone, 0.0F, work.parts.speed, false, kNoTarget);
+        log::write("world: gathering: character %s gathered the quest object %s (%s): %s; the object stays for the other characters",
+                   characterId.c_str(), target->key.c_str(), row.id.c_str(), item_list(given).c_str());
+        quest_events(character, row, items, target->interactTag);
+        return;
+    }
     GatherNode& stored = m_nodes[next.key];
     stored = next;
     if (stored.kind == NodeKind::body) {
@@ -866,7 +899,7 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
     publish(stored);
     ++m_counts.completions;
     ++m_counts.depletions;
-    m_counts.itemsGiven += items.size();
+    m_counts.itemsGiven += given.size();
     m_counts.experience += event != nullptr ? event->amount : 0;
     set_gather(character, gathering_rules::kStatusDone, 0.0F, work.parts.speed, false, kNoTarget);
     const std::string after = stored.kind == NodeKind::body
@@ -876,8 +909,37 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
                                        ? std::to_string(event->amount) + " " + event->progression + " experience"
                                        : std::string("no experience");
     log::write("world: gathering: character %s gathered the %s node %s (%s): %s, %s; %s (generation %llu)", characterId.c_str(),
-               node_kind_text(stored.kind), stored.key.c_str(), row.id.c_str(), item_list(items).c_str(), experience.c_str(), after.c_str(),
+               node_kind_text(stored.kind), stored.key.c_str(), row.id.c_str(), item_list(given).c_str(), experience.c_str(), after.c_str(),
                static_cast<unsigned long long>(stored.generation));
+    quest_events(character, row, items, target->interactTag);
+}
+
+void Gathering::quest_events(Entity& character, const gamedata::GatherableRow& row, const std::vector<GrantItem>& items,
+                             const std::string& interactTag) {
+    // Stage 1.8c (finding G12 and G14 of research quest-engine-3.md): the gather of the quests after the commit. TaskRequireGatherItems counts
+    // the items of the roll (not the quest drops: 0x825FED0); the game event of the row (GameEventID: MSQ_Treasure_A_interact) applies
+    // (TaskGameEvent); the tag of a quest object is an interaction that completed (TaskInteract).
+    if (!items.empty()) {
+        QuestEvent gathered;
+        gathered.kind = QuestEventKind::gather;
+        for (const GrantItem& item : items) {
+            gathered.keys.push_back(item.itemId);
+            gathered.amounts.push_back(item.quantity);
+        }
+        m_world.quests().event(character, gathered);
+    }
+    if (!row.event.empty()) {
+        QuestEvent applied;
+        applied.kind = QuestEventKind::gameEvent;
+        applied.keys = {row.event};
+        m_world.quests().event(character, applied);
+    }
+    if (!interactTag.empty()) {
+        QuestEvent interacted;
+        interacted.kind = QuestEventKind::interact;
+        interacted.keys = {interactTag};
+        m_world.quests().event(character, interacted);
+    }
 }
 
 std::chrono::milliseconds Gathering::respawn_time(const gamedata::GatherableRow& row) {

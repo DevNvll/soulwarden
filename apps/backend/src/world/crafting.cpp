@@ -794,6 +794,7 @@ CraftVerdict Crafting::request(SessionId session, const CraftRequest& request) {
     job.outputQty = output.quantity;
     job.accepted = m_world.clock().now();
     job.craftAll = recipe->craftAll;
+    job.refining = recipe->refining;
     job.extraUnits = yield.extraUnits;
     job.maxExtra = yield.maxExtra;
     job.progression = experience.progression;
@@ -1022,6 +1023,21 @@ void Crafting::run(const std::string& characterId, std::uint64_t serial) {
             character->craftCooldowns[character->craftJob->recipeCrc] = *cooldown;
             m_world.touch(character->id, ComponentKey::crafting);
             ++m_counts.cooldownWrites;
+        }
+        // The craft of the quests (stage 1.8c): a successful job after its commit (TaskCraftRecipe, TaskCraftMultipleRecipes, or
+        // TaskRefineRecipe: the recipe, the crafted units, the gear score of the output; client 0x825DDE0, 0x825E080).
+        {
+            const CraftJob& job = *character->craftJob;
+            QuestEvent crafted;
+            crafted.kind = job.refining ? QuestEventKind::refine : QuestEventKind::craft;
+            crafted.keys = {job.recipe};
+            crafted.amounts = {job.outputQty + extra};
+            crafted.gearScore = job.gearScore.value_or(0);
+            m_world.quests().event(*character, crafted);
+            character = m_world.find_character(characterId);
+            if (character == nullptr || !character->craftJob) {
+                return;
+            }
         }
         CraftJob& done = *character->craftJob;
         ++done.done;
