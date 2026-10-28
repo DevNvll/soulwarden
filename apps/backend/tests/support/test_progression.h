@@ -206,7 +206,7 @@ struct ClientTrees {
         std::map<std::uint32_t, Pool> next;
         for (const WirePool& pool : wire.pools) {
             next[pool.id].free = pool.free;
-            fault = fault || pool.category != 1;
+            fault = fault || (pool.category != 1 && pool.category != 2); // 2: a territory pool (stage QG1).
         }
         if (wire.nodes.empty()) {
             // The client gives the levels that it had back to each pool of the fragment.

@@ -1,6 +1,7 @@
 #include "gamedata/progression_tables.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <fstream>
@@ -24,6 +25,19 @@ bool read_number(const json& value, std::uint32_t& number) {
         return false;
     }
     number = static_cast<std::uint32_t>(wide);
+    return true;
+}
+
+/** Stage QG1: a number of the file that is an f32 of the game data (finite, 0 or more). */
+bool read_float(const json& value, float& number) {
+    if (!value.is_number()) {
+        return false;
+    }
+    const double wide = value.get<double>();
+    if (!std::isfinite(wide) || wide < 0.0 || wide > 3.0e38) {
+        return false;
+    }
+    number = static_cast<float>(wide);
     return true;
 }
 
@@ -138,6 +152,19 @@ std::uint32_t progression_id(std::string_view text) {
     return item_id_crc(text);
 }
 
+float card_bonus(const TerritoryCard& card, std::uint32_t level) {
+    // Client 0x5C51100: r = (double)(1.0f - reduction), initial = (double)initialBonus; for i = 1 to level: increment =
+    // max((float)(pow(r, i - 1) * initial), minValue); the sum is f32. The loop counter of the client is a u16.
+    const double ratio = static_cast<double>(1.0F - card.reduction);
+    const double initial = static_cast<double>(card.initialBonus);
+    float total = 0.0F;
+    for (std::uint32_t step = 1; step <= std::min<std::uint32_t>(level, 0xFFFF); ++step) {
+        const float increment = static_cast<float>(std::pow(ratio, static_cast<double>(step - 1)) * initial);
+        total += increment > card.minValue ? increment : card.minValue;
+    }
+    return total;
+}
+
 bool ProgressionTables::load(const std::string& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -155,10 +182,11 @@ bool ProgressionTables::load(const std::string& path) {
     // The format first (code review of stage 1.1b, finding F5): format 1 (or no member: a file of stage 1.6) has rows of four
     // values and no expansion; format 2 (stage 1.1b) has rows of five values and the three lists of the ownership.
     std::uint32_t format = 1;
-    if (document.contains("format") && (!read_number(document["format"], format) || format < 1 || format > 3)) {
+    if (document.contains("format") && (!read_number(document["format"], format) || format < 1 || format > 4)) {
         return false;
     }
-    // Format 3 (stage 1.8d) is format 2 with the territory standings.
+    // Format 3 (stage 1.8d) is format 2 with the territory standings. Format 4 (stage QG1) adds the experience modifier of each standing,
+    // the cards of each rank of the standing table, and the territory cards.
     const bool format2 = format >= 2;
     if (format2 != (document.contains("expansions") || document.contains("entitlements") || document.contains("achievements"))) {
         return false;
@@ -234,6 +262,7 @@ bool ProgressionTables::load(const std::string& path) {
         return false;
     }
     std::map<std::string, std::vector<std::uint32_t>> xpRewards;
+    std::map<std::string, std::vector<std::array<std::string, 4>>> cardOffers;
     for (const auto& [name, table] : document["rankTables"].items()) {
         RankTable ranks;
         if (!table.is_object() || !table.contains("experience") || !read_numbers(table["experience"], ranks.experience)
@@ -243,18 +272,72 @@ bool ProgressionTables::load(const std::string& path) {
         if (table.contains("xpReward") && (!read_numbers(table["xpReward"], xpRewards[name]) || xpRewards[name].size() != ranks.experience.size())) {
             return false;
         }
+        // Stage QG1 (format 4): the four cards of each rank (an empty text: no card).
+        if (table.contains("cards")) {
+            if (format < 4 || !table["cards"].is_array() || table["cards"].size() != ranks.experience.size()) {
+                return false;
+            }
+            for (const json& offer : table["cards"]) {
+                std::array<std::string, 4> texts;
+                if (!offer.is_array() || offer.size() != texts.size()) {
+                    return false;
+                }
+                for (std::size_t index = 0; index < texts.size(); ++index) {
+                    if (!offer[index].is_string()) {
+                        return false;
+                    }
+                    texts[index] = offer[index].get<std::string>();
+                }
+                cardOffers[name].push_back(std::move(texts));
+            }
+        }
         rankTables.emplace(name, std::move(ranks));
     }
-    // Stage 1.8d (format 3): the standings [territory, maxRank, rankTable, pool, autoRankUp].
-    if (format == 3) {
+    // Stage QG1 (format 4): the territory cards [id, category, bonusId, maxLevel, doNotSpend, requiredRank, initialBonus, reduction,
+    // minValue]. A card of the offers of a rank must be one of them.
+    if (format >= 4) {
+        if (!document.contains("territoryCards") || !document["territoryCards"].is_array()) {
+            return false;
+        }
+        std::set<std::uint32_t> cardIds;
+        for (const json& row : document["territoryCards"]) {
+            TerritoryCard card;
+            std::uint32_t kind = 0;
+            if (!row.is_array() || row.size() != 9 || !row[0].is_string() || !row[1].is_string() || !read_number(row[2], kind)
+                || !read_number(row[3], card.maxLevel) || !row[4].is_boolean() || !read_number(row[5], card.requiredRank)
+                || !read_float(row[6], card.initialBonus) || !read_float(row[7], card.reduction) || !read_float(row[8], card.minValue)) {
+                return false;
+            }
+            card.id = row[0].get<std::string>();
+            card.category = row[1].get<std::string>();
+            card.doNotSpend = row[4].get<bool>();
+            // The Territory Bonus Id of the data is the kind (1 GainStanding to 10 HousePurchase); another id is a card of no known kind.
+            card.kind = kind <= static_cast<std::uint32_t>(TerritoryBonus::housePurchase) ? static_cast<TerritoryBonus>(kind) : TerritoryBonus::none;
+            if (card.id.empty() || card.maxLevel == 0 || card.maxLevel > kLargestRank || !cardIds.insert(progression_id(card.id)).second) {
+                return false;
+            }
+            data.territoryCards.push_back(std::move(card));
+        }
+        for (const auto& [name, offers] : cardOffers) {
+            for (const auto& offer : offers) {
+                for (const std::string& text : offer) {
+                    if (!text.empty() && cardIds.count(progression_id(text)) == 0) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    // Stage 1.8d (format 3): the standings [territory, maxRank, rankTable, pool, autoRankUp]; format 4: and xpModifier.
+    if (format >= 3) {
         if (!document.contains("standings") || !document["standings"].is_array()) {
             return false;
         }
         for (const json& row : document["standings"]) {
             StandingRow standing;
             std::uint32_t territory = 0;
-            if (!row.is_array() || row.size() != 5 || !row[0].is_string() || !row[2].is_string() || !row[3].is_string() || !row[4].is_boolean()
-                || !read_number(row[1], standing.maxRank)) {
+            if (!row.is_array() || row.size() != (format >= 4 ? 6U : 5U) || !row[0].is_string() || !row[2].is_string() || !row[3].is_string()
+                || !row[4].is_boolean() || !read_number(row[1], standing.maxRank) || (format >= 4 && !read_float(row[5], standing.xpModifier))) {
                 return false;
             }
             standing.id = row[0].get<std::string>();
@@ -269,6 +352,15 @@ bool ProgressionTables::load(const std::string& path) {
             standing.xpReward = xpRewards[row[2].get<std::string>()];
             standing.pool = row[3].get<std::string>();
             standing.autoRankUp = row[4].get<bool>();
+            if (const auto offers = cardOffers.find(row[2].get<std::string>()); offers != cardOffers.end()) {
+                for (const auto& offer : offers->second) {
+                    std::array<std::uint32_t, 4> ids{};
+                    for (std::size_t index = 0; index < ids.size(); ++index) {
+                        ids[index] = offer[index].empty() ? 0 : progression_id(offer[index]);
+                    }
+                    standing.offers.push_back(ids);
+                }
+            }
             data.standings.push_back(std::move(standing));
         }
     }
@@ -387,10 +479,21 @@ void ProgressionTables::build_keys() {
         m_progressionKeys.emplace(row.wireId, position);
     }
     m_standingKeys.clear();
+    m_standingPoolKeys.clear();
     for (std::size_t position = 0; position < m_data.standings.size(); ++position) {
         StandingRow& row = m_data.standings[position];
         row.wireId = progression_id(row.id);
+        row.poolId = row.pool.empty() ? 0 : progression_id(row.pool);
         m_standingKeys.emplace(row.wireId, position);
+        if (row.poolId != 0) {
+            m_standingPoolKeys.emplace(row.poolId, position);
+        }
+    }
+    m_cardKeys.clear();
+    for (std::size_t position = 0; position < m_data.territoryCards.size(); ++position) {
+        TerritoryCard& card = m_data.territoryCards[position];
+        card.wireId = progression_id(card.id);
+        m_cardKeys.emplace(card.wireId, position);
     }
     for (std::size_t position = 0; position < m_data.nodes.size(); ++position) {
         AbilityNode& node = m_data.nodes[position];
@@ -476,6 +579,25 @@ const StandingRow* ProgressionTables::standing(std::uint16_t territory) const {
 const StandingRow* ProgressionTables::standing_of(std::uint32_t wireId) const {
     const auto found = m_standingKeys.find(wireId);
     return found != m_standingKeys.end() ? &m_data.standings[found->second] : nullptr;
+}
+
+const StandingRow* ProgressionTables::standing_of_pool(std::uint32_t poolId) const {
+    const auto found = m_standingPoolKeys.find(poolId);
+    return found != m_standingPoolKeys.end() ? &m_data.standings[found->second] : nullptr;
+}
+
+const TerritoryCard* ProgressionTables::territory_card(std::uint32_t wireId) const {
+    const auto found = m_cardKeys.find(wireId);
+    return found != m_cardKeys.end() ? &m_data.territoryCards[found->second] : nullptr;
+}
+
+const TerritoryCard* ProgressionTables::territory_card(TerritoryBonus kind) const {
+    for (const TerritoryCard& card : m_data.territoryCards) {
+        if (card.kind == kind) {
+            return &card;
+        }
+    }
+    return nullptr;
 }
 
 const ProgressionRow* ProgressionTables::progression(std::string_view id) const {

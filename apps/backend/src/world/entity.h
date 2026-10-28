@@ -500,6 +500,20 @@ struct TreeNode {
 };
 
 /**
+ * Stage QG1: the territory pool of one territory of a character (docs/systems/progression-and-skills.md, the standing). A standing rank
+ * gives one token of the pool (client 0x3CB7500: 1 + AdditionalProgressionPoints, and the standing rows have no additional points), and a
+ * card choice spends one (message 4040). The tokens are not stored: the free tokens are the standing rank minus the spent levels.
+ */
+struct TerritoryPool {
+    /** The id on the wire of the standing of the territory (the CRC-32 of "6"). */
+    std::uint32_t standing{0};
+    /** The level of each card of the character (the key is the id of the card on the wire). */
+    std::map<std::uint32_t, std::uint16_t> cards;
+    /** The levels of the cards that spend a token (no DoNotSpendPoint: the count helper of the client 0x3CF0600). */
+    std::uint32_t spent{0};
+};
+
+/**
  * The weapon masteries, the weapon trees, the ability bars, and the trade skills of a
  * character. The skill system changes them (world/skills.h). Each key is an id on the wire:
  * the CRC-32 of the lower-case id text of the game table (protocol notes 4.13). The id of a
@@ -512,6 +526,12 @@ struct SkillSet {
     std::map<std::uint32_t, std::map<std::uint32_t, TreeNode>> pools;
     /** The three active abilities of the bar of each weapon. 0: the place is empty. */
     std::map<std::uint32_t, std::array<std::uint32_t, 3>> bars;
+    /**
+     * Stage QG1: the territory pool of each territory standing of the tables (TerritoryRankBonus_<territory>; the key is the id of the
+     * pool on the wire): the cards of the character. Each pool is in each points state (slot 67), also with no card: the client removes a
+     * pool that a state does not have.
+     */
+    std::map<std::uint32_t, TerritoryPool> territoryPools;
     /**
      * World revision of the last bar request of a client that the backend refused. 0: none. It
      * is not a value of the character: the store does not have it. A session that got the
@@ -542,6 +562,15 @@ struct SkillSet {
         const std::uint32_t total = rank(pool);
         const std::uint32_t spent = spent_points(pool);
         return spent >= total ? 0 : total - spent;
+    }
+    /** Stage QG1: @return The free tokens of a territory pool: the rank of its standing minus the spent levels. 0 for no such pool. */
+    [[nodiscard]] std::uint32_t free_tokens(std::uint32_t pool) const {
+        const auto found = territoryPools.find(pool);
+        if (found == territoryPools.end()) {
+            return 0;
+        }
+        const std::uint32_t total = rank(found->second.standing);
+        return found->second.spent >= total ? 0 : total - found->second.spent;
     }
 };
 

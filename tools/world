@@ -85,6 +85,14 @@ Usage:
                                                 --materials: the item of each ingredient in the order of the recipe (the
                                                 selection of the client; "-": the first member of a category)
   tools/world azoth CHARACTER AMOUNT            the Azoth balance of a character (stage 3.7c; 0 to 2500, the cap of the data)
+  tools/world standing CHARACTER [TERRITORY AMOUNT]
+                                                stage QG1: the territory standings of a character (the rank, the points, the free
+                                                tokens, the cards with their levels and bonus values, the territory at its
+                                                position); with TERRITORY (6 is Windsward) and AMOUNT: a gain with the rules of a
+                                                game reward (the GainStanding card, the ranks, one token for each rank, the
+                                                experience of the ranks). A harness command (SOULWARDEN_HARNESS=1)
+  tools/world card CHARACTER TERRITORY CARD     stage QG1: one card choice with the rules of the message 4040 (CARD: the id text of
+                                                a card, TB_GainStanding). A harness command
   tools/world craft stop CHARACTER              the craft batch of a character stops (the completed jobs stay)
   tools/world craft cooldown CHARACTER RECIPE USED SECONDS
                                                 DEVELOPMENT AID (stage 3.7b): the cooldown window of a recipe: USED crafts, SECONDS
@@ -537,7 +545,11 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
     elif isinstance(document, dict) and "lootContainer" in document and "bags" in document:
         show_bags(document)
     elif isinstance(document, dict) and "weapons" in document:
-        show_progress(document)
+        if filter_text == "standings":
+            show_standings(document)
+        else:
+            show_progress(document)
+            show_standings(document)
     elif isinstance(document, dict) and "entitlements" in document and "achievements" in document:
         show_ownership(document)
     elif isinstance(document, dict) and "spawnPointsWaiting" in document:
@@ -1252,6 +1264,22 @@ def show_progress(document: dict) -> None:
           "are above the start")
 
 
+def show_standings(document: dict) -> None:
+    """Stage QG1: the territory standings of a character, its tokens and cards, and the territory at its position."""
+    if document is None:
+        return
+    place = "in the world" if document["inWorld"] else "not in the world"
+    territory = document.get("territory", 0)
+    print(f"the character is {place}" + (f", in the territory {territory}" if territory else ""))
+    standings = document.get("standings", [])
+    if not standings:
+        print("no territory standing above the start")
+    for entry in standings:
+        cards = ", ".join(f"{card['id']} {card['level']} ({card['bonus']:.4f})" for card in entry["cards"]) or "no card"
+        print(f"territory {entry['territory']:>2}: rank {entry['rank']}, {entry['points']} of {entry['nextRank']} points, "
+              f"{entry['tokens']} free token(s); {cards}")
+
+
 def show_ownership(document: dict) -> None:
     """The ownership of the DLC of a character (stage 1.1b): the expansion with its limits, the entitlements, the achievements."""
     place = "in the world" if document["inWorld"] else "not in the world"
@@ -1830,6 +1858,16 @@ def main() -> None:
         quantity = f"&quantity={whole(words[4], 'the count')}" if len(words) == 5 else ""
         request(data_dir, "POST",
                 f"/v1/dev/crafting/preview?character={character_id(data_dir, words[2])}&recipe={words[3]}{quantity}{seed}{extra}")
+    elif command == "standing" and len(arguments) == 2:
+        request(data_dir, "GET", f"/v1/dev/progress?character={character_id(data_dir, arguments[1])}", filter_text="standings")
+    elif command == "standing" and len(arguments) == 4:
+        request(data_dir, "POST", f"/v1/dev/progress/standing?character={character_id(data_dir, arguments[1])}"
+                                  f"&territory={whole(arguments[2], 'the territory')}&amount={whole(arguments[3], 'the amount')}")
+    elif command == "card" and len(arguments) == 4:
+        if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[3]):
+            fail("CARD is the id text of a territory card (TB_GainStanding)")
+        request(data_dir, "POST", f"/v1/dev/progress/card?character={character_id(data_dir, arguments[1])}"
+                                  f"&territory={whole(arguments[2], 'the territory')}&card={arguments[3]}")
     elif command == "azoth" and len(arguments) == 3:
         request(data_dir, "POST", f"/v1/dev/crafting/currency?character={character_id(data_dir, arguments[1])}"
                                   f"&amount={whole(arguments[2], 'the amount')}")

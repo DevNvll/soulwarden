@@ -382,7 +382,13 @@ backend. The tool of each system is also in the document of that system.
   border), the tags (POITag), the territory (the first id of the TerritoryIds of its entries), the center and the DiscoveryRadius. The build:
   476 of the 761 shape files in 22 regions (266,700 entries of the check); 285 are left out (no placement agrees). The tool stops for a
   shape file with a wrong size and when no shape gets an origin. Without the file the backend starts, and no quest task of a place
-  progresses.
+  progresses. Stage QG1 (format 2): the member `territories` has the bounds of each territory (`objects/worldprisms/bounds/territory/
+  NAME.vshapec`: the points in world meters, a property list with `TerritoryId` "6:@Windsward", and a tail of 16 bytes): `{"id", "name",
+  "shape"}`. The backend takes the territory of a character from them (the territory cards, the standing of a hand-in). The check: each
+  entry of the region metadata with one territory id is in the bounds of that territory or within 6 m of their border (counts
+  `boundsEntries`, `boundsWrong`; the build: 16 territories, 266,696 entries, 1 outside). The tool stops with no bounds file or a bounds
+  file of a wrong form. The loader takes the formats 1 and 2 (a file of the format 1 has no territory: no card acts, and the standing of a
+  hand-in goes to the origin territory). The tool needs the Oodle library for the shape files (`SOULWARDEN_OODLE_LIB`).
 - `loot-tables.json`, stage 1.8c: each base vitals row has a tenth member, its VitalsCategories (the categories of a kill task of the
   quests, client 0x825E7C0); the format stays 2, and the loader takes a row of 9 members (a kill then has the vitals row and the category
   row of its kind as its categories). `check_loot_tool.py` has the case.
@@ -395,7 +401,17 @@ backend. The tool of each system is also in the document of that system.
 - `progression-tables.json` format 3 (stage 1.8d, [Progression and skills](../systems/progression-and-skills.md)): the member `standings`:
   `[TERRITORY, LARGEST_RANK, RANK_TABLE, POOL, AUTO_RANK_UP]` for each row of CategoricalProgressionData whose name is a territory number,
   with the rank table `Territory_Standing` and its XpReward (a rank table can have the member `xpReward`). The loader takes the formats 1
-  to 3; with a file of format 1 or 2 the backend has no standing, and the hand-in of a quest with a TerritoryStanding is refused.
+  to 4; with a file of format 1 or 2 the backend has no standing, and the hand-in of a quest with a TerritoryStanding is refused.
+- `progression-tables.json` format 4 (stage QG1, [Progression and skills](../systems/progression-and-skills.md)): a standing row has a sixth
+  member, TerritoryStandingXpModifier of the row of its territory in the TerritoryDefinition tables (1.25 for each territory of the data,
+  0 for the two development worlds); the rank table `Territory_Standing` has the member `cards` (the four cards of each rank,
+  AvailableProgressionPoint1 to 4; an empty text is no card); the member `territoryCards` has each point of ProgressionPoints with
+  PoolCategory Territory: `[ID, CATEGORY, BONUS_ID, MAX_LEVEL, DO_NOT_SPEND, REQUIRED_RANK, INITIAL_BONUS, REDUCTION, MIN_VALUE]` with the
+  f32 values of the Territory Bonus Data of `sharedassets/genericassets/playerbaseattributes.pbadb` (written as the exact number of the
+  f32). The build: 15 standings, 10 cards. The tool stops when a rank offers a card that is not a territory card, a card has no row of the
+  Territory Bonus Data, a value is not finite or below 0, or the territory of a standing has no modifier. The loader refuses a file of the
+  format 3 with cards and a format 4 file with an offered card that the list does not have. With a file of the format 3 the standing has
+  the modifier 1 and no card (a card choice is refused). `check_progression_tool.py` has the cases (DL9).
 - `gathering-data.json`, stage 1.8c: the quest objects of the variation table Gatherable_Quest (the slice Master_Quest_Instanced of the
   layers): a capital entry `[TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST]`, its row with the member `"quest": true` (a loot container with the
   loot table Empty is not a refusal for it), and its game event with no row of the event tables (the event of the quests). The format stays

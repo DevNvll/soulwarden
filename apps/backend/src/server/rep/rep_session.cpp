@@ -390,6 +390,10 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_assign_pool_points(body);
         break;
+    case kTypeSpendTerritoryStandingPoint:
+        check_route(route, type, body, firstOfType);
+        handle_spend_territory_point(body);
+        break;
     case kTypeApplyAbilityPoints:
         check_route(route, type, body, firstOfType);
         handle_apply_ability_points(body);
@@ -3028,6 +3032,32 @@ void RepSession::handle_assign_pool_points(std::span<const std::uint8_t> body) {
                request->count,
                result.ok() ? "done" : world::progress_error_text(result.error),
                own->skills.free_points(request->pool));
+}
+
+void RepSession::handle_spend_territory_point(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_territory_point_request(body);
+    if (!request) {
+        log::write("rep: territory card request (type %u, %zu bytes) does not have the form of the request: no change",
+                   kTypeSpendTerritoryStandingPoint,
+                   body.size());
+        return;
+    }
+    // The character is the character of the session (the entity of the body must be its entity).
+    if (!own_call(*own, request->call, kTypeSpendTerritoryStandingPoint, "territory card")) {
+        return;
+    }
+    const world::SkillResult result = m_world.skills().spend_territory_point(own->characterId, request->progressionId, request->pointId);
+    log::write("rep: territory card request (type %u, standing %08X, card %08X): %s, card level %u, %u free token(s)",
+               kTypeSpendTerritoryStandingPoint,
+               request->progressionId,
+               request->pointId,
+               result.ok() ? "done" : world::progress_error_text(result.error),
+               result.ok() ? result.rank : 0U,
+               result.freePoints);
 }
 
 void RepSession::handle_apply_ability_points(std::span<const std::uint8_t> body) {

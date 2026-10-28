@@ -4,6 +4,8 @@
 #include <cmath>
 #include <utility>
 
+#include "gamedata/poi_data.h"
+
 namespace soulwarden::backend::world {
 namespace {
 
@@ -686,6 +688,11 @@ void World::place_projectile(Entity& entity, const state::WorldPosition& positio
     }
     m_index.move(entity.id, entity.position, position);
     entity.position = position;
+}
+
+std::uint16_t World::territory_of(const Entity& entity) const {
+    const gamedata::PoiData* data = m_options.poiData;
+    return data != nullptr && data->loaded() ? data->territory_at(entity.position.x, entity.position.y) : 0;
 }
 
 std::array<float, 3> World::velocity_of(const Entity& entity) const {

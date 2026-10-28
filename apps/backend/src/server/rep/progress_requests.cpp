@@ -65,6 +65,18 @@ std::optional<AssignRequest> read_assign_request(std::span<const std::uint8_t> b
     return request;
 }
 
+std::optional<TerritoryPointRequest> read_territory_point_request(std::span<const std::uint8_t> body) {
+    hub::Reader reader(body);
+    TerritoryPointRequest request;
+    request.call = read_call(reader);
+    request.progressionId = reader.u32();
+    request.pointId = reader.u32();
+    if (!reader.ok() || reader.left() != 0) {
+        return std::nullopt;
+    }
+    return request;
+}
+
 std::optional<BarRequest> read_bar_request(std::span<const std::uint8_t> body) {
     hub::Reader reader(body);
     BarRequest request;

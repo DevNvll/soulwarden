@@ -19,13 +19,19 @@ The sources (all in the pak files of the game copy):
      fewest entries that do not (research map.md 2.9: 0 of 994 entries wrong for 40220, no rotation). A shape with no such placement is left
      out (the counts name it).
 
+  5. Stage QG1 (format 2): the bounds of each territory: objects/worldprisms/bounds/territory/NAME.vshapec (the points in world meters, then
+     a property list with TerritoryId "6:@Windsward", then a tail of 16 bytes). The backend finds the territory of a character with them
+     (the territory at its position: the claim territory of the client, research map.md 2.6). The check: each entry of the region metadata
+     whose ids have a territory (an id below 100) is in the bounds of that territory, or within BORDER_TOLERANCE of their border
+     (counts boundsEntries and boundsWrong).
+
 The rule of the shape has a live check (POI1 of stage 1.8c): the client sent 2297 for 40142 with its "charted" achievement 0.3 m from the
 shape of this rule (the placement of 40142 as the origin), and 2297 with its "discovered" achievement at 150 m (DiscoveryRadius) from the
 same placement.
 
 Output: {"format": 1, "world": TEXT, "pois": [{"id", "name", "tags": [TAG, ...], "territory", "center": [X, Y, Z], "radius",
                                               "shape": [[X, Y], ...], "inside", "wrong"}, ...], "left": [{"id", "cause"}, ...],
-         "counts": {...}}
+         "territories": [{"id", "name", "shape": [[X, Y], ...]}, ...], "counts": {...}}
 `territory` is the territory that holds the point of interest (the first id of the TerritoryIds of its entries: 6 for Windsward), `inside`
 the entries of the check in the shape, `wrong` the entries on the wrong side of the border.
 
@@ -58,9 +64,12 @@ from creature_data import REGIONS_FOLDER, TABLES_FOLDER, WORLD, Sources, number,
 from item_catalog import Sheet, sheet_type  # noqa: E402
 
 OUTPUT_NAME = "poi-data.json"
-FORMAT = 1
+FORMAT = 2
 SHAPES_FOLDER = "objects/worldprisms/pois/"
-WANTED = (REGIONS_FOLDER, TABLES_FOLDER, SHAPES_FOLDER)
+# Stage QG1: the bounds of the territories (one shape for each territory, world coordinates, the property TerritoryId).
+BOUNDS_FOLDER = "objects/worldprisms/bounds/territory/"
+BOUNDS_TAIL = 16
+WANTED = (REGIONS_FOLDER, TABLES_FOLDER, SHAPES_FOLDER, BOUNDS_FOLDER)
 DEFINITION_TYPE = "TerritoryDefinition"
 IDS_FIELD = field_id("TerritoryIds")
 POSITION_FIELD = field_id("WorldPosition")
@@ -95,6 +104,43 @@ def read_shape(data: bytes, path: str) -> list[tuple[float, float]]:
             raise Failure(f"{path}: point {index} of the shape is not finite")
         points.append((x, y))
     return points
+
+
+def read_bounds(data: bytes, path: str) -> tuple[int, str, list[tuple[float, float]]]:
+    """@return The territory id, its name key, and the points (x, y) of a bounds file of a territory (stage QG1). A wrong form stops the tool."""
+    if len(data) < 8:
+        raise Failure(f"{path}: the bounds file is shorter than its header")
+    _, count = struct.unpack_from("<II", data, 0)
+    offset = 8 + 12 * count
+    if count < 3 or len(data) < offset + 4:
+        raise Failure(f"{path}: the bounds file has {count} points and {len(data)} bytes")
+    points = []
+    for index in range(count):
+        x, y, _ = struct.unpack_from("<fff", data, 8 + 12 * index)
+        if not (math.isfinite(x) and math.isfinite(y)):
+            raise Failure(f"{path}: point {index} of the bounds is not finite")
+        points.append((x, y))
+    properties = {}
+    (entries,) = struct.unpack_from("<I", data, offset)
+    offset += 4
+    for _ in range(entries):
+        values = []
+        for _part in range(2):
+            if len(data) < offset + 4:
+                raise Failure(f"{path}: the property list of the bounds file is not complete")
+            (size,) = struct.unpack_from("<I", data, offset)
+            offset += 4
+            if len(data) < offset + size:
+                raise Failure(f"{path}: the property list of the bounds file is not complete")
+            values.append(data[offset:offset + size].decode("utf-8", "replace"))
+            offset += size
+        properties[values[0]] = values[1]
+    if len(data) != offset + BOUNDS_TAIL:
+        raise Failure(f"{path}: the bounds file has {len(data) - offset} bytes after its properties, not {BOUNDS_TAIL}")
+    match = re.fullmatch(r"(\d+):(.*)", properties.get("TerritoryId", "").strip())
+    if match is None or not 0 < int(match[1]) <= 65535:
+        raise Failure(f"{path}: the bounds file has no property TerritoryId with a territory id")
+    return int(match[1]), match[2], points
 
 
 def inside(x: float, y: float, points: list[tuple[float, float]]) -> bool:
@@ -247,6 +293,17 @@ def build(sources: Sources, regions: list[str] | None) -> dict:
     pois = []
     left = []
     counts = Counter()
+    territories = []
+    for path in sources.paths(BOUNDS_FOLDER, ".vshapec"):
+        data = sources.read(path)
+        if data is None:
+            continue
+        identifier, name, points = read_bounds(data, path)
+        if any(entry["id"] == identifier for entry in territories):
+            raise Failure(f"{path}: a second bounds file of the territory {identifier}")
+        territories.append({"id": identifier, "name": name, "shape": [[round(x, 4), round(y, 4)] for x, y in points]})
+    counts["boundsEntries"] += 0
+    counts["boundsWrong"] += 0
     for region in sorted(shapes):
         plots = read_plots(sources, region)
         entries = read_entries(sources, region)
@@ -255,6 +312,16 @@ def build(sources: Sources, regions: list[str] | None) -> dict:
             grid.setdefault((int(math.floor(entry[0] / GRID)), int(math.floor(entry[1] / GRID))), []).append(entry)
         counts["regions"] += 1
         counts["entries"] += len(entries)
+        # The check of the bounds (stage QG1): the territory of an entry (its id below 100) holds its position.
+        for x, y, ids in entries:
+            owned = [identifier for identifier in ids if identifier < 100]
+            bounds = [entry for entry in territories if entry["id"] in owned]
+            if len(owned) != 1 or not bounds:
+                continue
+            counts["boundsEntries"] += 1
+            points = [(px, py) for px, py in bounds[0]["shape"]]
+            if not inside(x, y, points) and border_distance(x, y, points) > BORDER_TOLERANCE:
+                counts["boundsWrong"] += 1
         for identifier, path in sorted(shapes[region]):
             data = sources.read(path)
             if data is None:
@@ -279,10 +346,14 @@ def build(sources: Sources, regions: list[str] | None) -> dict:
     sources.check_complete()
     if not pois:
         raise Failure("no shape of a point of interest got an origin")
+    if not territories:
+        raise Failure(f"the game copy has no bounds file of a territory ({BOUNDS_FOLDER})")
     counts["pois"] = len(pois)
     counts["left"] = len(left)
+    counts["territories"] = len(territories)
     return {"format": FORMAT, "world": WORLD, "pois": sorted(pois, key=lambda poi: poi["id"]),
-            "left": sorted(left, key=lambda entry: entry["id"]), "counts": dict(counts)}
+            "left": sorted(left, key=lambda entry: entry["id"]), "territories": sorted(territories, key=lambda entry: entry["id"]),
+            "counts": dict(counts)}
 
 
 def main() -> int:
@@ -309,7 +380,9 @@ def main() -> int:
         return 1
     counts = document["counts"]
     print(f"{target}: {counts['pois']} points of interest with a shape of {counts['shapes']} shape files in {counts['regions']} regions "
-          f"({counts['entries']} entries of the region metadata as the check); {counts['left']} shapes left out")
+          f"({counts['entries']} entries of the region metadata as the check); {counts['left']} shapes left out; the bounds of "
+          f"{counts['territories']} territories ({counts.get('boundsEntries', 0)} entries of the region metadata as the check, "
+          f"{counts.get('boundsWrong', 0)} outside the bounds of their territory)")
     return 0
 
 

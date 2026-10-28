@@ -506,9 +506,12 @@ GatherParts Gathering::parts_of(const Entity& character, const gamedata::Gathera
         parts.multiplier += effect_sum(character, "MULT" + row.tradeskill);
         parts.instant += effect_sum(character, "INS" + row.tradeskill);
     }
+    // Stage QG1: the GainGatherRate card of the territory at the position of the character (docs/systems/progression-and-skills.md).
+    parts.territory = m_world.skills().territory_bonus(character.skills, m_world.territory_of(character), gamedata::TerritoryBonus::gainGatherRate);
     // The composition (a decision of an agent, docs/systems/gathering.md: the client has no rule that composes the parts; live check L7):
-    // the tool speed times one plus the rank part and the EFF parts (the trade skill window and the effects show them as percents).
-    parts.speed = std::max(kSmallestSpeed, parts.toolSpeed * (1.0F + parts.rankEfficiency + parts.effects));
+    // the tool speed times one plus the rank part, the EFF parts, and (stage QG1) the territory card (the trade skill window and the
+    // effects show them as percents).
+    parts.speed = std::max(kSmallestSpeed, parts.toolSpeed * (1.0F + parts.rankEfficiency + parts.effects + parts.territory));
     return parts;
 }
 
@@ -638,11 +641,11 @@ InteractionVerdict Gathering::begin(Entity& character, const InteractionContext&
     const std::string mark = log::session_mark(character.owner, character.characterId);
     const log::Context logContext(mark);
     log::write("world: gathering: character %s gathers the %s node %s (%s, G %s): amount %.2f, speed %.3f (tool %.3f%s%s, rank %+.3f, "
-               "effects %+.3f), %.2f s",
+               "effects %+.3f, territory card %+.4f), %.2f s",
                character.characterId.c_str(), node_kind_text(target->kind), target->key.c_str(), row.id.c_str(), hex64(target->group).c_str(),
                static_cast<double>(amount), static_cast<double>(work.parts.speed), static_cast<double>(work.parts.toolSpeed),
                work.parts.toolItem.empty() ? "" : " ", work.parts.toolItem.c_str(), static_cast<double>(work.parts.rankEfficiency),
-               static_cast<double>(work.parts.effects), static_cast<double>(work.seconds));
+               static_cast<double>(work.parts.effects), static_cast<double>(work.parts.territory), static_cast<double>(work.seconds));
     return InteractionVerdict::accepted;
 }
 

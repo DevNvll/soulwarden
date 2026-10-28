@@ -79,7 +79,10 @@ The source of each rule is in brackets: game data, client code, live check (the 
   it is 1. The client has no code that composes the tool, the rank, and the effects (the trade skill window shows the rank part as
   "N %", the effects show EFF percents). The backend uses speed = tool x (1 + GatheringEfficiency of the rank + the EFF parts): the
   percents add, and the tool multiplies them. A decision of an agent: it keeps each raw part in the log and in the view, so a later
-  rule can change only the composition.
+  rule can change only the composition. Stage QG1: the GainGatherRate card of the territory at the position of the character is one more
+  part of the sum (`GatherParts::territory`, the member `territoryCard` of the view; 0.05 at the level 1) [agent: the static read of stage
+  QG1 found no client code that applies the card; the data calls it "gathering speed", and the card text says "Increase Gathering speed in
+  Windsward"].
 - The EFF and ROL parts [game data]: the cells `EFF<skill>` and `ROL<skill>` (for example `EFFMining`) of the active statuses of the
   character (a food), of the status of each attribute threshold that it reaches (`ATB_Str_Bonus_25_2_Effect`: EFFMining 0.1), and of
   the perks of the tool (the StatusEffect of an affix, the OnEquipStatusEffect of a perk ability). The MULT and INS parts and

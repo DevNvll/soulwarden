@@ -14,10 +14,30 @@ namespace {
 
 using nlohmann::json;
 
-constexpr std::uint64_t kFormat = 1;
+/** Format 1 (stage 1.8c): the points of interest. Format 2 (stage QG1): and the bounds of the territories. */
+constexpr std::uint64_t kLastFormat = 2;
 
 bool finite_number(const json& value) {
     return value.is_number() && std::isfinite(value.get<double>());
+}
+
+/** Reads the shape of an entry and sets its bounds. @return False when a point is not two finite numbers. */
+bool read_shape(const json& points, Poi& poi) {
+    for (const json& point : points) {
+        if (!point.is_array() || point.size() < 2 || !finite_number(point[0]) || !finite_number(point[1])) {
+            return false;
+        }
+        poi.shape.push_back({point[0].get<float>(), point[1].get<float>()});
+    }
+    poi.minX = poi.maxX = poi.shape.front()[0];
+    poi.minY = poi.maxY = poi.shape.front()[1];
+    for (const auto& [x, y] : poi.shape) {
+        poi.minX = std::min(poi.minX, x);
+        poi.maxX = std::max(poi.maxX, x);
+        poi.minY = std::min(poi.minY, y);
+        poi.maxY = std::max(poi.maxY, y);
+    }
+    return true;
 }
 
 } // namespace
@@ -57,9 +77,10 @@ bool PoiData::load_text(const std::string& text) {
     *this = PoiData{};
     const json document = json::parse(text, nullptr, false);
     if (!document.is_object() || !document.contains("format") || !document["format"].is_number_unsigned()
-        || document["format"].get<std::uint64_t>() != kFormat) {
-        return fail("the file is not a JSON object of the format 1");
+        || document["format"].get<std::uint64_t>() == 0 || document["format"].get<std::uint64_t>() > kLastFormat) {
+        return fail("the file is not a JSON object of the format 1 or 2");
     }
+    const std::uint64_t format = document["format"].get<std::uint64_t>();
     if (!document.contains("pois") || !document["pois"].is_array()) {
         return fail("the file has no list pois");
     }
@@ -90,19 +111,8 @@ bool PoiData::load_text(const std::string& text) {
                 }
             }
         }
-        for (const json& point : entry["shape"]) {
-            if (!point.is_array() || point.size() < 2 || !finite_number(point[0]) || !finite_number(point[1])) {
-                return fail("the point of interest " + std::to_string(poi.id) + " has a shape point that is not two finite numbers");
-            }
-            poi.shape.push_back({point[0].get<float>(), point[1].get<float>()});
-        }
-        poi.minX = poi.maxX = poi.shape.front()[0];
-        poi.minY = poi.maxY = poi.shape.front()[1];
-        for (const auto& [x, y] : poi.shape) {
-            poi.minX = std::min(poi.minX, x);
-            poi.maxX = std::max(poi.maxX, x);
-            poi.minY = std::min(poi.minY, y);
-            poi.maxY = std::max(poi.maxY, y);
+        if (!read_shape(entry["shape"], poi)) {
+            return fail("the point of interest " + std::to_string(poi.id) + " has a shape point that is not two finite numbers");
         }
         if (!m_byId.emplace(poi.id, static_cast<std::uint32_t>(m_pois.size())).second) {
             return fail("two points of interest have the id " + std::to_string(poi.id));
@@ -112,8 +122,39 @@ bool PoiData::load_text(const std::string& text) {
         }
         m_pois.push_back(std::move(poi));
     }
+    // Stage QG1 (format 2): the bounds of the territories (objects/worldprisms/bounds/territory of the game data), each with its territory id.
+    if (format >= 2) {
+        if (!document.contains("territories") || !document["territories"].is_array()) {
+            return fail("the file of the format 2 has no list territories");
+        }
+        for (const json& entry : document["territories"]) {
+            if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_number_unsigned() || entry["id"].get<std::uint64_t>() == 0
+                || entry["id"].get<std::uint64_t>() > 65535 || !entry.contains("shape") || !entry["shape"].is_array() || entry["shape"].size() < 3) {
+                return fail("a territory does not have an id of 1 to 65535 and a shape of 3 points or more");
+            }
+            Poi bounds;
+            bounds.id = static_cast<std::uint32_t>(entry["id"].get<std::uint64_t>());
+            bounds.territory = static_cast<std::uint16_t>(bounds.id);
+            if (!read_shape(entry["shape"], bounds)) {
+                return fail("the territory " + std::to_string(bounds.id) + " has a shape point that is not two finite numbers");
+            }
+            if (std::any_of(m_territories.begin(), m_territories.end(), [&](const Poi& other) { return other.id == bounds.id; })) {
+                return fail("two bounds of the territory " + std::to_string(bounds.id));
+            }
+            m_territories.push_back(std::move(bounds));
+        }
+    }
     m_loaded = true;
     return true;
+}
+
+std::uint16_t PoiData::territory_at(float x, float y) const {
+    for (const Poi& bounds : m_territories) {
+        if (bounds.contains(x, y)) {
+            return bounds.territory;
+        }
+    }
+    return 0;
 }
 
 const std::vector<std::uint32_t>* PoiData::with_tag(std::string_view tag) const {

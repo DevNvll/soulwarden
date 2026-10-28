@@ -25,6 +25,8 @@ inline constexpr std::uint32_t kTypeAssignPoolPoints = 1112;      // Progression
 inline constexpr std::uint32_t kTypeApplyAbilityPoints = 2857;    // AbilityComponentServerFacet_RequestApplyAbilityPoints
 inline constexpr std::uint32_t kTypeChangeMappedAbility = 2701;   // AbilityComponentServerFacet_RequestChangeMappedAbility
 inline constexpr std::uint32_t kTypeMasteryTreeRespec = 186;      // AbilityComponentServerFacet_RequestMasteryTreeRespec
+/** Stage QG1: the card choice of the territory standing. */
+inline constexpr std::uint32_t kTypeSpendTerritoryStandingPoint = 4040; // ProgressionPointComponentServerFacet_RequestSpendTerritoryStandingPoint
 /** Server to client: the answer to a tree reset request. */
 inline constexpr std::uint32_t kTypeMasteryTreeRespecResponse = 2858; // AbilityComponentClientFacet_MasteryTreeRespecResponse
 
@@ -51,6 +53,19 @@ struct AssignRequest {
     std::uint32_t pool{0};
     std::uint32_t node{0};
     std::uint32_t count{0};
+};
+
+/**
+ * Stage QG1: ProgressionPointComponentServerFacet_RequestSpendTerritoryStandingPoint (the sender 0x3CD8E80 stores the point id at +0x20 and
+ * the progression id at +0x24; the writer 0x3274450 writes +0x24 first; research territories.md section 5):
+ *   target:u64 entity:u64 progressionId:u32 pointId:u32
+ * progressionId is the CRC-32 of the territory id text ("6": 1DB87A14), not the pool; pointId the CRC-32 of the card (TB_GainStanding:
+ * 68C1F9AA). The client has no reply message: the next points state (slot 67) is the answer.
+ */
+struct TerritoryPointRequest {
+    ComponentCall call;
+    std::uint32_t progressionId{0};
+    std::uint32_t pointId{0};
 };
 
 /**
@@ -82,6 +97,7 @@ struct TreeResetRequest {
 /** @return The request, or no value when the body does not have the form of the request. */
 [[nodiscard]] std::optional<SpendRequest> read_spend_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<AssignRequest> read_assign_request(std::span<const std::uint8_t> body);
+[[nodiscard]] std::optional<TerritoryPointRequest> read_territory_point_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<BarRequest> read_bar_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<TreeResetRequest> read_tree_reset_request(std::span<const std::uint8_t> body);
 /**

@@ -82,10 +82,20 @@ enum class ProgressError {
     /** The database did not accept the change. */
     storeFailed,
     /**
-     * Stage 1.8d: a gain of territory standing that gives a new rank. A rank-up gives one token of the point pool of the territory
-     * (TerritoryRankBonus_N, client 0x3CB7500: slot 67) and maybe the XpReward of the rank: rewards with no owner in the backend yet.
+     * Stage 1.8d: a gain of territory standing that gives a new rank. Stage QG1: only for a standing row with no AutoRankUp (the data has
+     * none: each standing row has AutoRankUp, and the backend has no rule of a manual rank-up).
      */
     standingRankUp,
+    /** Stage QG1: the id is not a card of the territory pools (the point data). */
+    unknownCard,
+    /** Stage QG1: the card screen does not offer the card: it is not a card of the rank row of the spent tokens (client 0x3CEBDA0). */
+    cardNotOffered,
+    /** Stage QG1: the standing rank of the territory is below RequiredCategoricalProgressionLevel of the card (TB_PurchaseHouse 1). */
+    standingTooLow,
+    /** Stage QG1: the card has its MaxLevel. */
+    cardAtMaxLevel,
+    /** Stage QG1: the territory pool has no free token. */
+    noToken,
 };
 
 /** @return A short text for a log line and for the reply of a command. */

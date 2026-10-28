@@ -25,10 +25,12 @@
 //
 // MB::ProgressionPointReplicatedState (constructor at image RVA 0x3CDFA30), slot 67 (component
 // ProgressionPoint of the entity "GameEvents"): the point pool of each weapon and the nodes of
-// its tree.
-//   0 poolIds  list of u32    1 poolCounts  list of u16 (the free points)
-//   2 poolCategories  list of u8 (1: a pool of a player)
-//   3 pointEntries  list of poolId:u32 pointId:u32 level:u16
+// its tree; stage QG1: and the territory pool of each territory standing with its cards.
+//   0 poolIds  list of u32    1 poolCounts  list of u16 (the free points; a territory pool: the free tokens)
+//   2 poolCategories  list of u8 (1: a pool of a player, 2: a territory pool)
+//   3 pointEntries  list of poolId:u32 pointId:u32 level:u16 (a card: its level, 1 to its MaxLevel)
+// The weapon pools come first, then the territory pools (TerritoryRankBonus_<territory>), each list
+// in the order of the ids.
 // The client facet (apply at image RVA 0x3CF1880) removes a pool that is not in the lists, and
 // it gives the selected levels of each pool back when the list of the point entries is empty
 // (image RVA 0x3CFBA80). The list of the point entries of a fragment replaces the list of the
@@ -85,8 +87,9 @@ constexpr unsigned kPoolIds = 0;
 constexpr unsigned kPoolCounts = 1;
 constexpr unsigned kPoolCategories = 2;
 constexpr unsigned kPointEntries = 3;
-/** `Javelin::PoolCategory`: a pool of a player (2 is a pool of a territory). */
+/** `Javelin::PoolCategory`: a pool of a player, and (stage QG1) a pool of a territory (research territories.md section 5: 0x3CD95E0). */
 constexpr std::uint8_t kPoolCategoryPlayer = 1;
+constexpr std::uint8_t kPoolCategoryTerritory = 2;
 /** Largest count of the pool lists and of the entry list that the client reads. */
 constexpr std::size_t kMaxPools = 50;
 constexpr std::size_t kMaxPointEntries = 1000;
@@ -153,7 +156,21 @@ hub::Bytes encode_points(const world::SkillSet& skills, std::uint64_t sequence, 
             }
         }
     }
-    pools = std::min(skills.pools.size(), kMaxPools);
+    // Stage QG1: the territory pools after the weapon pools (the game has 15 standings: 31 pools with the 16 weapons).
+    const std::size_t weaponPools = std::min(skills.pools.size(), kMaxPools);
+    const std::size_t territoryPools = std::min(skills.territoryPools.size(), kMaxPools - weaponPools);
+    std::size_t territory = 0;
+    for (const auto& [pool, cards] : skills.territoryPools) {
+        if (territory++ == territoryPools) {
+            break;
+        }
+        for (const auto& [card, level] : cards.cards) {
+            if (level != 0 && entries.size() < kMaxPointEntries) {
+                entries.push_back(Entry{pool, card, level});
+            }
+        }
+    }
+    pools = weaponPools + territoryPools;
     // One state has each pool and each node: the client replaces its lists with the lists of
     // a state, thus a state with a part of the nodes makes the client lose the other nodes.
     StateWriter state(kGroups);
@@ -165,12 +182,21 @@ hub::Bytes encode_points(const world::SkillSet& skills, std::uint64_t sequence, 
     begin_list(categories, sequence, pools);
     std::size_t written = 0;
     for (const auto& [pool, nodes] : skills.pools) {
-        if (written++ == pools) {
+        if (written++ == weaponPools) {
             break;
         }
         ids.u32(pool);
         counts.u16(static_cast<std::uint16_t>(std::min<std::uint32_t>(skills.free_points(pool), 0xFFFF)));
         categories.u8(kPoolCategoryPlayer);
+    }
+    written = 0;
+    for (const auto& [pool, cards] : skills.territoryPools) {
+        if (written++ == territoryPools) {
+            break;
+        }
+        ids.u32(pool);
+        counts.u16(static_cast<std::uint16_t>(std::min<std::uint32_t>(skills.free_tokens(pool), 0xFFFF)));
+        categories.u8(kPoolCategoryTerritory);
     }
     hub::Writer& points = state.field(0, kPointEntries);
     begin_list(points, sequence, entries.size());

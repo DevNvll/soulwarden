@@ -89,6 +89,40 @@ struct TreeBuild {
     std::array<std::string, kBarSlots> bar;
 };
 
+/**
+ * Stage QG1: the result of a gain of territory standing (Skills::add_standing; docs/systems/progression-and-skills.md, the standing).
+ */
+struct StandingGain {
+    /** The points of the source (the data of a quest reward, a command), and the points of the categorical progression after the card. */
+    std::uint64_t base{0};
+    std::uint64_t points{0};
+    /** The GainStanding bonus of the territory pool of the character (card_bonus of its level; 0 with no card). */
+    float bonus{0.0F};
+    /** The ranks of the gain: each one is one token of the territory pool. */
+    std::uint32_t ranks{0};
+    /** The character experience of the new ranks: for each one its XpReward times TerritoryStandingXpModifier. */
+    std::uint64_t experience{0};
+    /** The rank and the points in the rank after the gain. */
+    std::uint32_t rank{0};
+    std::uint64_t rankPoints{0};
+};
+
+/** Stage QG1: the result of a standing command (Skills::give_standing). */
+struct StandingResult {
+    ProgressError error{ProgressError::none};
+    bool inWorld{false};
+    StandingGain gain;
+    /** The free tokens of the territory pool after the change. */
+    std::uint32_t tokens{0};
+    /** The level and the experience of the character after the change (the experience of the ranks). */
+    std::uint32_t level{0};
+    std::uint32_t levelExperience{0};
+
+    [[nodiscard]] bool ok() const {
+        return error == ProgressError::none;
+    }
+};
+
 /** The skills of a character, for a reader. */
 struct SkillView {
     SkillSet skills;
@@ -148,12 +182,46 @@ public:
     /** Gives all mastery points of a weapon back and makes its bar empty: the request of a client. */
     SkillResult reset_tree(const std::string& characterId, std::uint32_t table);
 
+    /**
+     * Stage QG1: the card choice of a client (message 4040, RequestSpendTerritoryStandingPoint; protocol notes 4.13): one level of a card
+     * of the territory pool of a standing. The checks: the standing (progressionId: the CRC-32 of the territory id text, not the pool),
+     * the card (a territory card of the point data), the card of the rank row whose index is the spent tokens of the pool (client
+     * 0x3CEBDA0), a free token (also for a card with DoNotSpendPoint: 0x3CE7564), RequiredCategoricalProgressionLevel against the
+     * standing rank, and MaxLevel, in the order of CanSpend of the client (0x3CE7490). A card with DoNotSpendPoint (TB_PurchaseHouse) does
+     * not spend the token. The answer is the changed points state; a refused request sends the state again and changes nothing.
+     * `result.rank` is the level of the card after the request, `result.freePoints` the free tokens.
+     */
+    SkillResult spend_territory_point(const std::string& characterId, std::uint32_t progressionId, std::uint32_t pointId);
+    /**
+     * Stage QG1: a standing command (the development and admin routes): the gain of add_standing with its card, its ranks, its tokens,
+     * and the character experience of the ranks (the progress system), in one transaction.
+     */
+    StandingResult give_standing(const std::string& characterId, std::uint16_t territory, std::uint64_t amount);
+    /**
+     * Stage QG1: @return The bonus of the card of a kind in the territory pool of a territory (card_bonus of the level of the character; 0
+     *         with no card, no pool, or no tables). GainStanding goes to the standing of the territory (add_standing), GainXP to the
+     *         experience of the character in the territory, GainGatherRate to its gather speed in the territory (docs/systems).
+     */
+    [[nodiscard]] float territory_bonus(const SkillSet& skills, std::uint16_t territory, gamedata::TerritoryBonus kind) const;
+    /**
+     * Stage QG1: @return The character experience of a game event (a quest hand-in, a kill, a standing rank) with the GainXP card of the
+     *         territory at the position of a character in the world (client 0x3CEBF84, 0x3CF04A9: the multiplier is 1 plus the card plus
+     *         other bonus terms that the backend does not have, and the experience is trunc(f32(amount * multiplier))). The amount with no
+     *         card, for a character that is not in the world, or outside each territory. A command of experience (the reason Debug of the
+     *         client, 0x3CEBF0D) does not use it.
+     */
+    [[nodiscard]] std::uint64_t card_experience(const std::string& characterId, std::uint64_t amount) const;
+    /** Stage QG1: @return The GainXP bonus of a character in the world at its territory (0: none). */
+    [[nodiscard]] float experience_card(const Entity& entity) const;
+
 private:
     /** What a change touched. */
     struct Touched {
         bool ranks{false};
         bool points{false};
         bool bars{false};
+        /** Stage QG1: the territory pools changed (the tokens or the cards): the points state, and no change of a weapon tree. */
+        bool tokens{false};
         /** The nodes whose level changed: pool and node. */
         std::vector<std::pair<std::uint32_t, std::uint32_t>> nodes;
     };
@@ -170,6 +238,10 @@ public:
         SkillSet skills;
         Touched touched;
         SkillResult result;
+        /** Stage QG1: the character experience of the standing ranks of the plan (add_standing): the caller gives it (the progress plan). */
+        std::uint64_t rankExperience{0};
+        /** Stage QG1: the GainXP bonus of the territory of the character in the world (experience_card), for the experience of a rank. */
+        float experienceBonus{0.0F};
 
         [[nodiscard]] bool ok() const {
             return error == ProgressError::none;
@@ -192,13 +264,15 @@ public:
      */
     [[nodiscard]] ProgressError add_balance(Plan& plan, std::string_view id, std::int64_t delta, std::uint64_t cap) const;
     /**
-     * Stage 1.8d (decision D3 option B of the orchestrator): adds territory standing to a plan of the character (the categorical progression
-     * of the territory: its id text is the decimal territory id, on the wire its CRC-32; points in the rank, client 0x3CAACF0). The gain is
-     * the amount of the data (the preview of the client shows it with no modifier: objectivedatahelper GetRewardDataFromGameEventData). A gain
-     * that reaches MaximumInfluence of the rank (a rank-up: a token of the territory pool, 0x3CB7500) is refused (standingRankUp), and a
-     * territory with no standing row too (unknownProgression; noTables with no tables).
+     * Stage 1.8d, stage QG1: adds territory standing to a plan of the character (the categorical progression of the territory: its id text
+     * is the decimal territory id, on the wire its CRC-32; points in the rank, client 0x3CAACF0). The gain is the amount times 1 plus the
+     * GainStanding bonus of the territory pool, truncated (client 0x31F7D19 to 0x31F7D37). AutoRankUp: while the points reach
+     * MaximumInfluence of the rank (equality too, 0x3CAAF15), they lose it and the rank goes up (0x3CAAFDF, the rest again at 0x3CAB113);
+     * each new rank is one token of the territory pool (0x3CB7500) and the character experience of its XpReward times
+     * TerritoryStandingXpModifier (0x31FD6AC; Plan::rankExperience). At the largest rank (300: MaximumInfluence 0, AllowOverflow false) the
+     * points are 0, and a later gain adds nothing. A territory with no standing row: unknownProgression (noTables with no tables).
      */
-    [[nodiscard]] ProgressError add_standing(Plan& plan, std::uint16_t territory, std::uint64_t amount) const;
+    [[nodiscard]] ProgressError add_standing(Plan& plan, std::uint16_t territory, std::uint64_t amount, StandingGain* gain = nullptr) const;
     /** Stage 1.8d: @return The standing of a territory of a skill set: its rank and its points in the rank. */
     [[nodiscard]] static ProgressionRank standing(const SkillSet& skills, std::uint16_t territory);
     /** A command (stage 3.7c): sets a balance to `amount` (0 to `cap`). */
@@ -236,6 +310,11 @@ private:
     /** The node of assign on a skill set. */
     [[nodiscard]] ProgressError assign_into(SkillSet& skills, Touched& touched, SkillResult& result, std::uint32_t pool,
                                             std::uint32_t node, std::uint32_t count) const;
+    /** Stage QG1: the card of spend_territory_point on a skill set. */
+    [[nodiscard]] ProgressError card_into(SkillSet& skills, Touched& touched, SkillResult& result, std::uint32_t progressionId,
+                                          std::uint32_t pointId) const;
+    /** Stage QG1: adds the territory pools of the tables to a skill set (each pool, also with no card) and sets the spent tokens. */
+    void add_territory_pools(SkillSet& skills) const;
     /** The place of the bar of set_bar on a skill set. */
     [[nodiscard]] ProgressError bar_into(SkillSet& skills, Touched& touched, std::uint32_t table, std::uint32_t slot,
                                          std::uint32_t ability) const;

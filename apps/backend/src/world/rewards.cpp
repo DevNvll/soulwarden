@@ -525,7 +525,10 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
         // hand. A part that a rule refuses (a mastery that the tables do not have) is not given,
         // and the other parts are; a write that the store refuses ends the whole reward.
         if (written && reward.experience != 0) {
-            const ProgressResult experience = m_world.progress().add_experience(character.characterId, reward.experience);
+            // Stage QG1: the character experience of the kill event has the GainXP card of the territory of the character (client
+            // 0x31FDB82: the kill reward calls the general event grant; 0x3CF04A9); the mastery experience has no card (not proved).
+            const ProgressResult experience =
+                m_world.progress().add_experience(character.characterId, m_world.skills().card_experience(character.characterId, reward.experience));
             written = experience.error != ProgressError::storeFailed;
             gained = experience.ok();
             const ItemInstance* weapon = Combat::weapon_in_hand(character);

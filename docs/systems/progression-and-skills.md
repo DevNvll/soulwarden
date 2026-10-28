@@ -104,12 +104,44 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   name is the territory number ("6": CRC-32 `1DB87A14`) in the state 911, with its rank and its points in the rank (MaximumInfluence
   150, 375, 600, and more; XpReward 0, 100, 150, and more). The progression tables have the standings (format 3 of
   `progression-tables.json`: the territory, the largest rank, the rank table, the pool, AutoRankUp). Live I0: an entry of rank 0 with
-  120 points makes the map of the client show "120 / 150" for Windsward. `Skills::add_standing` adds points in one plan of a
-  transaction and refuses a gain that reaches the next rank (`standingRankUp`: the token of the rank-up, ProgressionPoint slot 67, has
-  no owner yet) [agent]. `Skills::standing` reads it. The client preview of a quest reward shows the standing of the data (120)
-  [live]. TerritoryStandingXpModifier (1.25) scales the character experience of a standing rank-up (rank 1: XpReward 100 gives 125), and
-  the points above a rank go to the next rank [research quests-18d rules Q8]: the backend refuses a rank-up, so neither rule has a use
-  yet.
+  120 points makes the map of the client show "120 / 150" for Windsward. `Skills::standing` reads it. The client preview of a quest
+  reward shows the standing of the data (120) [live].
+- The rank-up (stage QG1) [data: Territory_Standing; client 0x3CAACF0, 0x3CAAF15, 0x3CAB113, 0x3CB7500; protocol notes 4.59]:
+  `Skills::add_standing` adds the points of a gain to the rank; while the points reach MaximumInfluence of the rank (equality too) the
+  threshold goes and the rank goes up, and the rest goes on: one gain can pass more than one rank. At MaxLevel (300: MaximumInfluence 0,
+  AllowOverflow false) the points are 0, and a later gain adds nothing. A row with no AutoRankUp is refused (`standingRankUp`; the data
+  has none) [agent]. Each new rank is one token of the territory pool (below) and the character experience of XpReward of the new rank
+  times TerritoryStandingXpModifier (1.25; 0 is no multiplication), truncated, then the GainXP card [client 0x31FD6AC, 0x31F6816]. The
+  plan has this experience (`Plan::rankExperience`): the caller gives it in the same transaction (the hand-in of a quest, the command
+  `give_standing`). Live: the hand-in of `06A_MSQ_01_Quartermaster` with 120 points gives rank 1 with 70 points and 1,325 experience (1,200
+  + 100 x 1.25).
+- The territory pools and the tokens (stage QG1) [client 0x3CB772A, 0x3CF0600, 0x3CE0370; data: ProgressionPools, the standing rows]:
+  each standing row has its pool (`TerritoryRankBonus_<territory>`, category Territory). The skill set has each pool of the tables
+  (`SkillSet::territoryPools`) with the cards of the character: the rows of `ability_nodes` with the pool of the territory, the card id,
+  and its level (no change of the schema). The free tokens are the standing rank minus the levels of the cards that spend a token (no
+  DoNotSpendPoint): they are not stored [agent: one token for each rank, client 0x3CB7500 with no AdditionalProgressionPoints]. The points
+  state (slot 67) has each weapon pool (category 1) and then each territory pool (category 2, the free tokens) with each node and each card
+  in one fragment.
+- The card choice (stage QG1, message 4040; `Skills::spend_territory_point`) [client CanSpend 0x3CE7490, the server handler 0x3CFD510]: the
+  checks in the order of the client: the standing (the territory CRC, not the pool) and its pool; the card is a card of the rank row whose
+  index is the spent levels of the pool (`AvailableProgressionPoint1` to 4); a free token (also for TB_PurchaseHouse); the standing rank
+  against RequiredCategoricalProgressionLevel (TB_PurchaseHouse: 1); MaxLevel. A card with DoNotSpendPoint gets its level and keeps the
+  token. The character is the character of the session. A refused request changes nothing, and the session gets the points state again.
+- The card values (stage QG1) [client 0x5C51100; data: Territory Bonus Data of `playerbaseattributes.pbadb`]: `gamedata::card_bonus` sums
+  the levels 1 to n with the f32 and f64 steps of the client: TB_GainStanding 0.05, 0.09325, ... (0.55525 at 102). The client shows the
+  same values ("+5.0%", "(+5.0% -> +9.3%)").
+- The cards that a system applies (stage QG1), each with the territory at the position of the character (`World::territory_of`, below):
+  GainStanding: a gain of the standing of a territory is `trunc(f32(f32(1 + bonus) * amount))` with the card of that territory [client
+  0x31F7D19 to 0x31F7D37; f32: 100 with level 1 is 104]. GainXP: the character experience of a game event (a quest hand-in, a kill, a
+  standing rank) is `trunc(f32(experience * (1 + bonus)))` (`Skills::card_experience`) [client 0x3CEC0CA, 0x3CF04A9; the backend has no
+  other term of the multiplier]; the command `tools/world xp` has no card (the reason Debug of the client). GainGatherRate: one more part
+  of the speed sum of a gather [agent: no client formula was found; the data calls it "gathering speed"; [Gathering](gathering.md)]. The
+  other cards (GainStorage, TradingTax, StationTax, PropertyTax, GainFactionRep, GainHousePoints, HousePurchase) are stored for their
+  later systems (storage 5.2, governance and taxes 5.4, factions 4.5, housing); no system reads them now.
+- The territory of a character (stage QG1) [data: `objects/worldprisms/bounds/territory/*.vshapec` with TerritoryId, in `poi-data.json`
+  of the format 2; client: the claim territory and the detected territory of the player, research map.md 2.6, 0x29F77A0]:
+  `World::territory_of` is the territory whose bounds hold the position of the character (0 outside each bounds, or with a POI file of the
+  format 1). The tool checks the bounds against the region metadata: 266,696 entries, 1 outside the bounds of its territory.
 - The effect of a learned node (stage 3.3b-S5): the evaluator of the passive rules applies the row of each learned node of
   the tree of the weapon of a hit, and the fixed stats of the nodes of the weapon in the hand go into the gear values
   ([Passive rules](passive-rules.md)). A change of the learned nodes of a character in the world (an assignment, a reset of a
@@ -127,6 +159,9 @@ tools/world tradeskill NAME Mining 50    # set the level of a trade skill
 tools/world skillxp NAME sword 100   # give experience to a weapon mastery or to a trade skill
 tools/world progress NAME            # the level, the attributes, the masteries, and the trade skills
 tools/world node NAME greataxe Ability_Greataxe_Charge   # assign nodes of a weapon tree (one point each, the rules of the tree)
+tools/world standing NAME            # stage QG1: the territory standings, the free tokens, the cards, the territory of the character
+tools/world standing NAME 6 400      # stage QG1: 400 standing of Windsward with the rules of a reward (harness command)
+tools/world card NAME 6 TB_GainXP    # stage QG1: one card choice with the rules of 4040 (harness command)
 tools/world bar NAME greataxe 0 Ability_Greataxe_Charge  # put an ability on a place (0, 1, 2) of the bar of a weapon
 ```
 
@@ -143,7 +178,10 @@ tools/world bar NAME greataxe 0 Ability_Greataxe_Charge  # put an ability on a p
   `assign_node`: the node ids of the game table in the sequence of the tree; each one costs one
   mastery point, and the skill system checks the rules of the tree as for a request of the
   client), and `bar CHARACTER WEAPON SLOT ABILITY` (route `POST /v1/dev/progress/bar`, admin
-  command `set_ability_bar`: an ability node that the character has, on the place 0, 1, or 2; `none` empties the place).
+  command `set_ability_bar`: an ability node that the character has, on the place 0, 1, or 2; `none` empties the place). Stage QG1:
+  `standing CHARACTER [TERRITORY AMOUNT]` (route `POST /v1/dev/progress/standing`, admin command `give_standing`; the list comes from `GET
+  /v1/dev/progress`) and `card CHARACTER TERRITORY CARD` (route `POST /v1/dev/progress/card`, admin command `choose_territory_card`). The
+  two changes are harness commands: they refuse with no `SOULWARDEN_HARNESS=1` in the backend process, also through the admin routes.
   The character can be in the world or not. The client shows a change at once: the level
   notice, the character window (K key, `tools/hx 'key 0x4B'`), the HUD.
 - `tools/gamedata/progression.sh` writes `progression-tables.json` to the game data folder,
@@ -159,6 +197,16 @@ tools/world bar NAME greataxe 0 Ability_Greataxe_Charge  # put an ability on a p
   weapon on the bar of a different weapon with no log line.
 
 ## Traps
+
+- Stage QG1: a points state (slot 67) must have each territory pool of the standing data, also with no card: the client removes a pool
+  that a fragment does not have, and its token badge and card screen go with it. The encoder sends the weapon pools first and then the
+  territory pools.
+- Stage QG1: the card screen of the map ("Claim your reward") shows TB_PurchaseHouse alone while it is available, and it closes after a
+  choice with the last token; a choice of the house keeps the token, thus the screen closes with one token left. Open it again (the token
+  badge of the territory row) for the other cards.
+- Stage QG1: the territory info panel on the right of the map (a click on a territory row) needs the land claim manager (globalgde, research
+  territories.md W1, W2), which the backend does not send: it shows placeholder text and values that are not the standing of the
+  character. Only its "Unlock Standing Bonus N" is the token count. The rows of the territories panel show the standing correctly.
 
 - The node list of the point state (slot 67) of a fragment replaces the list of the client.
   Do not send a fragment with a part of the nodes: the client then shows only that part.

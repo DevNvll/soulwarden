@@ -29,6 +29,12 @@ packs and the entitlements that they give), and compares the result of each case
   standing              the standing row of the territory 6 and the rank table Territory_Standing with its XpReward (stage 1.8d,
                         format 3)
   short-standing-table  a standing MaxLevel with no row in Territory_Standing: status 1, the old file stays (stage 1.8d)
+  territory-cards       stage QG1 (format 4): the TerritoryStandingXpModifier of the standing, the cards of each rank of
+                        Territory_Standing, and the territory cards with the values of the Territory Bonus Data (the f32
+                        values of the file)
+  unknown-offer-card    a rank offers a card that is not a territory card: status 1, the old file stays (stage QG1)
+  no-bonus-row          a territory card has no row of the Territory Bonus Data: status 1, the old file stays (stage QG1)
+  no-xp-modifier        the territory of a standing has no TerritoryStandingXpModifier: status 1, the old file stays (stage QG1)
 
 The attribute tables of the entry point have one row for each value 5 to 100 (the range of Constitution).
 
@@ -115,7 +121,14 @@ def attribute_rows(table: str, thresholds: bool, missing: int | None) -> list[di
     return rows
 
 
-def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None, standing_rank: int = 2) -> tuple[dict, dict]:
+# Stage QG1: the made-up Territory Bonus Data (the reader of the base attributes file is patched): Territory Bonus Id, Initial Bonus,
+# Reduction Modifier, Min Value.
+BONUS = {"tb_gainstanding": [1, 0.05000000074505806, 0.13500000536441803, 0.0024999999441206455],
+         "tb_purchasehouse": [10, 1.0, 0.0, 0.0]}
+
+
+def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None, standing_rank: int = 2,
+                 card_case: str = "") -> tuple[dict, dict]:
     """@return The made-up tables of the entry point of the tool (the reviewer's probe RDT1 of stage 1.1b). `thresholds`: the attribute
     tables have the column EquipAbilities (stage 3.5b.2: Focus 100 gives Foc_Bonus_100_1). `missing`: the table and the value of a row
     that the source does not have (stage 2.2, finding LB-R7). `standing_rank`: the MaxLevel of the standing row of the territory 6 (stage
@@ -140,25 +153,38 @@ def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] 
             {"CategoricalProgressionId": "6", "RankTableId": tool.STANDING_RANK_TABLE, "MaxLevel": standing_rank, "Expansion01MaxLevel": 0,
              "ProgressionPointPool": "TerritoryStandingPool", "AutoRankUp": True}])),
         ("CategoricalProgressionRankData", FakeSheet(tool.STANDING_RANK_TABLE, [
-            {"Rank": rank, "MaximumInfluence": influence, "XpReward": reward} for rank, (influence, reward) in enumerate([(150, 0), (375, 100), (600, 150)])])),
+            {"Rank": rank, "MaximumInfluence": influence, "XpReward": reward,
+             "AvailableProgressionPoint1": "TB_Unknown" if card_case == "unknown-offer-card" and rank == 1 else "TB_GainStanding",
+             "AvailableProgressionPoint2": "", "AvailableProgressionPoint3": "", "AvailableProgressionPoint4": "TB_PurchaseHouse" if rank < 2 else ""}
+            for rank, (influence, reward) in enumerate([(150, 0), (375, 100), (600, 150)])])),
+        ("TerritoryDefinition", FakeSheet("Territories", [
+            {"TerritoryID": 6, "NameLocalizationKey": "@Windsward", "TerritoryStandingXpModifier": 1.25 if card_case != "no-xp-modifier" else ""},
+            {"TerritoryID": 7, "NameLocalizationKey": "@Other", "TerritoryStandingXpModifier": 0.5}])),
         ("CategoricalProgressionRankData", FakeSheet("WeaponMastery", [
             {"Rank": rank, "MaximumInfluence": 10, "AzothRespecCost": 0} for rank in range(20)])),
         ("TradeskillRankData", FakeSheet("MiningRanks", [
             {"Rank": rank, "MaximumInfluence": 100, "AzothRespecCost": 0} for rank in range(201 if short else 251)])),
         ("AbilityData", FakeSheet("SwordAbilityTable", [{"AbilityID": "TestNode", "TreeId": 0, "TreeRowPosition": 0,
                                                          "TreeColumnPosition": 0, "IsActiveAbility": True}])),
-        ("ProgressionPointData", FakeSheet(tool.POINT_TABLE, [{"PointPoolId": "SwordAbilityTable", "ProgressionPointId": "TestNode",
-                                                               "RequiredProgressionPointId": ""}]))]
+        ("ProgressionPointData", FakeSheet(tool.POINT_TABLE, [
+            {"PointPoolId": "SwordAbilityTable", "ProgressionPointId": "TestNode", "RequiredProgressionPointId": "", "DoNotSpendPoint": False,
+             "PoolCategory": "", "TerritoryBonusCategory": "", "MaxLevel": 1, "RequiredCategoricalProgressionLevel": 0},
+            {"PointPoolId": "", "ProgressionPointId": "TB_GainStanding", "RequiredProgressionPointId": "", "DoNotSpendPoint": False,
+             "PoolCategory": "Territory", "TerritoryBonusCategory": "GainStanding", "MaxLevel": 102, "RequiredCategoricalProgressionLevel": 0},
+            {"PointPoolId": "", "ProgressionPointId": "TB_PurchaseHouse", "RequiredProgressionPointId": "", "DoNotSpendPoint": True,
+             "PoolCategory": "Territory", "TerritoryBonusCategory": "HousePurchase", "MaxLevel": 1, "RequiredCategoricalProgressionLevel": 1}]))]
     for kind, sheet in additions:
         tables[sheet.name] = sheet
         kinds[sheet.name] = kind
     return tables, kinds
 
 
-def run_ranks(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None, standing_rank: int = 2) -> tuple[int, bool, object]:
+def run_ranks(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None, standing_rank: int = 2,
+              card_case: str = "") -> tuple[int, bool, object]:
     """@return The status of the entry point, True when the old file stayed, and the Mining cap with the expansion (with the document:
     run_ranks.document)."""
-    tables, kinds = rank_sources(short, thresholds, missing, standing_rank)
+    tables, kinds = rank_sources(short, thresholds, missing, standing_rank, card_case)
+    bonus = {key: value for key, value in BONUS.items() if not (card_case == "no-bonus-row" and key == "tb_purchasehouse")}
     with tempfile.TemporaryDirectory(prefix="soulwarden-progression-check-") as folder:
         target = Path(folder) / "progression-tables.json"
         target.write_text("earlier output\n")
@@ -167,6 +193,7 @@ def run_ranks(short: bool, thresholds: bool = True, missing: tuple[str, int] | N
                 patch.object(tool, "tables_of_paks", return_value=(contents, "made-up source")), \
                 patch.object(tool, "sheet_type", side_effect=lambda data: kinds[data.decode()]), \
                 patch.object(tool, "Sheet", side_effect=lambda data: tables[data.decode()]), \
+                patch.object(tool, "read_territory_bonus", return_value=bonus), \
                 patch.object(sys, "argv", ["progression_tables.py", str(target)]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             status = tool.main()
@@ -208,10 +235,24 @@ def main() -> int:
     # Stage 1.8d (format 3): the standing row of a territory and the rank table Territory_Standing with its XpReward.
     standings = run_ranks.document.get("standings")
     standing_table = run_ranks.document.get("rankTables", {}).get(tool.STANDING_RANK_TABLE)
-    passed = status == 0 and run_ranks.document.get("format") == 3 and standings == [["6", 2, tool.STANDING_RANK_TABLE, "TerritoryStandingPool", True]] \
-        and standing_table == {"experience": [150, 375, 600], "xpReward": [0, 100, 150]}
-    print(f"{'ok  ' if passed else 'FAIL'}  standing: the standing of the territory 6 (stage 1.8d): {standings} {standing_table}")
+    cards = [["TB_GainStanding", "", "", "TB_PurchaseHouse"], ["TB_GainStanding", "", "", "TB_PurchaseHouse"], ["TB_GainStanding", "", "", ""]]
+    passed = status == 0 and run_ranks.document.get("format") == 4 \
+        and standings == [["6", 2, tool.STANDING_RANK_TABLE, "TerritoryStandingPool", True, 1.25]] \
+        and standing_table == {"experience": [150, 375, 600], "xpReward": [0, 100, 150], "cards": cards}
+    print(f"{'ok  ' if passed else 'FAIL'}  standing: the standing of the territory 6 (stage 1.8d, format 4): {standings} {standing_table}")
     failures += 0 if passed else 1
+    # Stage QG1 (format 4): the territory cards with the values of the Territory Bonus Data.
+    territory_cards = run_ranks.document.get("territoryCards")
+    passed = status == 0 and territory_cards == [
+        ["TB_GainStanding", "GainStanding", 1, 102, False, 0, 0.05000000074505806, 0.13500000536441803, 0.0024999999441206455],
+        ["TB_PurchaseHouse", "HousePurchase", 10, 1, True, 1, 1.0, 0.0, 0.0]]
+    print(f"{'ok  ' if passed else 'FAIL'}  territory-cards: the cards of the territory pools (stage QG1): {territory_cards}")
+    failures += 0 if passed else 1
+    for case in ("unknown-offer-card", "no-bonus-row", "no-xp-modifier"):
+        status, kept, mining = run_ranks(False, card_case=case)
+        passed = status == 1 and kept
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, old file {'kept' if kept else 'replaced'} (stage QG1)")
+        failures += 0 if passed else 1
     status, kept, mining = run_ranks(False, standing_rank=3)
     passed = status == 1 and kept
     print(f"{'ok  ' if passed else 'FAIL'}  short-standing-table: a standing MaxLevel 3 with the ranks 0 to 2: status {status}, old file "

@@ -308,12 +308,17 @@ research is `~/Games/soulwarden/work/research/scratch/quests-18d/` (rules Q1 to 
 - A loot container item (the class has `LootContainer`: the Meat Pouch `QuestReward_MB_Meat_Pouch` of 06_skinningknife) is a normal reward
   item of the bag. The loot data must have its table (member `containerRoots` of `loot-tables.json`), else the hand-in is refused: a
   container that cannot open would lose its reward [brief of stage 1.8d]. The open is in [Items and equipment](items-and-equipment.md).
-- TerritoryStanding goes to the origin territory of the instance (the territory of the grant: 6 for the beach chain) [decision D3 option B
-  of the orchestrator, 2026-10-18: a rule of this project; the recipient territory of the data is not known, research U3]. The standing is
-  an entry of the categorical progression of the territory (`Skills::add_standing`, [Progression and skills](progression-and-skills.md)).
-  An instance with no origin territory refuses it. A gain that reaches the next rank is refused (the token of the rank-up has no owner yet:
-  the territory pool of ProgressionPoint) [agent]. The beach chain has one standing reward (120 of `06_raisealarm`), below rank 1 at 150
-  [data].
+- TerritoryStanding (stage QG1; it replaces decision D3 option B of stage 1.8d) goes to the territory of the character at the hand-in
+  (`World::territory_of`: the territory bounds of the POI data at its position) [client: the grant of a game event 0x31F5400 takes the
+  territory of its context and, with none, the detected territory of the player, 0x31F6D2B to 0x31F6D63; the writer of the context of an
+  objective completion was not found (static read of stage QG1, Q1a), and the mission data has its own flag GrantRewardsToOriginTerritory
+  (0x39C609E)]. Outside each territory, or in a territory with no standing row (Great Cleave 3, Shattered Mountain 7, First Light 9 of
+  the data), it goes to the origin territory of the instance; with neither it has no owner, and the hand-in is refused [agent: the client
+  grant would give nothing; a completed quest keeps its reward] (`Quests::standing_territory`). The standing is an entry of the categorical
+  progression of the territory (`Skills::add_standing`, [Progression and skills](progression-and-skills.md)): a rank-up is paid (the
+  ranks, a token for each rank, the experience of the ranks in the same transaction), and the GainStanding card of the territory applies.
+  The experience of the hand-in has the GainXP card of the territory of the character. The reward preview of an offer and the journal
+  show the standing as a number; the reward notice of the hand-in names the territory ("+100 Windsward Standing") [live QG1].
 - The completion achievement of the row and of the event are set in the same plan [data].
 - The availability (`Quests::available`) has the checks of the client in their order [client 0x37AE910 at the person, eligibility
   0x3A4BFE0; research quests-18d rules Q2]: no active instance; no other active objective with the same completion achievement
@@ -419,9 +424,8 @@ client), the live checks are in `~/Games/soulwarden/work/evidence/quests/18e/imp
 - Closed in stage 1.8f: after the hand-in of `06_raisealarm` the client offers `06A_MSQ_01_Quartermaster` at Marcel Dupont. The server
   selected `06_01b_MarcelDupont` (no requirement) and refused the 3772. The client skips that state: a state record is valid only as
   IsInitialState XOR a requirement ([Persons](persons.md), the conversation state). The server now selects `06_01_MarcelDupont` and accepts
-  the offer (live Q1 of stage 1.8f). Its hand-in is a later point: the success event pays a standing of 100, the row has no
-  ExclusiveTerritory, and the instance of an offer has no origin territory (the manifest: "the standing 100 of
-  06A_MSQ_01_Quartermaster_success has no territory").
+  the offer (live Q1 of stage 1.8f). Stage QG1: its hand-in at Saatvik Agrawal (Corinth, Windsward) pays the standing 100 to Windsward
+  (the territory of the character), with the rank-up of 120 + 100 (live: "+100 Windsward Standing", "+1325 XP", the map "70 / 375").
 - The countdown row of a timer task (open since stage 1.8d) has a static read in this stage (`research/scratch/quests-18e/timer/`): a new
   TaskTimer of the client has the deadline 0; the objective initialization (0x3A551C0) binds each timer of the tree (0x3B2FD90) before the
   activation of the root, and the bind publishes a copy of that zero deadline to `MissionTimers.<instance>.TargetTime`; the activation and
@@ -452,7 +456,10 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   open: the manifest counts each option and decides nothing]. A history plays rounds: a start and an ObjectiveReward are direct grants; an
   offer needs a present person (`Persons::present`), its selected state (the states in reverse, the first valid record whose requirements
   pass: stage 1.8f), and the availability; the tree runs with the achievement actions, the achievement waits, the lore pages, and the
-  child objectives; a hand-in pays the standing on the skill set of the history (a rank-up refuses it).
+  child objectives; a hand-in pays the standing on the skill set of the history (stage QG1: a rank-up is paid; the territory of the
+  standing is the territory of the present slot of the destination person, else the origin territory: `Quests::standing_territory`).
+  The check of a row (an empty history) takes the territory of the first resolved slot of the destination, else ExclusiveTerritory, else
+  the start territory.
 - Stage 1.8f (finding QR8E-R6): the history hands in an objective only at its destination: its NpcDestinationId has a resolved person
   slot that is there for the character with the bits after the tasks (`Persons::present`), the rule of `Persons::hand_in`. An objective
   with no NpcDestinationId has no hand-in (the server compares the destination with the person of the conversation). A child objective
@@ -494,6 +501,19 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
 - The manifest is deterministic: two manifests of one world are the same bytes (case QF4). It is a reader: no change of the world.
 - The file stays outside the repository (it names the rows of the game data). `tools/world quest support FILE`,
   `GET /v1/dev/quests/support`, `GET /admin/v1/catalog/quest-support` (about 6 MB and 2 s for the whole quest data).
+
+- The counts of stage QG1 (the same game data, with the progression tables of the format 4 and the POI data of the format 2): 304
+  supported objectives (160 before). A new character of each archetype completes 25 (15 before; new: `06A_MSQ_01_Quartermaster`,
+  `1125_0101_SongoftheSea`, `1129_0101_SoulMusic`, `1129_0102_JaansenintheNorth`, `1129_0102_NewPerspective`, `1129_0103_CliffHanger`,
+  `1524_1514_FirstThing`, `1525_1518_Communication`, `C10A_S12_DisturbingSilence`, `C10A_S7_AnimalInstincts`). A level 60 character with
+  no template completes 11 (4 before). The 298 template histories in 23 groups complete 8 to 17 (1 to 7 before; `09A_M9_MeetShirzad`: 17,
+  `09A_M15_FightArtemis` and `99F_MSQ_ER_DeliverPoem`: 16; 158 templates with no start objective: 8 to 16). The first reasons of the 723
+  objectives that are not supported: 183 a point of interest with no shape, 151 an item with no source, 65 no creature of the categories,
+  65 no producer of a game event, 44 no grant source that the backend runs, 40 TaskGameMode, 35 TaskQuickCourse, 20 TaskHaveLevel, 18 the
+  gate QuestArcTag, 18 no object of the interact tag, and 24 smaller groups; no objective stops at its standing now (158 before). The
+  second computation (a copy of `support_check.py` with the rules of stage QG1 in the evidence of the stage: its own point-in-polygon test
+  of the bounds and of the places of the person slots) gives the same counts: 2,147 rows, 304 supported, 0 row differences, 306 histories
+  with 0 differences, 25 groups.
 
 ### The corrections of the code review of stage 2.5c (in stage 1.8b)
 

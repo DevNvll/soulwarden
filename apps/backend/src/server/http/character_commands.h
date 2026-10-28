@@ -117,6 +117,17 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand set_trade_skill(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /** Arguments: `id` (a weapon or a trade skill) and `amount`. */
 [[nodiscard]] WorldCommand add_skill_experience(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * Stage QG1, give_standing: `territory` (the territory id, 6 is Windsward) and `amount` (1 to 10,000,000): a gain of the territory standing
+ * with the rules of a game reward (Skills::give_standing: the GainStanding card, the ranks, one token for each rank, the experience of the
+ * ranks). The reply has the gain, the rank, the points in the rank, the free tokens, and the experience of the ranks.
+ */
+[[nodiscard]] WorldCommand give_standing(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * Stage QG1, choose_territory_card: `territory` and `card` (the id text of the card, TB_GainStanding): one card choice with the rules of
+ * the client message 4040 (Skills::spend_territory_point). The reply has the level of the card and the free tokens.
+ */
+[[nodiscard]] WorldCommand choose_territory_card(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 // The cooldown commands (stage 3.3a, world/abilities.h). reset_cooldowns: no argument. Each
 // cooldown of the abilities of the character ends; its client gets the empty maps.
 [[nodiscard]] WorldCommand reset_cooldowns(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
@@ -579,7 +590,11 @@ inline constexpr float kAdminGatheringRange = 30.0F;
 /** @return The bag, the equipment, the coin, and (stage 3.7c) the Azoth balance and its cap of a character (world thread), or no value. */
 [[nodiscard]] std::optional<nlohmann::json> items_view(world::World& world, const std::string& character);
 
-/** @return The level, the attributes, the weapon masteries, and the trade skills of a character (world thread), or no value. */
+/**
+ * @return The level, the attributes, the weapon masteries, and the trade skills of a character (world thread), or no value. Stage QG1:
+ *         also "territory" (the territory at the position of a character in the world: World::territory_of) and "standings" (each
+ *         territory standing: the rank, the points, the points of the rank, the free tokens, and each card with its level and bonus).
+ */
 [[nodiscard]] std::optional<nlohmann::json> progress_view(world::World& world, const std::string& character);
 
 /**

@@ -62,7 +62,17 @@ const char* progress_error_text(ProgressError error) {
     case ProgressError::storeFailed:
         return "the database did not accept the change";
     case ProgressError::standingRankUp:
-        return "the standing gives a new rank, whose token of the territory pool has no owner in the backend yet";
+        return "the standing gives a new rank, and its standing row has no AutoRankUp (no rule of a manual rank-up)";
+    case ProgressError::unknownCard:
+        return "the id is not a card of the territory pools";
+    case ProgressError::cardNotOffered:
+        return "the card screen does not offer this card for the spent tokens of the pool";
+    case ProgressError::standingTooLow:
+        return "the standing rank of the territory is below the rank that the card needs";
+    case ProgressError::cardAtMaxLevel:
+        return "the card has its largest level";
+    case ProgressError::noToken:
+        return "the territory pool has no free token";
     }
     return "unknown error";
 }

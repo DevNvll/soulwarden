@@ -201,8 +201,13 @@ It also has the commands for the items and the coin of a character: `items CHARA
 on|off`, and for its equipment: `equipment CHARACTER`, `equip CHARACTER BAGSLOT [SLOT]`, and
 `unequip CHARACTER SLOT [BAGSLOT]` (`SLOT` is a slot number of the paperdoll: 1 chest, 24
 weapon 1; `tools/world --help` has the list); stage B0: `presets` (the build presets with their check) and `preset CHARACTER
-PRESET [VARIANT]` (routes `GET /v1/dev/presets`, `POST /v1/dev/presets/apply`). A command for a character that is not in the
-world changes its rows in the database. For the objects of the world (stage 2.5a):
+PRESET [VARIANT]` (routes `GET /v1/dev/presets`, `POST /v1/dev/presets/apply`); stage QG1: `standing CHARACTER` (the territory
+standings, the free tokens, the cards with their levels and values, and the territory at the position of the character; `progress
+CHARACTER` lists them too), `standing CHARACTER TERRITORY AMOUNT` (a gain of standing with the rules of a reward: the GainStanding card,
+the ranks, a token for each rank, the experience of the ranks; route `POST /v1/dev/progress/standing`, admin command `give_standing`),
+and `card CHARACTER TERRITORY CARD` (one card choice with the rules of the message 4040; route `POST /v1/dev/progress/card`, admin command
+`choose_territory_card`); the two changes are harness commands (they refuse with no `SOULWARDEN_HARNESS=1`, also as admin commands). A
+command for a character that is not in the world changes its rows in the database. For the objects of the world (stage 2.5a):
 `interactions CHARACTER [METERS]`, `object CHARACTER KEY on|off`, and `interaction cancel
 CHARACTER`; stage 2.5b: `fixture CHARACTER NAME [DX DY DZ] [--yaw D] [--permission N]` (a
 fixture near a character: `powderKeg`, the timed option Trigger; `campT5`; `camp`) and
@@ -903,7 +908,8 @@ button on "Confirm").
 - Quest rewards, availability, and repeats (stage 1.8d, [Quests](systems/quests.md), protocol notes 4.57). The hand-in pays each reward
   of the data that has an owner in one transaction: the experience, the coin (with its chance), the items (with their perks;
   GearScoreRange sets the gear score of the event item), the loot container items, the completion achievements, and the territory standing
-  of the origin territory of the quest (decision D3 option B; a gain that gives a new standing rank is refused). A faction reward, a
+  of the territory of the hand-in (stage QG1: the territory at the position of the character, else the origin territory of the quest; a
+  rank-up gives its token and its experience). A faction reward, a
   status, an entitlement, and the other currencies are refused, and the quest stays ready. The bag action "Open" of a loot container item
   (1733) rolls its loot table (`loot-tables.json` member `containerRoots`) and gives the items with the cause OpenRewardChest: the client
   shows its reward popup. A person offers only the objectives that pass the checks of the client (an active variant, the completion

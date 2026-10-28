@@ -119,7 +119,12 @@ struct GatherParts {
     /** The rank part (GatheringEfficiency of the rank row) and the EFF parts of the statuses, the attribute thresholds, the tool perks. */
     float rankEfficiency{0.0F};
     float effects{0.0F};
-    /** The speed of the Gathering state: toolSpeed * (1 + rankEfficiency + effects) (a decision of an agent: docs/systems/gathering.md). */
+    /**
+     * Stage QG1: the GainGatherRate card of the territory at the position of the character (its bonus: 0.05 at the level 1). An agent
+     * rule: one more additive part of the speed (the client formula was not found; the data calls the card "gathering speed").
+     */
+    float territory{0.0F};
+    /** The speed of the Gathering state: toolSpeed * (1 + rankEfficiency + effects + territory) (a decision of an agent: docs/systems/gathering.md). */
     float speed{gathering_rules::kNoToolSpeed};
     /** The luck: RollBonus of the rank row and the ROL parts. */
     float rollBonus{0.0F};

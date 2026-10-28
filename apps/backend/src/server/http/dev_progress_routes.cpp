@@ -42,6 +42,13 @@
 //                                                         put an active ability that the character
 //                                                         has on a place (0 to 2) of the bar of a
 //                                                         weapon (ID "none": an empty place)
+//   POST /v1/dev/progress/standing?character=ID&territory=N&amount=N
+//                                                         stage QG1: give territory standing with the rules of a game
+//                                                         reward (the GainStanding card, the ranks, a token for each
+//                                                         rank, the experience of the ranks); GET /v1/dev/progress has
+//                                                         the standings, the tokens, and the cards
+//   POST /v1/dev/progress/card?character=ID&territory=N&card=ID
+//                                                         stage QG1: one card choice with the rules of the message 4040
 //   GET  /v1/dev/presets                                  the build presets (stage B0) with the check of the start
 //   POST /v1/dev/presets/apply?character=ID&preset=NAME[&variant=NAME]
 //                                                         the whole build of a preset (the command apply_preset of the
@@ -133,6 +140,8 @@ void register_dev_progress_routes(Router& router, const Services& services) {
                command_route(services, commands::add_skill_experience));
     router.add("POST", "", "/v1/dev/progress/node", "dev.progress_node", command_route(services, commands::assign_node));
     router.add("POST", "", "/v1/dev/progress/bar", "dev.progress_bar", command_route(services, commands::set_ability_bar));
+    router.add("POST", "", "/v1/dev/progress/standing", "dev.progress_standing", command_route(services, commands::give_standing));
+    router.add("POST", "", "/v1/dev/progress/card", "dev.progress_card", command_route(services, commands::choose_territory_card));
     router.add("GET", "", "/v1/dev/presets", "dev.presets", [&services](const RouteContext& context) {
         if (!context.request.host.empty()) {
             return message(403, "forbidden");

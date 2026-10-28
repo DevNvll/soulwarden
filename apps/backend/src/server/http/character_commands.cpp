@@ -347,6 +347,65 @@ WorldCommand add_experience(const std::string& character, const Arguments& argum
     };
 }
 
+WorldCommand give_standing(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    if (!harness_gate()) {
+        refusal = message(403, "give_standing is a harness command: the backend needs SOULWARDEN_HARNESS=1");
+        return {};
+    }
+    const auto territory = arguments.integer("territory", 1, 65535);
+    const auto amount = arguments.integer("amount", 1, world::kExperienceLimit);
+    if (!territory || !amount) {
+        refusal = message(400, "give territory=N (the territory id: 6 is Windsward) and amount=N (1 to 10000000)");
+        return {};
+    }
+    return [character, territory = static_cast<std::uint16_t>(*territory), amount = *amount](world::World& target) {
+        const world::StandingResult result = target.skills().give_standing(character, territory, amount);
+        if (!result.ok()) {
+            return json_reply(status_of(result.error), json{{"message", world::progress_error_text(result.error)}}.dump());
+        }
+        return json_reply(200,
+                          json{{"message", "done"},
+                               {"applied", result.inWorld ? "world" : "stored"},
+                               {"territory", territory},
+                               {"base", result.gain.base},
+                               {"points", result.gain.points},
+                               {"bonus", result.gain.bonus},
+                               {"ranksGained", result.gain.ranks},
+                               {"rank", result.gain.rank},
+                               {"rankPoints", result.gain.rankPoints},
+                               {"tokens", result.tokens},
+                               {"experience", result.gain.experience},
+                               {"level", result.level}}
+                              .dump());
+    };
+}
+
+WorldCommand choose_territory_card(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    if (!harness_gate()) {
+        refusal = message(403, "choose_territory_card is a harness command: the backend needs SOULWARDEN_HARNESS=1");
+        return {};
+    }
+    const auto territory = arguments.integer("territory", 1, 65535);
+    const auto card = arguments.text("card");
+    if (!territory || !card || card->empty()) {
+        refusal = message(400, "give territory=N (6 is Windsward) and card=ID (the id text of a card: TB_GainStanding)");
+        return {};
+    }
+    return [character, territory = *territory, card = *card](world::World& target) {
+        const world::SkillResult result =
+            target.skills().spend_territory_point(character, gamedata::progression_id(std::to_string(territory)), gamedata::progression_id(card));
+        if (!result.ok()) {
+            return json_reply(status_of(result.error), json{{"message", world::progress_error_text(result.error)}}.dump());
+        }
+        return json_reply(200, json{{"message", "done"},
+                                    {"applied", result.inWorld ? "world" : "stored"},
+                                    {"card", card},
+                                    {"cardLevel", result.rank},
+                                    {"tokens", result.freePoints}}
+                                   .dump());
+    };
+}
+
 WorldCommand set_attribute(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
     const auto name = arguments.text("attribute");
     const auto value = arguments.integer("value", 0, 100000);
@@ -830,9 +889,36 @@ std::optional<json> progress_view(world::World& target, const std::string& chara
                                {"bar", bar}});
         }
     }
+    // Stage QG1: the territory standings, their tokens and cards, and the territory of a character in the world.
+    json standings = json::array();
+    for (const gamedata::StandingRow& row : loaded ? tables->standings() : std::span<const gamedata::StandingRow>{}) {
+        const auto found = skills->skills.progressions.find(row.wireId);
+        const world::ProgressionRank value = found == skills->skills.progressions.end() ? world::ProgressionRank{} : found->second;
+        json cards = json::array();
+        if (const auto pool = skills->skills.territoryPools.find(row.poolId); pool != skills->skills.territoryPools.end()) {
+            for (const auto& [id, level] : pool->second.cards) {
+                const gamedata::TerritoryCard* card = tables->territory_card(id);
+                cards.push_back({{"id", card != nullptr ? card->id : std::to_string(id)},
+                                 {"level", level},
+                                 {"bonus", card != nullptr ? gamedata::card_bonus(*card, level) : 0.0F}});
+            }
+        }
+        if (value.rank == 0 && value.points == 0 && cards.empty()) {
+            continue;
+        }
+        standings.push_back({{"territory", row.territory},
+                             {"rank", value.rank},
+                             {"points", value.points},
+                             {"nextRank", value.rank < row.ranks.experience.size() ? row.ranks.experience[value.rank] : 0},
+                             {"tokens", skills->skills.free_tokens(row.poolId)},
+                             {"cards", cards}});
+    }
+    const world::Entity* entity = target.find_character(character);
     return json{{"character", character},
                 {"inWorld", progress->inWorld},
                 {"tables", loaded},
+                {"territory", entity != nullptr ? target.territory_of(*entity) : 0},
+                {"standings", standings},
                 {"level", progress->progression.level},
                 {"experience", progress->progression.experience},
                 {"levelExperience", progress->levelExperience},

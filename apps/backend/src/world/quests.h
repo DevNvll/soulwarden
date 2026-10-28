@@ -242,7 +242,7 @@ struct RewardJoin {
     /** The AchievementId of the event, and the completion achievement of the row. */
     std::vector<std::string> eventAchievements;
     std::string achievement;
-    /** TerritoryStanding and its territory (the origin territory of the instance: decision D3 option B). */
+    /** TerritoryStanding and its territory (stage QG1: the territory of the character at the hand-in, else the origin territory). */
     std::uint64_t standing{0};
     std::uint16_t standingTerritory{0};
     /**
@@ -519,13 +519,23 @@ public:
     [[nodiscard]] HandInResult hand_in(Entity& entity, std::uint64_t instance);
     /**
      * Stage 1.8d: the one reward join of an objective for a character and an origin territory (the hand-in and the command `quest rewards`).
+     * Stage QG1: the standing goes to the territory at the position of the character (World::territory_of; the fallback of the grant of the
+     * client, GetDetectedTerritoryId), else to the origin territory.
      * @return `none`, or the cause of a refusal (a reward with no owner: `detail` names it).
      */
     [[nodiscard]] QuestError reward_join(const Entity& entity, const gamedata::QuestObjective& objective, std::uint16_t originTerritory,
                                          RewardJoin& join, std::string& detail) const;
-    /** Stage 1.8e: the same join with the standing of a skill set (the support manifest: the history of a profile, no character). */
+    /**
+     * Stage 1.8e: the same join with the standing of a skill set (the support manifest: the history of a profile, no character). Stage QG1:
+     * `originTerritory` is the territory of the standing (the manifest gives the territory of the hand-in person, else the origin).
+     */
     [[nodiscard]] QuestError reward_join(const SkillSet& skills, const gamedata::QuestObjective& objective, std::uint16_t originTerritory,
                                          RewardJoin& join, std::string& detail) const;
+    /**
+     * Stage QG1: @return The territory of the standing of a hand-in: the territory of the hand-in (the territory of the character, or of the
+     *         destination person in the manifest) when it has a standing row, else the origin territory of the instance (0: none).
+     */
+    [[nodiscard]] std::uint16_t standing_territory(std::uint16_t handIn, std::uint16_t originTerritory) const;
     /**
      * A cutscene request of the client (6703): @return True (the grant 6707) when an Active TaskCutsceneComplete of the character waits for
      * this cutscene; it is the pending cutscene of the character then. Else false: no answer, nothing changes.

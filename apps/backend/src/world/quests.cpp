@@ -1350,16 +1350,6 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
             return items->error == ItemError::bagFull ? QuestError::bagFull : QuestError::storeFailed;
         }
     }
-    // The experience (stage 1.8b): one plan of the progress system (the pattern of the build presets).
-    std::optional<Progress::Plan> sheet;
-    if (plan.experience > 0) {
-        sheet = m_world.progress().plan_experience(entity.characterId, plan.experience);
-        if (!sheet->ok()) {
-            log::write("quests: the experience of the quest change of character %s cannot be given (%s): no change", entity.characterId.c_str(),
-                       progress_error_text(sheet->error));
-            return QuestError::cannotPay;
-        }
-    }
     // The territory standing (stage 1.8d): one plan of the skill system (the owner of the categorical progressions).
     std::optional<Skills::Plan> standing;
     if (!plan.standing.empty() || plan.azoth > 0) {
@@ -1380,6 +1370,21 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
                            progress_error_text(error));
                 return QuestError::cannotPay;
             }
+        }
+    }
+    // The experience (stage 1.8b): one plan of the progress system (the pattern of the build presets). Stage QG1: with the experience of the
+    // standing ranks of the plan (XpReward times TerritoryStandingXpModifier, client 0x31FD3B0): the standing plan comes first.
+    // Stage QG1: the experience of the quest with the GainXP card of the territory of the character (client 0x3CF04A9; one product for the
+    // experience of the event and of the row: an agent rule), and the ranks with their own card product (add_standing).
+    const std::uint64_t experience =
+        m_world.skills().card_experience(entity.characterId, plan.experience) + (standing ? standing->rankExperience : 0);
+    std::optional<Progress::Plan> sheet;
+    if (experience > 0) {
+        sheet = m_world.progress().plan_experience(entity.characterId, std::min(experience, kExperienceLimit));
+        if (!sheet->ok()) {
+            log::write("quests: the experience of the quest change of character %s cannot be given (%s): no change", entity.characterId.c_str(),
+                       progress_error_text(sheet->error));
+            return QuestError::cannotPay;
         }
     }
     state::Store::Batch batch(m_store);
@@ -2779,7 +2784,19 @@ bool Quests::ready(const QuestInstance& quest) const {
 
 QuestError Quests::reward_join(const Entity& entity, const QuestObjective& objective, std::uint16_t originTerritory, RewardJoin& join,
                                std::string& detail) const {
-    return reward_join_of(entity.characterId, nullptr, objective, originTerritory, join, detail);
+    // Stage QG1: the standing goes to the territory of the character at the hand-in (World::territory_of). The grant of a game event of the
+    // client takes the territory of its context, and with no context territory the detected territory of the player (0x31F6D2B to
+    // 0x31F6D63, GetDetectedTerritoryId); the writer of the context of an objective completion is not known (static read of stage QG1,
+    // Q1a), and the mission data has its own flag GrantRewardsToOriginTerritory (0x39C609E). Outside each territory: the origin territory.
+    return reward_join_of(entity.characterId, nullptr, objective, standing_territory(m_world.territory_of(entity), originTerritory), join, detail);
+}
+
+std::uint16_t Quests::standing_territory(std::uint16_t handIn, std::uint16_t originTerritory) const {
+    // A territory with no standing row (Great Cleave 3, Shattered Mountain 7, First Light 9 of the data) is not a territory of a standing:
+    // then the origin territory of the instance [agent: the client grant would give nothing; a completed quest keeps its reward].
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const bool hasRow = handIn != 0 && tables != nullptr && tables->loaded() && tables->standing(handIn) != nullptr;
+    return hasRow ? handIn : originTerritory;
 }
 
 QuestError Quests::reward_join(const SkillSet& skills, const QuestObjective& objective, std::uint16_t originTerritory, RewardJoin& join,
@@ -2845,13 +2862,14 @@ QuestError Quests::reward_join_of(const std::string& characterId, const SkillSet
         if (!event->achievement.empty()) {
             join.eventAchievements.push_back(event->achievement);
         }
-        // Stage 1.8d: TerritoryStanding goes to the origin territory of the instance (decision D3 option B of the orchestrator, 2026-10-18: a
-        // rule of this project; the recipient territory of the data is not recovered, research U3). An instance with no origin territory
-        // refuses it (no owner); a gain that gives a new rank too (its token of the territory pool has no owner yet).
+        // Stage QG1: TerritoryStanding goes to the territory of the hand-in (the territory of the character, else the origin territory of the
+        // instance: Quests::reward_join; it replaces decision D3 option B of stage 1.8d). With no territory it has no owner: refused. A rank-up
+        // is paid (Skills::add_standing: the ranks, the tokens, the experience of the ranks).
         if (event->standing > 0) {
             if (originTerritory == 0) {
                 return refuse(QuestError::cannotPay, "the standing " + std::to_string(event->standing) + " of " + event->id
-                                                         + " has no territory (the instance has no origin territory)");
+                                                         + " has no territory (the character is outside each territory, and the instance has "
+                                                           "no origin territory)");
             }
             Skills::Plan trial;
             if (skills != nullptr) {
@@ -3043,11 +3061,12 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
     for (const std::string& item : result.items) {
         items += (items.empty() ? "" : ", ") + item;
     }
-    log::write("quests: character %s handed in %s (instance %016llx): %llu experience, %llu coin units, items [%s], standing %llu, Azoth %llu%s%s",
+    log::write("quests: character %s handed in %s (instance %016llx): %llu experience, %llu coin units, items [%s], standing %llu of the "
+               "territory %u, Azoth %llu%s%s",
                entity.characterId.c_str(), objective->id.c_str(), static_cast<unsigned long long>(instance),
                static_cast<unsigned long long>(result.experience), static_cast<unsigned long long>(result.coin), items.c_str(),
-               static_cast<unsigned long long>(result.standing), static_cast<unsigned long long>(result.azoth),
-               result.next.empty() ? "" : ", next objective ", result.next.c_str());
+               static_cast<unsigned long long>(result.standing), static_cast<unsigned>(result.standingTerritory),
+               static_cast<unsigned long long>(result.azoth), result.next.empty() ? "" : ", next objective ", result.next.c_str());
     return result;
 }
 

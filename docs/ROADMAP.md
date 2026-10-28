@@ -783,7 +783,8 @@ cutscene, the hand-in at Aelstrom) is part 1.8b ([Quests](systems/quests.md)).
 - Stage 1.8d (done, 2026-10-22; [Quests](systems/quests.md), [Items and equipment](systems/items-and-equipment.md), [Progression and
   skills](systems/progression-and-skills.md), protocol notes 4.57; result: `~/Games/soulwarden/work/evidence/quests/18d/implement/RESULT.md`).
   The hand-in pays each reward that has an owner in one transaction (the items with the rules of 1.3b and their perks, GearScoreRange, the
-  loot container items, the completion bits, the territory standing of the origin territory: decision D3 option B, a project rule); the
+  loot container items, the completion bits, the territory standing of the origin territory: decision D3 option B, a project rule; stage
+  QG1 replaced it with the territory of the character at the hand-in); the
   faction rewards and the other tracks stay refused. The open of a loot container (1733) rolls its table (new member `containerRoots` of
   `loot-tables.json`); the standings come from `progression-tables.json` format 3. The availability has the checks of the client; the
   repeat of a quest has the reset cycles of the client (schema 17, the rows `character_quest_repeats`). A ready quest holds its StayActive

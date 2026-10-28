@@ -50,10 +50,19 @@ Output: {"format": 3, "levelCap": N, "tradeSkillCap": N,
 "rankTables": {"<name>": {"experience": [...], "resetCost": [...]}, ...},
 "progressions": [[id, kind, maxRank, rankTable, expansionMaxRank], ...],
 "abilities": [[table, node, tree, row, column, active, requiredNode], ...],
-"standings": [[territory, maxRank, rankTable, pointPool, autoRankUp], ...]}.
+"standings": [[territory, maxRank, rankTable, pointPool, autoRankUp, xpModifier], ...],
+"territoryCards": [[id, category, bonusId, maxLevel, doNotSpend, requiredRank, initialBonus, reduction, minValue], ...]}.
 Stage 1.8d (format 3): `standings` has the territory standing rows of CategoricalProgression (the rank table Territory_Standing; the id
 is the decimal territory id), and `rankTables` the table Territory_Standing with MaximumInfluence as `experience` and XpReward as
 `xpReward`. A file of format 2 has no standing: the backend then refuses a quest reward of standing.
+Stage QG1 (format 4): a standing row has a sixth value, TerritoryStandingXpModifier of the row of its territory in the TerritoryDefinition
+tables (the character experience of a rank-up is XpReward times it). The rank table Territory_Standing has `cards`: for each rank the four
+cards that the card screen offers (AvailableProgressionPoint1 to 4; an empty text: none). `territoryCards` has each point of the table
+ProgressionPoints with PoolCategory Territory (the cards of the territory pools): TerritoryBonusCategory, MaxLevel, DoNotSpendPoint,
+RequiredCategoricalProgressionLevel, and the values of its row of the Territory Bonus Data of
+sharedassets/genericassets/playerbaseattributes.pbadb (Territory Bonus Id, Initial Bonus, Reduction Modifier, Min Value: f32 values, written
+as the exact number of the f32). The tool stops when a rank names a card that is not a territory card, a territory card has no row of
+the Territory Bonus Data, a value is not finite or is below 0, or a territory of a standing has no TerritoryStandingXpModifier.
 Entry K of `levels` (from 0) is the level K + 1 of the screen. `levelCap` is a level of the
 screen. Entry K of `constitutionHealth` is the value `minimum` + K. `abilities` (stage 3.5b.2) has, for each attribute, the
 threshold abilities of the EquipAbilities column: a character with the attribute at VALUE or above has them (the backend reads
@@ -87,7 +96,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from appearance_tables import Failure  # noqa: E402
+from appearance_tables import Failure, field_id  # noqa: E402
 from item_catalog import (  # noqa: E402
     TABLES_FOLDER,
     Sheet,
@@ -119,10 +128,16 @@ RANK_TYPES = ("CategoricalProgressionRankData", TRADE_SKILL_RANK_TYPE)
 ABILITY_TYPE = "AbilityData"
 ENTITLEMENT_TYPE = "EntitlementData"
 ACHIEVEMENT_TYPE = "AchievementData"
+# Stage QG1: the territory tables (TerritoryStandingXpModifier) and the cards of the territory pools.
+TERRITORY_TYPE = "TerritoryDefinition"
+TERRITORY_POOL_CATEGORY = "Territory"
+STANDING_CARD_COLUMNS = tuple(f"AvailableProgressionPoint{index}" for index in range(1, 5))
+BASE_ATTRIBUTES = "sharedassets/genericassets/playerbaseattributes.pbadb"
+BONUS_DATA = "Territory Bonus Data"
 # The table types that this tool reads the cells of.
 USED_TYPES = ("ExperienceData", "ExpansionData", "AttributeDefinition", "VitalsBaseData",
               "CategoricalProgressionData", "ProgressionPointData", ABILITY_TYPE, ENTITLEMENT_TYPE,
-              ACHIEVEMENT_TYPE) + RANK_TYPES
+              ACHIEVEMENT_TYPE, TERRITORY_TYPE) + RANK_TYPES
 # The DLC packs of Steam (stage 1.1b; research dlc-entitlements.md, Q1): the Steam-named entitlement
 # rows of the retail bonus set. A row with the reward type "Entitlement" gives the entitlements of its
 # Reward(s) too (the tool adds them). Not in the list: the alpha test title (STEAM_APP_ID.1266160, a
@@ -240,7 +255,82 @@ def build_ownership(sheets: dict[str, Sheet], kinds: dict[str, str], expansions:
     return expansion_rows, entitlements, achievements
 
 
-def build_tables(contents: list[bytes]) -> dict:
+def read_territory_bonus(assets: Path) -> dict[str, list]:
+    """@return For each card of the Territory Bonus Data of the base attributes file (stage QG1): [Territory Bonus Id, Initial Bonus,
+    Reduction Modifier, Min Value] (the f32 values of the file; the client sums the bonus of a card level with them, image RVA 0x5C51100)."""
+    from creature_data import Sources, walk  # noqa: PLC0415 (the object stream reader: only for this file)
+    from interactions import child_of, text_of  # noqa: PLC0415
+
+    sources = Sources(assets, (BASE_ATTRIBUTES,))
+    roots = sources.stream(BASE_ATTRIBUTES)
+    if roots is None:
+        sources.check_complete()
+        raise Failure(f"{BASE_ATTRIBUTES} has no source")
+    wanted = field_id(BONUS_DATA)
+    data = next((element for root in roots for element in walk(root) if element.name == wanted), None)
+    if data is None or not data.children:
+        raise Failure(f"{BASE_ATTRIBUTES} has no list \"{BONUS_DATA}\"")
+    bonus: dict[str, list] = {}
+    for entry in data.children:
+        point = child_of(entry, field_id("Progression Point Id"))
+        identifier = text_of(point).strip() if point is not None else ""
+        kind = child_of(entry, field_id("Territory Bonus Id"))
+        if not identifier or kind is None or not kind.value or len(kind.value) > 4:
+            raise Failure(f"an entry of \"{BONUS_DATA}\" has no Progression Point Id or no Territory Bonus Id")
+        values = [int.from_bytes(kind.value, "big")]
+        for name in ("Initial Bonus", "Reduction Modifier", "Min Value"):
+            element = child_of(entry, field_id(name))
+            if element is None or element.value is None or len(element.value) != 4:
+                raise Failure(f"the value \"{name}\" of the card {identifier} of \"{BONUS_DATA}\" is not a number of 4 bytes")
+            value = struct.unpack(">f", element.value)[0]
+            if not math.isfinite(value) or value < 0:
+                raise Failure(f"the value \"{name}\" of the card {identifier} of \"{BONUS_DATA}\" is not a number of 0 or more")
+            values.append(value)
+        bonus[identifier.lower()] = values
+    return bonus
+
+
+def territory_xp_modifiers(sheets: dict[str, Sheet], kinds: dict[str, str]) -> dict[int, float]:
+    """@return TerritoryStandingXpModifier of each row of the TerritoryDefinition tables that has the column (stage QG1), by TerritoryID."""
+    modifiers: dict[int, float] = {}
+    for name, sheet in sheets.items():
+        if kinds[name] != TERRITORY_TYPE or "TerritoryStandingXpModifier" not in sheet.columns or "TerritoryID" not in sheet.columns:
+            continue
+        for row in range(sheet.row_count):
+            value = sheet.cell(row, "TerritoryStandingXpModifier")
+            try:
+                number = float(value) if not isinstance(value, bool) else math.nan
+            except (TypeError, ValueError):
+                number = math.nan
+            if math.isfinite(number) and number >= 0:
+                modifiers.setdefault(whole(sheet.cell(row, "TerritoryID")), struct.unpack("<f", struct.pack("<f", number))[0])
+    return modifiers
+
+
+def territory_cards(point_sheet: Sheet, bonus: dict[str, list]) -> list:
+    """@return The cards of the territory pools (stage QG1): each point of the table ProgressionPoints with PoolCategory Territory, with the
+    values of its row of the Territory Bonus Data."""
+    for column in ("DoNotSpendPoint", "PoolCategory", "TerritoryBonusCategory", "MaxLevel", "RequiredCategoricalProgressionLevel"):
+        if column not in point_sheet.columns:
+            raise Failure(f"the table {POINT_TABLE} has no column {column}")
+    cards = []
+    for row in range(point_sheet.row_count):
+        if str(point_sheet.cell(row, "PoolCategory") or "").strip() != TERRITORY_POOL_CATEGORY:
+            continue
+        identifier = str(point_sheet.cell(row, "ProgressionPointId")).strip()
+        values = bonus.get(identifier.lower())
+        if values is None:
+            raise Failure(f"the territory card {identifier} has no row of \"{BONUS_DATA}\" in {BASE_ATTRIBUTES}")
+        largest = whole(point_sheet.cell(row, "MaxLevel"))
+        if not 0 < largest <= 0xFFFF:
+            raise Failure(f"the territory card {identifier} has the MaxLevel {largest}")
+        cards.append([identifier, str(point_sheet.cell(row, "TerritoryBonusCategory") or "").strip(), values[0], largest,
+                      flag(point_sheet.cell(row, "DoNotSpendPoint")), whole(point_sheet.cell(row, "RequiredCategoricalProgressionLevel")),
+                      values[1], values[2], values[3]])
+    return cards
+
+
+def build_tables(contents: list[bytes], bonus: dict[str, list] | None = None) -> dict:
     sheets: dict[str, Sheet] = {}
     kinds: dict[str, str] = {}
     for data in contents:
@@ -365,20 +455,38 @@ def build_tables(contents: list[bytes]) -> dict:
         progressions.append([identifier, kind, largest, table, expansion_largest])
     # Stage 1.8d: the rank table of the standing: MaximumInfluence of each rank (the points of a rank to the next one; client 0x3CAACF0) and
     # XpReward. Each standing row must have a rank row for each rank to its MaxLevel.
+    # Stage QG1 (format 4): the cards of each rank (the card screen offers the row whose index is the number of the spent tokens, client
+    # 0x3CEBDA0), the cards of the territory pools, and the experience modifier of each territory.
     standings = []
+    cards: list = []
     if standing_rows:
         sheet = one_table(sheets, STANDING_RANK_TABLE)
-        influence, experience = [], []
+        for column in STANDING_CARD_COLUMNS:
+            if column not in sheet.columns:
+                raise Failure(f"the rank table {STANDING_RANK_TABLE} has no column {column}")
+        cards = territory_cards(one_table(sheets, POINT_TABLE), bonus if bonus is not None else {})
+        card_ids = {card[0].lower() for card in cards}
+        influence, experience, offers = [], [], []
         for rank in range(sheet.row_count):
             if whole(sheet.cell(rank, "Rank")) != rank:
                 raise Failure(f"row {rank} of the rank table {STANDING_RANK_TABLE} is not the rank {rank}")
             influence.append(whole(sheet.cell(rank, "MaximumInfluence")))
             experience.append(whole(sheet.cell(rank, "XpReward")))
-        rank_tables[STANDING_RANK_TABLE] = {"experience": influence, "xpReward": experience}
+            offer = [str(sheet.cell(rank, column) or "").strip() for column in STANDING_CARD_COLUMNS]
+            for card in offer:
+                if card and card.lower() not in card_ids:
+                    raise Failure(f"the rank {rank} of {STANDING_RANK_TABLE} offers the card {card}, which is not a territory card of "
+                                  f"the table {POINT_TABLE}")
+            offers.append(offer)
+        rank_tables[STANDING_RANK_TABLE] = {"experience": influence, "xpReward": experience, "cards": offers}
+        modifiers = territory_xp_modifiers(sheets, kinds)
         for identifier, largest, table, pool, auto in standing_rows:
             if largest >= len(influence):
                 raise Failure(f"the MaxLevel {largest} of the standing {identifier} has no row in its rank table {table}")
-            standings.append([identifier, largest, table, pool, auto])
+            if int(identifier) not in modifiers:
+                raise Failure(f"the territory {identifier} of a standing has no TerritoryStandingXpModifier in a table of the type "
+                              f"{TERRITORY_TYPE}")
+            standings.append([identifier, largest, table, pool, auto, modifiers[int(identifier)]])
     weapons = {entry[0].lower() for entry in progressions if entry[1] == "weapon"}
     if not weapons:
         raise Failure(f"the table {PROGRESSION_TABLE} has no weapon mastery")
@@ -410,12 +518,12 @@ def build_tables(contents: list[bytes]) -> dict:
                           str(point_sheet.cell(row, "RequiredProgressionPointId"))])
     if not abilities:
         raise Failure(f"the table {POINT_TABLE} has no node of a weapon tree")
-    return {"format": 3, "levelCap": level_cap, "tradeSkillCap": trade_skill_cap, "expansions": expansion_rows,
+    return {"format": 4, "levelCap": level_cap, "tradeSkillCap": trade_skill_cap, "expansions": expansion_rows,
             "entitlements": entitlements, "achievements": achievements, "levels": levels,
             "attributes": {"minimum": minimum, "maximum": minimum + len(health) - 1, "constitutionHealth": health,
                            "abilities": attribute_abilities},
             "vitals": vitals, "rankTables": rank_tables, "progressions": progressions, "abilities": abilities,
-            "standings": standings}
+            "standings": standings, "territoryCards": cards}
 
 
 def main() -> int:
@@ -432,7 +540,7 @@ def main() -> int:
     try:
         entries = table_entries(game / "assets")
         source = tables_of_paks(entries) or tables_of_folder(extracted, entries)
-        tables = build_tables(source[0])
+        tables = build_tables(source[0], read_territory_bonus(game / "assets"))
         target.parent.mkdir(parents=True, exist_ok=True)
         # The backend must not read a file that is not complete: write, then rename.
         temporary = target.with_name(target.name + ".tmp")
@@ -453,7 +561,8 @@ def main() -> int:
           f"character, "
           f"{len(tables['attributes']['constitutionHealth'])} values of an attribute, {weapons} weapon masteries, "
           f"{len(tables['progressions']) - weapons} trade skills (the largest level is {tables['tradeSkillCap']}), "
-          f"{len(tables['rankTables'])} rank tables, {len(tables['abilities'])} nodes of the weapon trees "
+          f"{len(tables['rankTables'])} rank tables, {len(tables['abilities'])} nodes of the weapon trees, "
+          f"{len(tables['standings'])} territory standings, {len(tables['territoryCards'])} territory cards "
           f"(source: {source[1]})")
     return 0
 

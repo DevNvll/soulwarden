@@ -18,6 +18,8 @@
 //   QD9   a refine of a recipe with IsRefining counts for TaskCraftRecipe (06_boarfeast, the Light Ration of the camp)
 //   QD10  the first instance id of a run: a new instance does not take the id of a completed instance of the same world entry
 //   QD11  a quest whose root is satisfied holds its StayActive tasks (06_crewmates); a quest that is not ready regresses (QR8A-R3)
+//   QG1E  stage QG1: the territory of a quest standing (the territory of the character at the hand-in, a territory with no standing row,
+//         no territory), the GainXP card on the experience of a hand-in and of a rank, two sessions
 
 #include <sqlite3.h>
 
@@ -190,17 +192,96 @@ void reward_join(const Options&) {
         pantsScore = slot.item && slot.item->itemId == "QbPants" ? slot.item->gearScore : pantsScore;
     }
     check(ranged.ok() && pantsScore == 100, "GearScoreRange 100: the item of the event has the gear score 100");
-    // A rank-up (120 + 40 reaches 150): its token of the territory pool has no owner: refused, nothing changes.
+    // A rank-up (120 + 40 reaches 150). Stage QG1: the rank goes up with the rest (10 points), the territory pool gets its token, and the
+    // character experience of the rank (XpReward 100 of the rank 1 times the modifier 1 of these tables) goes in with the experience of the
+    // event (10), in one transaction.
     const std::uint64_t rankup = shop.ready(kCharacterA, "Qd_Rankup", 6);
     const std::uint32_t before = a->progression.experience;
-    const world::HandInResult refused = shop.host.world.quests().hand_in(*a, rankup);
-    check(refused.error == world::QuestError::cannotPay && a->progression.experience == before && shop.standing(kCharacterA).points == 120
-              && questfix::quest_of(*a, "Qd_Rankup") != nullptr,
-          "a standing that gives a new rank is refused (the token of TerritoryRankBonus_6 has no owner): the quest stays ready");
+    const world::HandInResult ranked = shop.host.world.quests().hand_in(*a, rankup);
+    check(ranked.ok() && a->progression.experience == before + 110 && shop.standing(kCharacterA).rank == 1
+              && shop.standing(kCharacterA).points == 10 && a->skills.free_tokens(gamedata::progression_id("TerritoryRankBonus_6")) == 1
+              && questfix::quest_of(*a, "Qd_Rankup") == nullptr,
+          "stage QG1: a standing that gives a new rank is paid: rank 1 with 10 points, one token, 10 + 100 experience");
     // A faction reward (roadmap 4.5) stays refused; a standing with no origin territory too.
     const world::HandInResult faction = shop.host.world.quests().hand_in(*a, shop.ready(kCharacterA, "Qd_Faction"));
     check(faction.error == world::QuestError::cannotPay && faction.detail.find("FactionReputation") != std::string::npos,
           "FactionReputation has no owner: the hand-in is refused");
+}
+
+/** @return POI data of the format 2 with the bounds of one territory: a square of 100 m around a place (stage QG1). */
+std::string bounds_around(std::uint16_t territory, float x, float y) {
+    return json{{"format", 2},
+                {"pois", json::array()},
+                {"territories", json::array({{{"id", territory},
+                                              {"shape", json::array({json::array({x - 50.0F, y - 50.0F}), json::array({x + 50.0F, y - 50.0F}),
+                                                                     json::array({x + 50.0F, y + 50.0F}), json::array({x - 50.0F, y + 50.0F})})}}})}}
+        .dump();
+}
+
+/** QG1E: the territory of a quest standing (stage QG1). */
+void standing_territory(const Options&) {
+    RewardShop shop;
+    // The standings of the territories 6 and 4 (the tables of the 1.8d cases), the card GainXP of the data.
+    gamedata::ProgressionData data = standing_progression();
+    gamedata::StandingRow four = data.standings.front();
+    four.territory = 4;
+    four.id = "4";
+    four.pool = "TerritoryRankBonus_4";
+    four.xpModifier = 1.25F;
+    data.standings.push_back(four);
+    gamedata::TerritoryCard xp;
+    xp.id = "TB_GainXP";
+    xp.kind = gamedata::TerritoryBonus::gainXp;
+    xp.maxLevel = 100;
+    xp.initialBonus = 0.03F;
+    xp.reduction = 0.1F;
+    xp.minValue = 0.0025F;
+    data.territoryCards.push_back(xp);
+    shop.host.progression.set(data);
+    shop.enter();
+    world::Entity* a = shop.entity(kCharacterA);
+    world::Entity* b = shop.entity(kCharacterB);
+    const auto standing_of = [&](const world::Entity& entity, std::uint16_t territory) { return world::Skills::standing(entity.skills, territory); };
+    // The character stands in the bounds of the territory 4; the instance has the origin territory 6.
+    check(shop.host.pois.load_text(bounds_around(4, a->position.x, a->position.y)) && shop.host.world.territory_of(*a) == 4,
+          "setup: the bounds of the territory 4 around the place of A");
+    const world::HandInResult four120 = shop.host.world.quests().hand_in(*a, shop.ready(kCharacterA, "Qd_Full", 6));
+    check(four120.ok() && four120.standingTerritory == 4 && standing_of(*a, 4).points == 120 && standing_of(*a, 6).points == 0
+              && standing_of(*b, 4).points == 0,
+          "the standing goes to the territory of the character at the hand-in (4), not to the origin territory of the instance (6) [client "
+          "0x31F6D2B: the detected territory of the player]; B gets nothing");
+    // A territory with no standing row (3: Great Cleave of the data): the origin territory.
+    check(shop.host.pois.load_text(bounds_around(3, a->position.x, a->position.y)), "setup: the bounds of the territory 3 around A");
+    const world::HandInResult origin = shop.host.world.quests().hand_in(*a, shop.ready(kCharacterA, "Qd_Rankup", 6));
+    check(origin.ok() && origin.standingTerritory == 6 && standing_of(*a, 6).points == 40,
+          "in a territory with no standing row the standing goes to the origin territory of the instance (6)");
+    // Outside each territory and no origin territory: refused, nothing changes.
+    check(shop.host.pois.load_text(bounds_around(4, a->position.x + 1000.0F, a->position.y)) && shop.host.world.territory_of(*a) == 0,
+          "setup: A is outside each bounds");
+    const std::uint32_t before = a->progression.experience;
+    const world::HandInResult none = shop.host.world.quests().hand_in(*a, shop.ready(kCharacterA, "Qd_Rankup", 0));
+    check(none.error == world::QuestError::cannotPay && none.detail.find("has no territory") != std::string::npos && a->progression.experience == before
+              && questfix::quest_of(*a, "Qd_Rankup") != nullptr,
+          "outside each territory with no origin territory: the standing has no owner, the hand-in is refused");
+    (void)shop.host.world.quests().abandon(*a, questfix::quest_of(*a, "Qd_Rankup")->instance);
+
+    // The GainXP card of the territory of the character (client 0x3CEC0CA, 0x3CF04A9): trunc(f32(40 * (1 + 0.03))) = 41.
+    check(shop.host.pois.load_text(bounds_around(4, a->position.x, a->position.y)), "setup: A in the territory 4 again");
+    a->skills.territoryPools[gamedata::progression_id("TerritoryRankBonus_4")].cards[gamedata::progression_id("TB_GainXP")] = 1;
+    const std::uint32_t xpBefore = a->progression.experience;
+    const world::HandInResult carded = shop.host.world.quests().hand_in(*a, shop.ready(kCharacterA, "Qd_Range"));
+    check(carded.ok() && a->progression.experience == xpBefore + 41,
+          "GainXP level 1 (0.03) in the territory 4: the 40 experience of the hand-in are 41");
+    // A rank with the GainXP card: 120 + 40 of Qd_Rankup at 4 is rank 1 with 10 points; its experience 100 x 1.25 = 125, then x 1.03 = 128.
+    const std::uint32_t rankBefore = a->progression.experience;
+    const world::HandInResult ranked = shop.host.world.quests().hand_in(*a, shop.ready(kCharacterA, "Qd_Rankup", 6));
+    check(ranked.ok() && ranked.standingTerritory == 4 && standing_of(*a, 4).rank == 1 && standing_of(*a, 4).points == 10
+              && a->progression.experience == rankBefore + 10 + 128,
+          "a rank-up in the territory 4 with GainXP 1: the 10 of the event become 10 (10.3 truncated) and the 125 of the rank 128");
+    // B in the same territory with no card: the 40 experience stay 40.
+    const std::uint32_t bBefore = b->progression.experience;
+    check(shop.host.world.quests().hand_in(*b, shop.ready(kCharacterB, "Qd_Range")).ok() && b->progression.experience == bBefore + 40,
+          "B has no card: its 40 experience stay 40 (each session has its own cards; MP-10)");
 }
 
 /** The component Crafting of the player slice (the target of 1733; live check I0 of stage 1.8d: component 065458ab26042e65). */
@@ -739,7 +820,9 @@ std::vector<Case> quest_reward_cases() {
             {"QD9", "quests 1.8d (I6): a refine of a recipe with IsRefining counts for TaskCraftRecipe", refine_counts},
             {"QD10", "quests 1.8d: a new instance does not take the id of a completed instance of the same world entry", instance_start},
             {"QD11", "quests 1.8d: a quest whose root is satisfied holds its StayActive tasks; a waiting quest regresses", ready_root_holds},
-            {"QF7", "quests 1.8e (I3): AzothReward goes into the Azoth balance; the cap; a blank chance; no cap data; two sessions", azoth_reward}};
+            {"QF7", "quests 1.8e (I3): AzothReward goes into the Azoth balance; the cap; a blank chance; no cap data; two sessions", azoth_reward},
+            {"QG1E", "territory standing (QG1-I5): the territory of a quest standing, the GainXP card on a hand-in and a rank, two sessions",
+             standing_territory}};
 }
 
 } // namespace soulwarden::backend::tests

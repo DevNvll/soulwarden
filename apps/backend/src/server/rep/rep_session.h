@@ -413,6 +413,8 @@ private:
      * the reset of a tree, which gets the message "mastery tree respec response".
      */
     void handle_assign_pool_points(std::span<const std::uint8_t> body);
+    /** Stage QG1: the card choice of the territory standing (4040). */
+    void handle_spend_territory_point(std::span<const std::uint8_t> body);
     void handle_apply_ability_points(std::span<const std::uint8_t> body);
     void handle_change_mapped_ability(std::span<const std::uint8_t> body);
     void handle_mastery_tree_respec(std::span<const std::uint8_t> body);

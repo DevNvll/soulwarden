@@ -117,7 +117,7 @@ std::string reason_kind(const std::string& reason) {
         {"the tree has no completion path", "the tree has no completion path"},
         {"rewards: the reward ", "rewards: "},
         {"rewards: the item catalog has no", "rewards: an item that the catalog does not have"},
-        {"rewards: the standing", "rewards: a standing with no territory or a rank-up"},
+        {"rewards: the standing", "rewards: a standing with no territory"},
         {"rewards: the quest data has no", "rewards: a game event or a next objective that the data does not have"},
         {"rewards: the reward item", "rewards: a loot container with no table"},
         {"rewards: a negative", "rewards: a negative quantity"},
@@ -912,10 +912,22 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
     if (!row.tree && row.blocked.empty()) {
         row.blocked.push_back("the tree has no completion path");
     }
-    // The rewards with an empty history (the standing of a history: the closure checks it again).
+    // The rewards with an empty history (the standing of a history: the closure checks it again). Stage QG1: the standing goes to the
+    // territory of the hand-in: the territory of the first resolved slot of the destination person (the bounds of the POI data at its
+    // place), else ExclusiveTerritory, else the start territory (Quests::standing_territory).
+    std::uint16_t destination = 0;
+    if (const auto slots = index.persons.find(lower_text(objective.destination)); slots != index.persons.end() && options.poiData != nullptr
+                                                                                   && options.poiData->loaded()) {
+        for (const gamedata::InteractionObject* object : slots->second) {
+            if (destination == 0 && object->person->unresolved.empty()) {
+                destination = options.poiData->territory_at(object->position.x, object->position.y);
+            }
+        }
+    }
     RewardJoin join;
     std::string detail;
-    const QuestError reward = m_world.quests().reward_join(SkillSet{}, objective, objective.exclusiveTerritory.value_or(kNewStartTerritory), join, detail);
+    const QuestError reward = m_world.quests().reward_join(
+        SkillSet{}, objective, m_world.quests().standing_territory(destination, objective.exclusiveTerritory.value_or(kNewStartTerritory)), join, detail);
     row.rewards = reward == QuestError::none;
     row.rewardDetail = detail;
     json items = json::array();
@@ -1045,7 +1057,10 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
     // The hand-in of a completed tree (code review of stage 1.8e, finding QR8E-R6; Persons::hand_in): the NpcDestinationId of the objective
     // is the person of the conversation, and the person must be there for the character with the bits after the tasks (Persons::present).
     // @return The cause when the history cannot hand it in, or an empty text.
-    const auto hand_in_cause = [&](const QuestObjective& objective, const std::set<std::uint32_t>& bits) -> std::string {
+    // Stage QG1: `territory` gets the territory of the present slot of the hand-in person (the bounds of the POI data at its place: the
+    // territory of the character at the hand-in, Quests::reward_join), or 0.
+    const auto hand_in_cause = [&](const QuestObjective& objective, const std::set<std::uint32_t>& bits, std::uint16_t& territory) -> std::string {
+        territory = 0;
         if (objective.destination.empty()) {
             return "the hand-in: the objective has no NpcDestinationId (the hand-in needs the person of the conversation)";
         }
@@ -1056,6 +1071,8 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         history.scratch.achievements.assign(bits.begin(), bits.end());
         for (const gamedata::InteractionObject* object : slots->second) {
             if (object->person->unresolved.empty() && persons.present(history.scratch, *object->person)) {
+                const gamedata::PoiData* pois = m_world.options().poiData;
+                territory = pois != nullptr && pois->loaded() ? pois->territory_at(object->position.x, object->position.y) : 0;
                 return std::string{};
             }
         }
@@ -1305,13 +1322,15 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         }
         // The hand-in at the destination (finding QR8E-R6). A child objective with no hand-in still completes its task of the parent (the root
         // of the child is its completion for the parent: TaskObjective), but the history does not count it and gets none of its rewards.
-        if (std::string cause = hand_in_cause(objective, bits); !cause.empty()) {
+        std::uint16_t handInTerritory = 0;
+        if (std::string cause = hand_in_cause(objective, bits, handInTerritory); !cause.empty()) {
             return depth == 0 ? cause : std::string{};
         }
-        // The hand-in: the reward join with the standing of the history, then the completion achievements; the temporary unlocks revert.
+        // The hand-in: the reward join with the standing of the history (stage QG1: the territory of the hand-in person, else the origin
+        // territory), then the completion achievements; the temporary unlocks revert.
         RewardJoin join;
         std::string detail;
-        if (quests.reward_join(skills, objective, origin, join, detail) != QuestError::none) {
+        if (quests.reward_join(skills, objective, quests.standing_territory(handInTerritory, origin), join, detail) != QuestError::none) {
             return "rewards: " + detail;
         }
         if (join.standing > 0) {

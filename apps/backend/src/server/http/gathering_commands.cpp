@@ -18,7 +18,7 @@ json parts_json(const world::GatherParts& parts) {
     return {{"toolSpeed", parts.toolSpeed},     {"rankEfficiency", parts.rankEfficiency}, {"effects", parts.effects},
             {"speed", parts.speed},             {"rollBonus", parts.rollBonus},           {"rollEffects", parts.rollEffects},
             {"multiplier", parts.multiplier},   {"instant", parts.instant},               {"tool", parts.toolItem},
-            {"toolGearScore", parts.toolGearScore}};
+            {"toolGearScore", parts.toolGearScore}, {"territoryCard", parts.territory}};
 }
 
 } // namespace

@@ -739,6 +739,12 @@ public:
      *         kVelocityLargest (a travel). A rule of this project: the client reports no velocity that the backend reads.
      */
     [[nodiscard]] std::array<float, 3> velocity_of(const Entity& entity) const;
+    /**
+     * Stage QG1: @return The territory at the position of an entity: the bounds of the territories of the POI data (gamedata::PoiData::
+     *         territory_at; the claim territory of the client, research map.md 2.6). 0 outside each territory or with no bounds data. The
+     *         territory cards of a character (GainXP, GainGatherRate) and the standing of a quest without a territory use it.
+     */
+    [[nodiscard]] std::uint16_t territory_of(const Entity& entity) const;
     static constexpr std::chrono::milliseconds kVelocitySample{60};
     static constexpr std::chrono::milliseconds kVelocityKeep{300};
     static constexpr float kVelocityLargest = 15.0F;

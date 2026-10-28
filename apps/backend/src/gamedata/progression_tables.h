@@ -103,8 +103,66 @@ struct StandingRow {
     std::vector<std::uint32_t> xpReward;
     /** ProgressionPointPool (TerritoryRankBonus_6): a rank-up gives one token of it (0x3CB7500). */
     std::string pool;
+    /** Stage QG1: the id on the wire of the pool (the CRC-32 of its lower-case text); 0 with no pool. */
+    std::uint32_t poolId{0};
     bool autoRankUp{false};
+    /**
+     * Stage QG1 (format 4): TerritoryStandingXpModifier of the territory (TerritoryDefinition): the character experience of a rank-up is
+     * the XpReward of the new rank times it (client 0x31FD6AC). 1 in a file of format 3.
+     */
+    float xpModifier{1.0F};
+    /**
+     * Stage QG1 (format 4): entry R: the cards that the card screen offers when the character spent R tokens of the pool
+     * (AvailableProgressionPoint1 to 4 of the rank R; client 0x3CEBDA0: the row is the count of the spent levels). 0: no card.
+     */
+    std::vector<std::array<std::uint32_t, 4>> offers;
 };
+
+/** Stage QG1: the kind of a territory card (TerritoryBonusCategory of the point data; the Territory Bonus Id of playerbaseattributes). */
+enum class TerritoryBonus : std::uint8_t {
+    none = 0,
+    gainStanding = 1,
+    gainXp = 2,
+    gainStorage = 3,
+    gainGatherRate = 4,
+    gainFactionRep = 5,
+    gainHousePoints = 6,
+    tradingTax = 7,
+    stationTax = 8,
+    propertyTax = 9,
+    housePurchase = 10,
+};
+
+/**
+ * Stage QG1 (format 4): one card of the territory pools (a point of ProgressionPoints with PoolCategory Territory, and its row of the
+ * Territory Bonus Data of playerbaseattributes.pbadb). The cards are the same for each territory: a card of a character is an entry of the
+ * pool of a territory with the card id and its level.
+ */
+struct TerritoryCard {
+    /** The id text (TB_GainStanding), and on the wire its CRC-32. */
+    std::string id;
+    std::uint32_t wireId{0};
+    /** TerritoryBonusCategory ("GainStanding") and its kind. */
+    std::string category;
+    TerritoryBonus kind{TerritoryBonus::none};
+    /** MaxLevel of the point data (TB_GainStanding 102). */
+    std::uint32_t maxLevel{0};
+    /** DoNotSpendPoint (TB_PurchaseHouse): the card spends no token (client 0x3CE0370, the count helper 0x3CF0600). */
+    bool doNotSpend{false};
+    /** RequiredCategoricalProgressionLevel: the standing rank that the card needs (TB_PurchaseHouse 1). */
+    std::uint32_t requiredRank{0};
+    /** Initial Bonus, Reduction Modifier, Min Value (f32): the bonus of a level (card_bonus, client 0x5C51100). */
+    float initialBonus{0.0F};
+    float reduction{0.0F};
+    float minValue{0.0F};
+};
+
+/**
+ * Stage QG1: @return The bonus of a card at a level (the sum of the levels 1 to `level`), the calculation of the client 0x5C51100: the
+ * f32 subtraction 1 - Reduction Modifier, the f64 power and product with Initial Bonus, each increment converted to f32 with Min Value as
+ * its least value, and an f32 sum. Level 0: 0.
+ */
+[[nodiscard]] float card_bonus(const TerritoryCard& card, std::uint32_t level);
 
 /** One row of the expansion table of the game (Expansions): the limits of a player who owns the expansion (stage 1.1b). */
 struct ExpansionRow {
@@ -218,6 +276,8 @@ struct ProgressionData {
     std::vector<AchievementRow> achievements;
     /** Stage 1.8d (format 3): the territory standings. Empty in an older file: a quest reward of standing is refused. */
     std::vector<StandingRow> standings;
+    /** Stage QG1 (format 4): the cards of the territory pools. Empty in an older file: the card choice is refused. */
+    std::vector<TerritoryCard> territoryCards;
 };
 
 class ProgressionTables {
@@ -310,6 +370,18 @@ public:
     [[nodiscard]] const StandingRow* standing(std::uint16_t territory) const;
     /** Stage 1.8d: @return The standing with this id on the wire, or null. */
     [[nodiscard]] const StandingRow* standing_of(std::uint32_t wireId) const;
+    /** Stage QG1: @return The standing whose territory pool has this id on the wire, or null. */
+    [[nodiscard]] const StandingRow* standing_of_pool(std::uint32_t poolId) const;
+    [[nodiscard]] std::span<const StandingRow> standings() const {
+        return m_data.standings;
+    }
+    /** Stage QG1: @return The territory card with this id on the wire, or null. */
+    [[nodiscard]] const TerritoryCard* territory_card(std::uint32_t wireId) const;
+    /** Stage QG1: @return The territory card of a kind (the first one of the data), or null. */
+    [[nodiscard]] const TerritoryCard* territory_card(TerritoryBonus kind) const;
+    [[nodiscard]] std::span<const TerritoryCard> territory_cards() const {
+        return m_data.territoryCards;
+    }
 
     /** @return The node with this id on the wire, or null. */
     [[nodiscard]] const AbilityNode* node(std::uint32_t wireId) const;
@@ -325,6 +397,8 @@ private:
 
     ProgressionData m_data;
     std::unordered_map<std::uint32_t, std::size_t> m_standingKeys;
+    std::unordered_map<std::uint32_t, std::size_t> m_standingPoolKeys;
+    std::unordered_map<std::uint32_t, std::size_t> m_cardKeys;
     /** The index of the owned expansion in m_data.expansions; no row: the size of the list or more. */
     std::size_t m_owned{static_cast<std::size_t>(-1)};
     std::unordered_map<std::uint32_t, std::size_t> m_progressionKeys;

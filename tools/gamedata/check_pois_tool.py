@@ -5,7 +5,10 @@ The tool (pois.py) gives each shape of a point of interest the POI placement of 
 agree (an entry that names the id is in the shape, an entry that does not name it is not; an entry near the border is not wrong). It leaves
 out a shape with no such placement, and it writes no file for a shape file with a wrong form or when no shape gets an origin.
 
-This check makes the territory table, the shape files, the POI placements, and the entries in memory, gives them to the entry point of the
+Stage QG1 (format 2): the tool also writes the bounds of each territory (objects/worldprisms/bounds/territory, the property TerritoryId)
+and counts the entries of the region metadata outside the bounds of their territory.
+
+This check makes the territory table, the shape files, the bounds file of the territory 7, the POI placements, and the entries in memory, gives them to the entry point of the
 tool with a source provider that reads no game copy, and compares the status and the output file of each case. The test program of the
 backend runs it (case QE-TOOL).
 
@@ -50,6 +53,18 @@ def shape(points: list[tuple[float, float]], count: int | None = None) -> bytes:
 
 
 SQUARE = [(-20.0, -20.0), (20.0, -20.0), (20.0, 20.0), (-20.0, 20.0)]
+# Stage QG1: the bounds of the territory LAND (world coordinates) hold the entries of the check.
+LAND_BOUNDS = [(0.0, 0.0), (1000.0, 0.0), (1000.0, 1000.0), (0.0, 1000.0)]
+
+
+def bounds(points: list[tuple[float, float]], territory: str, tail: int = 16) -> bytes:
+    """@return A bounds file of a territory: the points, the property list with TerritoryId, and the tail (16 bytes)."""
+    data = struct.pack("<II", 0, len(points))
+    for x, y in points:
+        data += struct.pack("<fff", x, y, 0.0)
+    name, value = b"TerritoryId", territory.encode()
+    data += struct.pack("<I", 1) + struct.pack("<I", len(name)) + name + struct.pack("<I", len(value)) + value
+    return data + bytes(tail)
 
 
 class MadeUpSources:
@@ -76,7 +91,11 @@ class MadeUpSources:
             f"{tool.SHAPES_FOLDER}{REGION}/poi_{LOST}_lost.vshapec": shape(SQUARE),
             f"{tool.REGIONS_FOLDER}{REGION}/capitals/pois/pois.capitals.json": json.dumps(plots).encode(),
             f"{tool.REGIONS_FOLDER}{REGION}/region.metadata": b"made-up",
+            f"{tool.BOUNDS_FOLDER}land.vshapec": bounds(LAND_BOUNDS if self.mode != "small-bounds" else SQUARE, f"{LAND}:@land",
+                                                       16 if self.mode != "bounds-tail" else 12),
         }
+        if self.mode == "no-bounds":
+            del self.files[f"{tool.BOUNDS_FOLDER}land.vshapec"]
 
     def paths(self, prefix, suffix):
         return sorted(path for path in self.files if path.startswith(prefix) and path.endswith(suffix))
@@ -102,6 +121,9 @@ CASES = [
     ("valid", True, "two shapes get their placement; a shape with no entry is left out; a near-border entry is not wrong"),
     ("short-shape", False, "a shape file whose size does not agree with its count of points"),
     ("no-origin", False, "no shape gets an origin"),
+    ("small-bounds", True, "stage QG1: the bounds of the territory do not hold the entries: the count boundsWrong has them"),
+    ("bounds-tail", False, "stage QG1: a bounds file whose tail after the properties is not 16 bytes"),
+    ("no-bounds", False, "stage QG1: the game copy has no bounds file of a territory"),
 ]
 
 
@@ -127,8 +149,17 @@ def main() -> int:
             correct = (sorted(found) == [FIRST, SECOND] and found[FIRST]["center"][:2] == [100.0, 100.0]
                        and found[SECOND]["center"][:2] == [300.0, 100.0] and found[SECOND]["tags"] == ["test_b", "extra"]
                        and found[FIRST]["territory"] == LAND and found[FIRST]["radius"] == 150.0 and found[SECOND]["wrong"] == 0
-                       and found[FIRST]["shape"][0] == [80.0, 80.0] and [entry["id"] for entry in document["left"]] == [LOST])
-            detail = f"{len(found)} points of interest, left out {[entry['id'] for entry in document['left']]}"
+                       and found[FIRST]["shape"][0] == [80.0, 80.0] and [entry["id"] for entry in document["left"]] == [LOST]
+                       and document["format"] == 2 and document["territories"] == [{"id": LAND, "name": "@land",
+                                                                                     "shape": [list(point) for point in LAND_BOUNDS]}]
+                       and document["counts"]["boundsEntries"] == 16 and document["counts"]["boundsWrong"] == 0)
+            detail = (f"{len(found)} points of interest, left out {[entry['id'] for entry in document['left']]}, territories "
+                      f"{[entry['id'] for entry in document['territories']]}, bounds check {document['counts'].get('boundsEntries')} entries "
+                      f"{document['counts'].get('boundsWrong')} wrong")
+        if correct and mode == "small-bounds":
+            document = json.loads(target.read_text(encoding="utf-8"))
+            correct = document["counts"]["boundsEntries"] == 16 and document["counts"]["boundsWrong"] == 16
+            detail = f"bounds check {document['counts'].get('boundsEntries')} entries {document['counts'].get('boundsWrong')} wrong"
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""
         print(f"{'ok  ' if correct else 'FAIL'} {what}: status {status}, " + (f"a file ({detail})" if exists else "no file")
               + (f" ({message})" if not writes and message else ""))

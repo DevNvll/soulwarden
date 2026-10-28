@@ -11,6 +11,8 @@
 // for the quest tasks of a place (TaskGoToPOITag, TaskGoToPOITagOnTerritory, TaskExitPOITag) and the location rule of a task
 // (EnforceLocationRequirement).
 //
+// Stage QG1 (format 2): the file also has the bounds of each territory, for the territory of a character (World::territory_of).
+//
 // The data is game data: the tool tools/gamedata/pois.sh makes poi-data.json from the game copy (the rows of TerritoryDefinition, the
 // shape files objects/worldprisms/pois/REGION/poi_ID_*.vshapec, the POI placements of the layer "pois", and the entries of the region
 // metadata as the check of each origin). Without the file the backend starts, and no task of a place progresses.
@@ -81,6 +83,16 @@ public:
      *         not known, and an exit task waits). No tag: false.
      */
     [[nodiscard]] bool knows(const std::vector<std::string>& tags) const;
+    /**
+     * Stage QG1: @return The territory at the place (x, y): the first bounds of a territory (objects/worldprisms/bounds/territory of the game data,
+     *         the property TerritoryId) that hold it; 0 outside each bounds or with a file of the format 1. The client takes the claim
+     *         territory of its player from the territory at its position (research map.md 2.6, ClaimKey 0x2A09BA0); the tool checks the
+     *         bounds against the entries of the region metadata (266,696 entries, 1 outside the bounds of its territory).
+     */
+    [[nodiscard]] std::uint16_t territory_at(float x, float y) const;
+    [[nodiscard]] const std::vector<Poi>& territories() const {
+        return m_territories;
+    }
 
 private:
     bool fail(std::string cause);
@@ -88,6 +100,8 @@ private:
     bool m_loaded{false};
     std::string m_error;
     std::vector<Poi> m_pois;
+    /** Stage QG1: the bounds of the territories (Poi::territory is the territory id). */
+    std::vector<Poi> m_territories;
     std::unordered_map<std::string, std::vector<std::uint32_t>> m_byTag;
     std::unordered_map<std::uint32_t, std::uint32_t> m_byId;
 };

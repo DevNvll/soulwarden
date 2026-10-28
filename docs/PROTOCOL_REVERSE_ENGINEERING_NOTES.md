@@ -2524,7 +2524,7 @@ has the common state form with one group.
 | Slot | Component (entity) | State type | Type index | Constructor | Apply function of the facet | Content |
 | ---: | --- | --- | ---: | --- | --- | --- |
 | 65 | CategoricalProgression (GameEvents) | `MB::CategoricalProgressionReplicatedState` | 911 | 0x3CA3CA0 | 0x3CB7170, then 0x3CC0D50 | rank and experience of each weapon mastery and trade skill |
-| 67 | ProgressionPoint (GameEvents) | `MB::ProgressionPointReplicatedState` | 3681 | 0x3CDFA30 | 0x3CF1880 | the free mastery points of each weapon and the nodes of its tree |
+| 67 | ProgressionPoint (GameEvents) | `MB::ProgressionPointReplicatedState` | 3681 | 0x3CDFA30 | 0x3CF1880 | the free mastery points of each weapon and the nodes of its tree; stage QG1: the free tokens of each territory pool and its cards (4.59) |
 | 46 | Ability (Stats) | `MB::AbilityComponentReplicatedState` | 185 | 0x66EA770 | 0x6839390 | the three active abilities of each weapon |
 
 All three rows have behavioral proof (a trace of the apply function, and the screens of the
@@ -7214,8 +7214,8 @@ selects the salvage branch at 0x48E2EAA; it is not used. The loot table of a con
 **The territory standing** (slot 65, type 911, the categorical progression) [data; live I0]: the standing of a territory is an entry
 with the id CRC-32 of the territory number (Windsward "6": `1DB87A14`), the rank (u16), and the points in the rank (u64). Live I0: the
 entry of rank 0 with 120 points makes the map of the client show "120 / 150" for Windsward (`I0-17-standing-120.png`). The first try had
-one byte too many in the u64 of the points: the client wrote "Failure during read of ReplicatedStateBundle" and dropped the record. A
-rank-up and its token (ProgressionPoint, slot 67, type 3681) are not sent: the backend refuses a gain that reaches the next rank.
+one byte too many in the u64 of the points: the client wrote "Failure during read of ReplicatedStateBundle" and dropped the record. Stage
+QG1 (4.59): a rank-up, its token (ProgressionPoint, slot 67, type 3681), and the card choice (4040).
 
 **The offer of a quest that does not pass** [static: eligibility 0x3A4BFE0, the person check 0x37AE910; live I2 of stage 1.8d]: the client
 hides an offer whose checks fail (no locked display). Live F: Urda offers no quest before the hand-in of `06_skinningknife`, and the offer
@@ -7278,6 +7278,68 @@ initialization (0x3A551C0) binds the timers of the tree (0x3B2FD90) before the a
 deadline to `MissionTimers.<instance>.TargetTime` (the key at 0x3B2FDCA, one node for each objective); the activation and the tick do not
 publish again; the task states, the parent transitions, a resend of the active list, and 5684 do not bind again. The UI data build
 0x3AD7BE0 reads the TimeLimit of the task (+0x1F4). No server field or message that makes the row count is known: open.
+
+### 4.59 The territory standing: the rank-up, the tokens of the territory pools, the card choice 4040, the card values (live proof of stage QG1; static proof for the client code and the game data; the territory of a hand-in outside each territory and the GainGatherRate rule are project rules)
+
+Research: `~/Games/soulwarden/work/research/territories.md` section 5 (verified study), the static read of stage QG1
+(`~/Games/soulwarden/work/evidence/quests/qg1/implement/static/ANSWERS.md`), the live runs of stage QG1
+(`~/Games/soulwarden/work/evidence/quests/qg1/implement/RESULT.md`). The addresses are image-relative (client build 1.400.6031.6004151).
+
+**The rank-up** [static: 0x3CAACF0, 0x3CAAF15, 0x3CAAFDF, 0x3CAB113, 0x3CB7500; data: Territory_Standing, CategoricalProgressionData]:
+the points of a gain go into the rank; equality with MaximumInfluence enters the rank path; the threshold goes, the rank goes up, and the
+rest goes on (one gain can pass more than one rank). Each new rank gives `1 + AdditionalProgressionPoints` points to the pool of the row
+(0x3CB772A; the standing rows have no additional points: one token). At MaxLevel 300 (MaximumInfluence 0, AllowOverflow false) the rest
+is dropped (0x3CAAD94). The experience of a new rank: XpReward of the new rank times TerritoryStandingXpModifier of the territory (+0x6C,
+0x31FD6AC; a value of 0 is no multiplication), as the game event CategoricalProgressionRankUp (UniversalExpAmount 1, 0x31FD6F3), then the
+character experience rules (the GainXP card, below). Live (`live/20-saatvik-page2.png`): the hand-in of `06A_MSQ_01_Quartermaster` with
+120 points of Windsward gives "+100 Windsward Standing" and "+1325 XP" (1,200 + 100 x 1.25); the map shows "Newcomer in Windsward", rank
+1, "70 / 375" (`live/22-map-standing-after.png`).
+
+**The points state with the territory pools** (slot 67, type 3681; 4.13): a territory pool `TerritoryRankBonus_<territory>` (Windsward:
+CRC-32 `CCDDF19B`) has the category 2 (Territory) in `poolCategories`, its free tokens in `poolCounts` (u16), and its cards in
+`pointEntries` (`poolId:u32 pointId:u32 level:u16`; TB_GainStanding `68C1F9AA`). The backend sends each weapon pool (category 1) and
+then each territory pool of the standing data in one fragment with each entry: the client removes a pool that a fragment does not have, and
+the entry list of a fragment replaces its list (live stage 1.7). The free tokens are the standing rank minus the spent levels; a card with
+DoNotSpendPoint spends none [static 0x3CE0370, 0x3CF0600]. The bytes of the fixtures of the research (`standing-pool.hex`, 28 bytes;
+`standing-card-selected.hex`, 38 bytes) are the bytes of the encoder (case QG1B). Live: the map shows the token badge "1" on the Windsward
+row, and the screen "Claim your reward" shows "Windsward Standing Points 1" (`live/23-card-screen.png`).
+
+**The card choice** [static: the request 0x3CFD4A0, CanSpend 0x3CE7490, the sender 0x3CD8E80, the writer 0x3274450; the server handler
+0x3CFD510 through the dispatch 0x3CCC340]:
+
+| Type | Name | Body | Answer |
+| ---: | --- | --- | --- |
+| 4040 | `ProgressionPointComponentServerFacet_RequestSpendTerritoryStandingPoint` | `target:u64 entity:u64 progressionId:u32 pointId:u32` (24 bytes) | the points state (slot 67) |
+
+`progressionId` is the CRC-32 of the territory id text (`1DB87A14` for "6"), not the pool. The checks in the order of CanSpend: the
+standing row and its pool; the card is in the rank row whose index is the count of the spent levels (`AvailableProgressionPoint1` to 4,
+0x3CE7501); a free token, also for a card with DoNotSpendPoint (0x3CE7564); RequiredCategoricalProgressionLevel against the standing rank
+(0x3CF3770); MaxLevel (0x3CE75AC). A card with DoNotSpendPoint (TB_PurchaseHouse) gets its level and keeps the token (0x3CE6083). The
+client changes no state of its own at the request (no prediction in 0x3CFD4A0); the Lua callback reports success at once
+(`RedeemTerritoryReward`). The backend sends the points state again after a refusal. While TB_PurchaseHouse is available the client shows
+it alone (`ProgressionPointsToRewards`), and the popup closes after a choice with the last token. Live (`live/23` to `live/33`): the house
+alone, then GainStanding +5.0%, GainXP +3.0%, GainGatherRate +5.0% (row 0); after one spent token Station Fee -5.0%, Trading Fee -5.0%,
+Storage +25.0 (row 1); after two, "Standing Gain (+5.0% -> +9.3%)" (row 2: the next level of a card of level 1); a restart keeps the
+standing, the tokens, and the cards ("Storage (+25.0 -> +50.0)").
+
+**The card values** [static 0x5C51100; data: Territory Bonus Data of `sharedassets/genericassets/playerbaseattributes.pbadb`]: the bonus
+of level n is the sum for i = 1 to n of `max(MinValue, f32(f64(InitialBonus) * pow(f64(f32(1 - ReductionModifier)), i - 1)))` with an f32
+sum. The kind of a card is its Territory Bonus Id (1 GainStanding to 10 HousePurchase, the enum at 0x3CFAE8E). The client shows the same
+values (live: +5.0%, +9.3%, +25.0).
+
+**The cards that a system applies** [static, ANSWERS.md Q2 and Q3]: GainStanding: the standing of a grant is
+`trunc(f32(f32(1 + bonus) * standing) * multiplier)` with the card of the territory of the grant (0x31F7D19 to 0x31F7D37; the multiplier
+of a game event is 1, 0x31FD1CE). GainXP: the character experience of a game event is `trunc(f32(experience * (1 + bonus + other
+terms)))` with the card of the detected territory of the player (0x3CEC0CA, 0x3CF04A9, 0x3CF0AE0); a debug grant has no multiplier.
+GainGatherRate: no client formula was found; the backend adds the bonus to the speed sum of a gather (a project rule). The other cards
+(GainStorage, the taxes, GainFactionRep, GainHousePoints, HousePurchase) are stored; no system of the backend reads them yet.
+
+**The territory of a standing** [static: the grant 0x31F5400 reads the territory of its context (`GameEventParams +0xA`, 0x31F6D2B) and,
+with 0, the detected territory of the player (`GetDetectedTerritoryId`, 0x2832410, 0x29F77A0); the writer of the context of an objective
+completion was not found]: the backend gives the standing of a hand-in to the territory at the position of the character (the bounds of
+`objects/worldprisms/bounds/territory` of the data), and to the origin territory of the instance outside each territory or in a territory
+with no standing row (a project rule). The reward preview of an offer and the journal show the standing as a number with no territory
+(`objectivedatahelper GetRewardDataFromGameEventData`); the reward notice of the hand-in names the territory ("+100 Windsward Standing").
 
 ## 5. Open items
 

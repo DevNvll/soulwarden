@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <optional>
 
 #include "core/logging/log.h"
 #include "world/world.h"
@@ -12,6 +13,8 @@ namespace {
 
 /** Largest rank that the wire form holds. */
 constexpr std::uint32_t kLargestRank = 0xFFFF;
+/** Stage QG1: the largest standing of one gain (the client truncates the f32 to an i32: 0x31F7D37). */
+constexpr std::uint64_t kLargestStandingGain = 0x7FFFFF80;
 
 std::uint16_t node_level(const SkillSet& skills, std::uint32_t pool, std::uint32_t node) {
     const auto nodes = skills.pools.find(pool);
@@ -42,9 +45,17 @@ SkillSet Skills::read_skills(const std::string& characterId) const {
         }
     }
     for (const state::SkillRows::Node& row : rows.nodes) {
-        if (row.level != 0) {
-            skills.pools[row.pool][row.node].level = 1;
+        if (row.level == 0) {
+            continue;
         }
+        // Stage QG1: a row of a territory pool is a card with its level (a card that the point data does not have is not loaded).
+        if (tables() != nullptr && tables()->standing_of_pool(row.pool) != nullptr) {
+            if (const gamedata::TerritoryCard* card = tables()->territory_card(row.node)) {
+                skills.territoryPools[row.pool].cards[row.node] = static_cast<std::uint16_t>(std::min(row.level, card->maxLevel));
+            }
+            continue;
+        }
+        skills.pools[row.pool][row.node].level = 1;
     }
     for (const state::SkillRows::Bar& row : rows.bars) {
         if (row.slot < kBarSlots && row.ability != 0) {
@@ -59,8 +70,26 @@ SkillSet Skills::read_skills(const std::string& characterId) const {
                 skills.pools[progression.wireId];
             }
         }
+        add_territory_pools(skills);
     }
     return skills;
+}
+
+void Skills::add_territory_pools(SkillSet& skills) const {
+    // Stage QG1: each territory pool of the standings, also with no card (the client removes a pool that a points state does not have:
+    // 0x3CF1880). The spent tokens are the levels of the cards with no DoNotSpendPoint (the count helper of the client 0x3CF0600).
+    for (const gamedata::StandingRow& standing : tables()->standings()) {
+        if (standing.poolId == 0) {
+            continue;
+        }
+        TerritoryPool& pool = skills.territoryPools[standing.poolId];
+        pool.standing = standing.wireId;
+        pool.spent = 0;
+        for (const auto& [id, level] : pool.cards) {
+            const gamedata::TerritoryCard* card = tables()->territory_card(id);
+            pool.spent += card != nullptr && !card->doNotSpend ? level : 0;
+        }
+    }
 }
 
 state::SkillRows Skills::rows_of(const SkillSet& skills) const {
@@ -95,6 +124,15 @@ state::SkillRows Skills::rows_of(const SkillSet& skills) const {
         for (std::uint32_t slot = 0; slot < kBarSlots; ++slot) {
             if (bar[slot] != 0) {
                 rows.bars.push_back({table, slot, bar[slot], node_name(bar[slot])});
+            }
+        }
+    }
+    // Stage QG1: the cards of the territory pools are rows of ability_nodes with the pool of the territory and the level of the card.
+    for (const auto& [pool, territory] : skills.territoryPools) {
+        for (const auto& [card, level] : territory.cards) {
+            const gamedata::TerritoryCard* row = tables() != nullptr ? tables()->territory_card(card) : nullptr;
+            if (level != 0) {
+                rows.nodes.push_back({pool, card, row != nullptr ? row->id : std::string{}, level});
             }
         }
     }
@@ -147,6 +185,8 @@ Skills::Plan Skills::stage(const std::string& characterId, Change&& apply) {
         plan.error = ProgressError::noTables;
     }
     plan.result.inWorld = plan.inWorld;
+    // Stage QG1: the GainXP card of the territory of a character in the world (the experience of a standing rank).
+    plan.experienceBonus = entity != nullptr && plan.ok() && tables() != nullptr ? experience_card(*entity) : 0.0F;
     // The change is made on a copy: the skills of the entity change only after the rows.
     if (plan.ok()) {
         plan.error = apply(plan.skills, plan.touched, plan.result);
@@ -157,7 +197,7 @@ Skills::Plan Skills::stage(const std::string& characterId, Change&& apply) {
 bool Skills::write(const Plan& plan) {
     // All rows of the change are one transaction.
     const Touched& touched = plan.touched;
-    return !(touched.ranks || touched.points || touched.bars) || m_store.write_skills(plan.characterId, rows_of(plan.skills));
+    return !(touched.ranks || touched.points || touched.bars || touched.tokens) || m_store.write_skills(plan.characterId, rows_of(plan.skills));
 }
 
 SkillResult Skills::finish(Plan& plan, const char* what) {
@@ -175,6 +215,11 @@ SkillResult Skills::finish(Plan& plan, const char* what) {
             for (const auto& [pool, node] : touched.nodes) {
                 skills.pools[pool][node].changed = revision;
             }
+        }
+        if (touched.tokens && !touched.points) {
+            // Stage QG1: a token or a card of a territory pool: the points state (one fragment with each pool and each entry), and no
+            // change of a weapon tree (no aim end, no gear refresh).
+            m_world.touch(entity->id, ComponentKey::points);
         }
         if (touched.bars) {
             m_world.touch(entity->id, ComponentKey::abilities);
@@ -350,7 +395,7 @@ ProgressError Skills::add_balance(Plan& plan, std::string_view id, std::int64_t 
     return ProgressError::none;
 }
 
-ProgressError Skills::add_standing(Plan& plan, std::uint16_t territory, std::uint64_t amount) const {
+ProgressError Skills::add_standing(Plan& plan, std::uint16_t territory, std::uint64_t amount, StandingGain* gain) const {
     if (!plan.ok()) {
         return plan.error;
     }
@@ -361,26 +406,191 @@ ProgressError Skills::add_standing(Plan& plan, std::uint16_t territory, std::uin
     if (row == nullptr) {
         return ProgressError::unknownProgression;
     }
-    if (amount == 0) {
-        return ProgressError::none;
-    }
-    ProgressionRank& value = plan.skills.progressions[row->wireId];
-    const std::uint32_t rank = value.rank;
-    if (rank >= row->maxRank || rank >= row->ranks.experience.size()) {
-        // The largest rank (300: MaximumInfluence 0, AllowOverflow 0): no more points (0x3CAACF0 takes no gain at the cap).
-        return ProgressError::none;
-    }
-    const std::uint64_t limit = row->ranks.experience[rank];
-    if (value.points + amount >= limit) {
-        // Equality enters the rank path (0x3CAAF15): a rank-up.
+    StandingGain result;
+    result.base = amount;
+    const auto found = plan.skills.progressions.find(row->wireId);
+    ProgressionRank value = found != plan.skills.progressions.end() ? found->second : ProgressionRank{};
+    // The GainStanding card of the territory pool (client 0x31F7D19 to 0x31F7D37: (bonus + 1) times the standing in f32, times the
+    // multiplier of the event (1: the backend has no other), truncated to a whole number).
+    result.bonus = territory_bonus(plan.skills, territory, gamedata::TerritoryBonus::gainStanding);
+    const float scaled = (result.bonus + 1.0F) * static_cast<float>(std::min<std::uint64_t>(amount, kLargestStandingGain));
+    result.points = scaled >= static_cast<float>(kLargestStandingGain) ? kLargestStandingGain : static_cast<std::uint64_t>(scaled);
+    // The largest rank (300: MaximumInfluence 0, AllowOverflow 0): no more points (0x3CAACF0 takes no gain at the cap).
+    const std::uint32_t largest = std::min<std::uint32_t>(row->maxRank, static_cast<std::uint32_t>(row->ranks.experience.size() - 1));
+    if (result.points != 0 && value.rank < largest) {
+        value.points += result.points;
+        // AutoRankUp (0x3CAAF15: equality too): the threshold goes, the rank goes up, and the rest goes on to the next rank (0x3CAB113).
+        while (value.rank < largest && value.points >= row->ranks.experience[value.rank]) {
+            if (!row->autoRankUp) {
+                return ProgressError::standingRankUp;
+            }
+            value.points -= row->ranks.experience[value.rank];
+            ++value.rank;
+            ++result.ranks;
+            // The character experience of the new rank (0x31FD650, 0x31FD6AC): XpReward of the rank times TerritoryStandingXpModifier (a
+            // modifier of 0 is no multiplication, 0x31FD6B4), the multiplier of the game event CategoricalProgressionRankUp
+            // (UniversalExpAmount 1, truncated: 0x31F6816), then the GainXP card of the character (0x3CF04A9, truncated).
+            const std::uint32_t reward = value.rank < row->xpReward.size() ? row->xpReward[value.rank] : 0;
+            const float scaled = row->xpModifier != 0.0F ? static_cast<float>(reward) * row->xpModifier : static_cast<float>(reward);
+            const auto base = static_cast<std::uint64_t>(scaled);
+            result.experience += plan.experienceBonus == 0.0F
+                                     ? base
+                                     : static_cast<std::uint64_t>(static_cast<float>(base) * (1.0F + plan.experienceBonus));
+        }
+        if (value.rank >= largest) {
+            value.points = 0;
+        }
         if (value.rank == 0 && value.points == 0) {
             plan.skills.progressions.erase(row->wireId);
+        } else {
+            plan.skills.progressions[row->wireId] = value;
         }
-        return ProgressError::standingRankUp;
+        plan.touched.ranks = true;
+        // A new rank is a new token of the territory pool (0x3CB7500): the points state (slot 67) too.
+        plan.touched.tokens = plan.touched.tokens || result.ranks > 0;
+        plan.rankExperience += result.experience;
+    } else {
+        result.points = 0;
     }
-    value.points += amount;
-    plan.touched.ranks = true;
+    result.rank = value.rank;
+    result.rankPoints = value.points;
+    if (gain != nullptr) {
+        *gain = result;
+    }
     return ProgressError::none;
+}
+
+float Skills::territory_bonus(const SkillSet& skills, std::uint16_t territory, gamedata::TerritoryBonus kind) const {
+    const gamedata::StandingRow* standing = tables() != nullptr && territory != 0 ? tables()->standing(territory) : nullptr;
+    const gamedata::TerritoryCard* card = standing != nullptr ? tables()->territory_card(kind) : nullptr;
+    if (card == nullptr || standing->poolId == 0) {
+        return 0.0F;
+    }
+    const auto pool = skills.territoryPools.find(standing->poolId);
+    const auto level = pool != skills.territoryPools.end() ? pool->second.cards.find(card->wireId) : decltype(pool->second.cards.end()){};
+    return pool != skills.territoryPools.end() && level != pool->second.cards.end() ? gamedata::card_bonus(*card, level->second) : 0.0F;
+}
+
+float Skills::experience_card(const Entity& entity) const {
+    return territory_bonus(entity.skills, m_world.territory_of(entity), gamedata::TerritoryBonus::gainXp);
+}
+
+std::uint64_t Skills::card_experience(const std::string& characterId, std::uint64_t amount) const {
+    const Entity* entity = amount != 0 && tables() != nullptr ? m_world.find_character(characterId) : nullptr;
+    const float bonus = entity != nullptr ? experience_card(*entity) : 0.0F;
+    if (bonus == 0.0F) {
+        return amount; // No card: the amount itself (an f32 product would change an amount above 2^24).
+    }
+    // The multiplier M = 1 + GainXP (0x3CEC0CA: the card is one additive term), then trunc(f32(amount * M)) (0x3CF04A9, 0x3CF49C4).
+    const float experience = static_cast<float>(amount) * (1.0F + bonus);
+    return experience >= static_cast<float>(kExperienceLimit) ? kExperienceLimit : static_cast<std::uint64_t>(experience);
+}
+
+SkillResult Skills::spend_territory_point(const std::string& characterId, std::uint32_t progressionId, std::uint32_t pointId) {
+    char what[96];
+    std::snprintf(what, sizeof(what), "card %08X of the territory standing %08X", pointId, progressionId);
+    const SkillResult result = change(characterId, what, [&](SkillSet& skills, Touched& touched, SkillResult& done) {
+        return card_into(skills, touched, done, progressionId, pointId);
+    });
+    if (!result.ok()) {
+        // The client can show its own result of the choice already (the Lua callback reports success after the send): the points state
+        // goes again with the values of the server.
+        if (Entity* entity = m_world.find_character(characterId)) {
+            m_world.touch(entity->id, ComponentKey::points);
+        }
+    }
+    return result;
+}
+
+ProgressError Skills::card_into(SkillSet& skills, Touched& touched, SkillResult& result, std::uint32_t progressionId,
+                                std::uint32_t pointId) const {
+    // progressionId is the CRC-32 of the territory id text (RedeemTerritoryReward of territorydatahandler.lua; the sender 0x3CD8E80).
+    const gamedata::StandingRow* standing = tables()->standing_of(progressionId);
+    if (standing == nullptr || standing->poolId == 0) {
+        return ProgressError::unknownProgression;
+    }
+    const gamedata::TerritoryCard* card = tables()->territory_card(pointId);
+    if (card == nullptr) {
+        return ProgressError::unknownCard;
+    }
+    TerritoryPool& pool = skills.territoryPools[standing->poolId];
+    pool.standing = standing->wireId;
+    // The checks of CanSpend in the order of the client (0x3CE7490; the server handler 0x3CFD510 calls it again, static read
+    // evidence/quests/qg1/implement/static/ANSWERS.md Q5). The card screen offers the cards of the rank row whose index is the count of the
+    // spent levels (0x3CE7501 to 0x3CE7538).
+    if (pool.spent >= standing->offers.size()
+        || std::find(standing->offers[pool.spent].begin(), standing->offers[pool.spent].end(), card->wireId) == standing->offers[pool.spent].end()) {
+        return ProgressError::cardNotOffered;
+    }
+    // A free token, also for a card with DoNotSpendPoint (TB_PurchaseHouse): the check 0x3CE7564 has no exemption.
+    if (skills.free_tokens(standing->poolId) == 0) {
+        return ProgressError::noToken;
+    }
+    // The requirement evaluator (0x3CF3770): RequiredCategoricalProgressionLevel against the standing rank of the pool.
+    if (skills.rank(standing->wireId) < card->requiredRank) {
+        return ProgressError::standingTooLow;
+    }
+    const auto found = pool.cards.find(card->wireId);
+    const std::uint32_t level = found != pool.cards.end() ? found->second : 0;
+    if (level >= card->maxLevel) {
+        return ProgressError::cardAtMaxLevel;
+    }
+    // A card with DoNotSpendPoint spends no token: its level goes up, and the free count stays (0x3CE6076 to 0x3CE60C3; the loader
+    // 0x3CE0370 stores the spend flag as the inverse of DoNotSpendPoint).
+    pool.cards[card->wireId] = static_cast<std::uint16_t>(level + 1);
+    pool.spent += card->doNotSpend ? 0 : 1;
+    touched.tokens = true;
+    result.rank = level + 1;
+    result.freePoints = skills.free_tokens(standing->poolId);
+    return ProgressError::none;
+}
+
+StandingResult Skills::give_standing(const std::string& characterId, std::uint16_t territory, std::uint64_t amount) {
+    Entity* entity = m_world.find_character(characterId);
+    const std::string mark = entity != nullptr ? log::session_mark(entity->owner, characterId) : std::string{};
+    const log::Context context(mark);
+    StandingResult result;
+    Plan plan = plan_none(characterId);
+    if (plan.ok()) {
+        plan.error = add_standing(plan, territory, amount, &result.gain);
+    }
+    // The experience of the ranks: one plan of the progress system in the same transaction (the pattern of the hand-in of a quest).
+    std::optional<Progress::Plan> sheet;
+    if (plan.ok() && plan.rankExperience > 0) {
+        sheet = m_world.progress().plan_experience(characterId, std::min(plan.rankExperience, kExperienceLimit));
+        if (!sheet->ok()) {
+            plan.error = sheet->error;
+        }
+    }
+    if (plan.ok()) {
+        state::Store::Batch batch(m_store);
+        const bool ok = batch.open() && write(plan) && (!sheet || m_world.progress().write(*sheet)) && batch.commit();
+        if (!ok) {
+            plan.error = ProgressError::storeFailed;
+        }
+    }
+    result.error = plan.error;
+    result.inWorld = plan.inWorld;
+    if (!plan.ok()) {
+        log::write("skills: a standing of %llu for the territory %u of character %s refused: %s", static_cast<unsigned long long>(amount),
+                   static_cast<unsigned>(territory), characterId.c_str(), progress_error_text(plan.error));
+        return result;
+    }
+    if (sheet) {
+        const ProgressResult experience = m_world.progress().finish(*sheet, "the experience of a standing rank");
+        result.level = experience.level;
+        result.levelExperience = experience.experience;
+    }
+    const gamedata::StandingRow* row = tables()->standing(territory);
+    result.tokens = row != nullptr ? plan.skills.free_tokens(row->poolId) : 0;
+    (void)finish(plan, "a territory standing");
+    log::write("skills: character %s got %llu standing of the territory %u (%llu with the card bonus %.4f): rank %u, %llu points, %u new "
+               "rank(s), %u free token(s), %llu experience",
+               characterId.c_str(), static_cast<unsigned long long>(amount), static_cast<unsigned>(territory),
+               static_cast<unsigned long long>(result.gain.points), static_cast<double>(result.gain.bonus), result.gain.rank,
+               static_cast<unsigned long long>(result.gain.rankPoints), result.gain.ranks, result.tokens,
+               static_cast<unsigned long long>(result.gain.experience));
+    return result;
 }
 
 ProgressionRank Skills::standing(const SkillSet& skills, std::uint16_t territory) {
