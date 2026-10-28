@@ -43,6 +43,7 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage QG2a: the small quest rules (the category rule, TaskHaveLevel, the salvage events, the Azoth amount, no arc gate, the push) | `LootTables::kill_categories` (`gamedata/loot_tables.h`), `Rewards::killed`; the TaskHaveLevel predicate of `Quests::Plan::predicate`, `Quests::level_changed` (called by `Progress::finish`); `gamedata/game_event.h` (`read_game_event`, `azoth_amount`); `ItemContainers::open`, `open_refusal`; `Quests::available`; `Quests::PushIndex`, `push_changed`, `pushed`; `QuestSupport` (the reasons, the location rule, the push source); `tests/quest_gap_tests.cpp` (QG2A to QG2G, but QG2D), `tests/quest_gap_support_tests.cpp` (QG2D); the second computation `~/Games/soulwarden/work/evidence/quests/qg2a/implement/scripts/support_check.py` |
 | Stage QG3: the places (the area shapes, the origins of each layer and region, the causes of the tags with no shape, the trigger volumes of the capitals, the instance volumes, the place view) | `tools/gamedata/pois.py` (`origin_of`, `read_plots`, `unshaped_tags`), `tools/gamedata/triggers.py` (`Walk`), `check_pois_tool.py`, `check_triggers_tool.py`; `gamedata/poi_data.h` (`PoiData::cause`, `at`), `gamedata/trigger_data.h` (`TriggerData::elsewhere`, `at`); the reasons of `QuestSupport::evaluate`; the command `quest_places` (`server/http/quest_commands.cpp`, `tools/world quest places`); `tests/quest_places_tests.cpp` (QG3A to QG3E); the review of QG2a: `tests/review_qg2a_tests.cpp` (QGR2A1 to QGR2A5); the second computation `~/Games/soulwarden/work/evidence/quests/qg3/implement/scripts/support_check.py` |
 | Stage QG4: the quest givers (the artifact grant at the equip, the item level, the causes of an NPC with no slot, the rows with no source; the corrections of the review of QG3) | `Quests::item_equipped`, `Quests::equip_grant` (`world/quests.h`), `ProgressionTables::item_level`, `InteractionData::persons_apart`, the grant `equip` and `apart_cause` of `world/quest_support.cpp`; cases QG4A to QG4D, QGR3A1 to QGR3A4 |
+| Stage QG5a: the quest chest drops, the proximity objects, the per-character state of a gathered quest object, the glyph locks, the new quest objects of the data tools; the corrections of the review of QG4 | `Quests::plan_chest_drops`, `roll_drop` (`world/quests.h`), `Chests::complete`; `QuestObjects::moved`, `tick`, `look` (`world/quest_objects.h`), `QuestObjectData` (member `proximity`); `Gathering::quest_object_due`, `GatherRefusal::gatheredQuestObject`, `GatheringType::azothStaff`; `tools/gamedata/gathering.py` (`QUEST_TABLES`, `quest_form`, `children`), `quest_objects.py` (`proximity`), `interactions.py` (`varied_bounds`, `quest_children`, `read_flow_npas`); `QuestSupport` (the chest source, `refusedEvents`); `tests/quest_object_gap_tests.cpp` (QG5A to QG5E), `tests/quest_event_tests.cpp` (QG5F), `tests/review_qg4_tests.cpp` (QGR4A1 to QGR4A3); the second computation `~/Games/soulwarden/work/evidence/quests/qg5a/implement/scripts/support_check.py` |
 | The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`; stage QG2a: `research/quest-gaps.md`, `research/quest-gaps-qg2b.md`, the static read of the category rule `evidence/quests/qg2a/implement/static/category/CATEGORY.md` |
 
 ## Rules
@@ -620,6 +621,81 @@ The research is `~/Games/soulwarden/work/research/quest-gaps.md` (QG0, section 3
 - The ordinary accept 3772 keeps its checks: a new person slot is a slot of the interaction data; the server takes the giver from the
   validated interaction and the selected conversation state (Persons::accept), with its presence rule.
 
+### The quest chest drops and the quest objects of stage QG5a
+
+The research is `~/Games/soulwarden/work/research/quest-gaps.md` (QG0, sections 4 and 5) and the static read of stage QG5a
+(`~/Games/soulwarden/work/evidence/quests/qg5a/implement/static/ANSWERS.md`); the census, the result, and the live checks are in
+`~/Games/soulwarden/work/evidence/quests/qg5a/implement/RESULT.md`. The wire is in the protocol notes (4.60).
+
+- The quest drop of a chest (ChestDropProbability; 1,142 tasks of the quest data, 59 story rows) [data; client: the item task field +0x6A4, the
+  description 0x825F500 "0-100, probability to drop items for loot chests/POI loot"]: at a successful open of an ordinary chest of the chest
+  data (`Chests::complete`), each Active possession task of the character (TaskHaveItems, TaskHaveAndReturnItems, TaskGatherItems,
+  TaskGatherAndReturnItems: the enum values 25, 26, 29, 30 of the item task constructor, factory 0x4461150) with the chance above 0 and
+  MinGearScore 0 rolls one item (`Quests::plan_chest_drops`). The rules of the other drops apply (one helper, `Quests::roll_drop`):
+  PauseAndClearLootOnTaskComplete, AwardOnlyOnce, GuranteedDropAttempts, EnforceLocationRequirement (the character in the point of
+  interest).
+  - The roll of the client [client 0x3B0B2F3 to 0x3B0B336]: the integer part of a number of 0 to 100 at or below the chance (40 is 41 of
+    100; 100 is each open). One item for each open [client 0x3B0B359: one item in the list of the task; agent: the data has no quantity].
+  - The place of the chest [agent; client: the data check 0x3A6D4D0 sums the chest counts of the territory record of the task, 0x3A6E2E3 to
+    0x3A6E30A]: a task with a POITag takes only a chest in a point of interest of its tags (and of its TerritoryID); a task with no POITag
+    takes each chest. The place filter of the original server is not in the image.
+  - One result [MP-7]: the chest system owns it. The quest items go into the same grant as the chest loot (whole or not at all, the cause
+    ItemGathered: the loot notice), and the claim and the award rows (`Quests::write_drops`) are in the same transaction. A full bag gives
+    none of them, and the drops are not a part of the kept roll of the claim (the next open rolls them again). A refused write gives no
+    item, no claim, and no award row. A Looted claim refuses a second open: no second award. Cases QG5A, QG5B. Live I1.
+- The proximity quest objects (the variation table Gatherable_Quest_Proximity: trails, footprints, torches; 284 objects of the open world)
+  [data: the slice master_quest_proximity_instanced has a DetectionVolumeComponent whose sphere has the radius DetectionVolumeSphereRadius
+  of the row, and m_isProximityGatherable in the server facet of its GatherableController; client: the handler of 5078 (0x4900030) only sets
+  a value of the HUD; live P1: the client sends nothing at a trail]: the server finds the character in the sphere
+  (`QuestObjects::moved`, `tick`, `look`). The rules:
+  - an accepted position of the character (World::place marks it; the next tick looks one time; a camera estimate, a travel, a cutscene,
+    or a cinematic: no look), 3D distance to the place of the object at most the radius [data];
+  - InteractOnlyOnQuest: an Active task of the character has the InteractTag of the object [client 0x8261FC0];
+  - the object is not found for the character now; then one plan of the quest system (the quest drops of its row, its game event, its
+    tag: `Quests::object_destroyed`), its LootTracker entry Looted for the character, and the respawn of the row (a uniform draw of its
+    bounds) [the rule of the destructible objects, stage 1.8e];
+  - the find is at once (no time of a work) [agent: the row has BaseGatherTime 1 and GatheringAction None; no client time was found];
+  - no strike hits a proximity object; a strike of a destructible object is as before;
+  - the cost (MP-8): one look for each marked character at a tick, the cells of the grid of 64 m within the largest radius (10 m in this
+    build). Case QG5C. Live I2.
+- The quest objects of a gather keep the per-character state of the destructible objects (stage QG5a) [the brief; data: InstancedLootType 4]:
+  after the commit of a gather of a quest row, the character has the LootTracker entry Looted of the managed actor of the object until a
+  uniform draw of the respawn bounds of the row (`Gathering::quest_object_due`), and a second gather of the character is refused
+  (`gatheredQuestObject`). The other characters gather their own object. The store has no row (a new world entry has the objects again).
+  Live I4: the trapped boar of `09A_S1_SaveAnimals` and its marker go for the character. Case QG5F.
+- The quest objects that the data tools take now (stage QG5a; [Gathering](gathering.md), [Interactions](interactions.md), [Game
+  data](../development/game-data.md)):
+  - a quest placement of any slice path (the custommqi_ and io_ slices of the main story, not only slices/gatherables/), with the variant of
+    the placement, else the m_selectedVariant of the slice [data];
+  - the variation tables Gatherables_NPCRescue_01 (the rescues) and Gatherable_Quest_AncientGlyph (the glyph locks) [data];
+  - a direct binding: a GatherableController with no variation table names its row; the row is a quest object when it has the form of a
+    row of the quest tables (a loot container with the loot table Empty or blank and a GameEventID) [agent: the bodies of the creatures, the
+    doors with no event, the hazards, and the fishing spots are no quest objects];
+  - the variation of a bound: "Set Interact Tag", "Set InteractOnlyOnQuest", and "Set interaction req achievement" of the selected variant
+    set the tag, the flag, and the required achievement of the Interact component of their entity [client 0x42D5240 and 0x35D60F0,
+    0x42D4B70 and 0x35D5EF0, 0x42D4BF0 and 0x35D5FA0]. A requirement that is an expression (`A || B`) is the member `conditional` of the
+    bound, which the base evaluates with the conditional of the quests [client 0x35C2E60 evaluates the text through 0x2ED8BB0];
+  - the children of a PrefabSpawner of a level placement (not client-authoritative, made at the init) whose slice is a quest object, with
+    the client id rule of a child of a level placement (interactions.py `child_groups`, client 0x6160B60) [client: the rule of the person
+    children; no live check of a quest child];
+  - the proximity objects and the direct and the nested destructible objects (`quest-objects.json`).
+- The glyph locks [data: the row 16BS_AncientGlyphLock (GatheringType AzothStaff, Tradeskill AzothStaff level 5, BaseGatherTime 3); client:
+  the Azoth Staff in the paperdoll slot 38, 0x5CAB873; the rank gate 0x33732F0]: the gathering type AzothStaff is a tool type of the backend
+  (slot 38; the weapon rows with GatheringTypes AzothStaff: Darkness_AzothStaff_T1, Skin_AzothStaff), with the rank gate of the gathering
+  (the trade skill AzothStaff of the progression tables at the level of the row) and the required achievement of the variation. The event
+  is given at the completion of the gather only (not at the sight of the glyph). Live I3 (with a command for the rank: the backend pays no
+  ProgressionReward, the source of the ranks of AzothStaff).
+- RequireControllingFaction of a gatherable row is a flag [client: the loader 0x440D2A0 reads it with the flag converter 0x5BF6BC0 at
+  0x440DC07]: the cell "0" (557 rows) is no rule. Before stage QG5a any text of the cell refused the row ("a faction"), also for the quest
+  objects of the earlier stages.
+- Kept out (each with its reason in the manifest): the scripted state of a quest object (QG5b: a quest object of a slice with no GatherOption,
+  a pressure plate, a teleport, a swap slice), the encounter and wave completions and the named creatures (QG5c: an event with no producer,
+  for example `04a_side02_02_encounter_01_success`), the objects of an instance (the tools read only the open world), the rows that the
+  backend refuses (ItemRequired with an item, the rank of AzothStaff with no source), a quest child with m_spawnOnInitialize false (452:
+  `excluded` of the interaction data), and the tags with no source (`wcStation`, `settlementSmelting`, `settlementBlacksmith`,
+  `specialty_doubloon`, `specialty_reekwater`; `IO_Generic_Hostage_Quest` is the tag of the mission task `FM_Task_RescueNPC_Generic_01`:
+  the mission boards, QG6).
+
 ### The support manifest (stage 1.8e)
 
 The support manifest says for each row of the quest data whether the backend runs it, and for each start history what a character can
@@ -757,6 +833,48 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   level of the artifacts from `equipGearScores`, the equip grant of a row and of a history) gives the same counts: 2,147 rows, 434
   supported, 0 row differences, 0 of 3,905 own facts differ, 306 histories with 0 differences, 25 groups, the new Soldier completes 39;
   on the manifest of before with the new data it finds 117 row differences and 306 history differences.
+
+- The counts of stage QG5a (the same quest data, with `gathering-data.json`, `quest-objects.json`, and `interaction-data.json` of stage QG5a,
+  and the corrections of the review of QG4): 486 supported objectives (434 before; 74 new, 22 no longer). The first reasons before of the 74
+  new rows: 38 an item with no source (36 of them have the source "the quest drop of the chests" now), 24 no producer of a game event (the
+  proximity objects, the quest placements of any slice path, the rescues, the direct bindings, the faction flag), and 12 no object of the
+  interact tag (the variation tags). The 22 rows no longer supported are corrections: 16 have a person of Nighthaven whose presence names an
+  NPA with an ObjectiveFlow (QG4R-R2: never there; the task or the standing territory of the hand-in at that slot), 4 need a gather that the
+  runtime refuses (ItemRequired with an item), 1 the rank of AzothStaff with no source, and 1 an item of such a refused row. A new
+  character of each archetype completes 66 (39 before; 27 new: `04A_Side01_01_RecoverSupplies` (the trails), `04A_Side08_01_GetReagents`,
+  `1127_0101_MalignDominion`, `1128_0101_VillageChampion`, `12A_MSQ_07_FreeMiners` (the rescues), `12A_Side_13_DevilHoney`, `1502_1502_Stolen`,
+  `1504_1503_Fury`, `1505_1509_Menacing`, `1505_1510_Slaying`, `1510_1507_Scouting`, `1510_1508_Damnation`, `1510_1512_PayingRespects`,
+  `1524_1515_FootstepsBeach`, `1524_1516_TrueTerror`, `1527_1524_Steadfast`, `1527_1525_Treasured`, `1528_1526_NotAnotherFish`,
+  `95_s01_01_CROW_GracelessRequest`, `95_s01_03_CROW_BestOfAeternum`, `C10A_S13_TrackingByTeeth`, `C10A_S14_HeartOfTheMarsh`,
+  `C10A_S1_SeadogBrew`, `FactionIntro_Covenant_01`, `FactionIntro_Covenant_02`, `FactionIntro_Covenant_Vector_01`,
+  `FactionIntro_Covenant_Vector_02`; none lost). A level 60 character with no template completes 31 (9 before). The 298 template histories
+  in 23 groups complete 27 to 43 (9 to 18 before; `99F_MSQ_ER_DeliverPoem`: 43; 158 templates with no start objective: 27 to 41); each of
+  the 306 histories has a new played list. The first reasons of the 541 objectives that are not supported: 115 an item with no source, 102 a
+  point of interest with no shape, 54 no producer of a game event, 44 TaskGameMode, 41 no creature of the categories, 34 a person with no
+  slot (6 before: the Nighthaven persons of QG4R-R2), 34 TaskQuickCourse, 20 TaskHaveLevel of a faction progression, 14 the location rule
+  with no shape, 10 no grant source that the backend runs, 7 a standing with no territory, 7 a ProgressionReward, 7 an item that the catalog
+  does not have, 3 no object of the interact tag (21 before), and 49 smaller groups. The second computation (a copy of `support_check.py`
+  with the rules of stage QG5a in the evidence of the stage: its own producers of a game event, its own tags of an interaction, its own
+  chest source of an item with its own point-in-polygon test of the chests) gives the same counts: 2,147 rows, 486 supported, 0 row
+  differences, 0 of 6,772 own facts differ (860 chest drops, 860 game events, 1,178 interactions), 306 histories with 0 differences, 25
+  groups, the new Soldier completes 66; on the manifest of before with the new data it finds 182 row differences and 306 history
+  differences.
+
+### The corrections of the code review of stage QG4 (in stage QG5a)
+
+The findings QG4R-R1 to QG4R-R3 (`~/Games/soulwarden/work/evidence/quests/qg4/code-review/FINDINGS.md`) are corrected in stage QG5a; each
+has a case of `tests/review_qg4_tests.cpp` (QGR4A1 to QGR4A3) that fails on the tree of stage QG4 and passes after the correction.
+
+- QG4R-R1 (QGR4A1): an equip is a new item instance in a paperdoll slot with the action ItemEquipped (`Inventory::finish` compares the
+  instance of the slot before and after the commit). The action stays on a slot after its equip: a perk edit of an equipped artifact is no
+  equip and grants no artifact quest.
+- QG4R-R2 (QGR4A2, the tool case `person-flow` of NC1): the NPA keeps its ObjectiveFlow (column 2 of the row); an NPA with a flow is false
+  (no rule of the backend for a flow; the rule of a status requirement), also when it has a bit conditional. The persons whose presence
+  names such an NPA are not resolved (211 persons of Nighthaven; [Persons](persons.md)). The proved flow predicates (`u:`, `l:`) are a
+  later part (an open point).
+- QG4R-R3 (QGR4A3): the loaders of `trigger-data.json` and `poi-data.json` refuse a corner of a volume or a shape point outside 1e9 m before
+  a cell number is made of it; the count, the check, and the grid use one span of each volume (`cell_span`). A far volume of `set` (a test)
+  goes into the list of each lookup.
 
 ### The corrections of the code review of stage QG3 (in stage QG4)
 
@@ -1017,6 +1135,11 @@ from the client at a person (a development run: `tools/world quest grant` gives 
   9027 Faith's Bounty 6.5 m west of the common border of 9027 and 9022 in the data, both directions; the cues of 9022 1.9 to 2.5 m from
   it; the watchtower 30220 within 1 m). The server completes a task of the place when the accepted position crosses the border of the
   data: up to about a second after the cue. Read the place view (`tools/world quest places`), not only the cue, for a check of a border.
+- Stage QG5a: the sphere of a trail is small (0.75 m around a point near the ground): a walk must go over the trail. A walk 2 m beside it
+  finds nothing (live I2: the first walk passed 2.1 m north). Read the place with `tools/world list` and walk on the line of the trail.
+- Stage QG5a: the HUD tracks only the pinned quests: read the counter of a chest task in the journal (J, the category of the quest).
+- Stage QG5a: a glyph tablet keeps its prompt "E UNSEAL ANCIENT GLYPH" after its gather (no instanced slice); a second gather in the 25 s
+  of its respawn is refused (`gatheredQuestObject`). An instanced quest object (the trapped boar) goes for the character.
 - Stage QG3: a travel can put the character in the discovery sphere of a POI (DiscoveryRadius, 150 to 1000 m): the client sends 2297
   "entered" for it and the shape of the data says outside (live QG3: the shipwrecks 30215 and 30216 at 177 m and 127 m, radius 200). That
   is no disagreement of the shape.

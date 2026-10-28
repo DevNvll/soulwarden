@@ -43,13 +43,18 @@ enum class GatheringType : std::uint8_t {
     cutting,
     dressing,
     mining,
-    /** A type that this stage does not have (AzothStaff, fishing): the row is refused. */
+    /** Stage QG5a: the Azoth Staff of the glyph locks (paperdoll slot 38: client 0x5CAB873, the tool query 0x48FF240). */
+    azothStaff,
+    /** A type that the backend does not have (fishing): the row is refused. */
     other,
 };
 
 [[nodiscard]] const char* gathering_type_text(GatheringType type);
 [[nodiscard]] GatheringType gathering_type_of(std::string_view text);
-/** @return The paperdoll slot of the tool of a type (protocol notes 4.11: 33 logging axe, 34 sickle, 35 skinning knife, 36 pickaxe), or 0. */
+/**
+ * @return The paperdoll slot of the tool of a type (protocol notes 4.11: 33 logging axe, 34 sickle, 35 skinning knife, 36 pickaxe; stage QG5a:
+ *         38 the Azoth Staff), or 0.
+ */
 [[nodiscard]] std::uint32_t tool_slot(GatheringType type);
 
 /** A gatherable row (GatherableData of the game). */

@@ -182,6 +182,25 @@ The source of each rule is in brackets: game data, client code, live check (the 
   row (a skinning of a Boar: the row Boar); they are a part of the result (one transaction with the award rows of AwardOnlyOnce; a full bag
   refuses the whole gather) and not a part of a kept roll.
 
+- Stage QG5a (the quest objects, [Quests](quests.md)):
+  - the quest tables are Gatherable_Quest, Gatherables_NPCRescue_01 (the rescues; its column GatherableEntryId has a lower-case d), and
+    Gatherable_Quest_AncientGlyph (the glyph locks); a quest placement of any slice path is a quest object (not only slices/gatherables/),
+    with the variant of the placement, else the m_selectedVariant of its slice [data]. The ordinary nodes stay the placements of
+    slices/gatherables/ [agent: no change of the ordinary gathering];
+  - a direct binding (a gathering slice with no variation table) is a quest object when its row has the form of a row of the quest tables:
+    a loot container with the loot table Empty or blank and a GameEventID (`quest_form`); its tag and InteractOnlyOnQuest are the ones of
+    its own GatherOption bound [agent];
+  - a quest child of a PrefabSpawner of a placement (not client-authoritative, made at the init) is the member `children` of the file, with
+    the key "UUID/ENTITY" of its object of the interaction data [agent: the key of the person children];
+  - the gathering type AzothStaff is a tool type: the Azoth Staff in the paperdoll slot 38 [client 0x5CAB873, the tool query 0x48FF240], the
+    weapon rows with GatheringTypes AzothStaff, and the rank gate of the trade skill AzothStaff of the progression tables [data];
+  - RequireControllingFaction is a flag (UNSUPPORTED_FLAGS) [client: the flag converter 0x5BF6BC0 at 0x440DC07]: "0" is no rule (557 rows of
+    the data, most of them quest rows that the tool refused before);
+  - the per-character state of a quest object: after the commit of a gather the character has a LootTracker entry Looted of the actor of
+    the object (`Entity::questGatherTracker`), and its second gather is refused (`gatheredQuestObject`) until a uniform draw of the respawn
+    bounds of the row on the world clock (`Gathering::quest_object_due`); no node row and no node state [the rule of the destructible
+    objects, stage 1.8e]. Live I4 of stage QG5a: the trapped boar and its marker go; a glyph tablet (no instanced slice) keeps its prompt.
+
 ## Commands
 
 ```sh
@@ -194,6 +213,11 @@ tools/gamedata/gathering.sh --near 8985 5328 10                # the gathering n
 The admin interface has the member `gathering` of the state of a character (the same values as `tools/world gathering`).
 
 ## Traps
+
+- Stage QG5a: a glyph lock needs the Azoth Staff in slot 38 and the rank 5 of the trade skill AzothStaff. The backend pays no
+  ProgressionReward (the source of these ranks): give the rank with `tools/world tradeskill CHARACTER AzothStaff 5` for a test.
+- Stage QG5a: a gathering file of before stage QG5a refuses the quest rows with RequireControllingFaction "0" ("a faction"): write the file
+  again with `tools/gamedata/gathering.sh`.
 
 - A node needs the focus of its prompt, and a tool row needs the tool in its paperdoll slot: with no tool the prompt says "No equipped
   Axe", and E sends nothing (no request in the log). Equip the tool and look away and back (a new focus).

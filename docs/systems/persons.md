@@ -208,6 +208,13 @@ the stage (with the cause), [review] a finding of the code review of stage 2.5c 
   characters with a person conversation. No tick looks at the persons of the world. NC7: 2,000 and 200,000 authored person slots, 20,000
   requests: the same 20,000 lookups and 32,000 state visits, 0.06 s and 0.05 s.
 
+- Code review of stage QG4, finding QG4R-R2 (in stage QG5a): a presence condition that names a non-persisted achievement with an
+  ObjectiveFlow (the quest state rule of the NPA: `*SwapActive_18007_Cecilia` is `u:Quest_18018,l:Quest_18018/Quest_18018_Task_5:c`; client:
+  loader 0x43B57F3, parser 0x43B5827, evaluator 0x318A5F0) is not resolved: the binding has the cause "the presence condition names the NPA
+  ... with an ObjectiveFlow" (211 persons of Nighthaven, all `showWhen`; `personsObjectiveFlow`), and the backend refuses its use. The
+  backend has no rule for an ObjectiveFlow: such an NPA is false, also when it has a bit conditional (its gate does not go). Before the
+  correction these persons were never there either (the NPA was false); the manifest counted their slots. Cases QGR4A2, NC1 (`person-flow`).
+
 ## Commands
 
 ```sh

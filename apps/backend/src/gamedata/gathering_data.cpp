@@ -166,6 +166,8 @@ const char* gathering_type_text(GatheringType type) {
         return "Dressing";
     case GatheringType::mining:
         return "Mining";
+    case GatheringType::azothStaff:
+        return "AzothStaff";
     case GatheringType::other:
         return "other";
     }
@@ -189,6 +191,9 @@ GatheringType gathering_type_of(std::string_view text) {
     if (lower == "mining") {
         return GatheringType::mining;
     }
+    if (lower == "azothstaff") {
+        return GatheringType::azothStaff;
+    }
     return GatheringType::other;
 }
 
@@ -202,6 +207,8 @@ std::uint32_t tool_slot(GatheringType type) {
         return 35;
     case GatheringType::mining:
         return 36;
+    case GatheringType::azothStaff:
+        return 38;
     case GatheringType::none:
     case GatheringType::other:
         return 0;
@@ -480,6 +487,22 @@ bool GatheringData::parse(const std::string& text) {
             return fail("the capital node " + key + " is not a placement UUID with a template and a row");
         }
         m_capitals.emplace(lower_ascii(key), link);
+    }
+    // Stage QG5a: the quest object children of the spawners of the placements ("UUID/ENTITY": the key of their object in the interaction
+    // data). A file of before has none.
+    if (document.contains("children")) {
+        if (!document["children"].is_object()) {
+            return fail("the member children is not an object");
+        }
+        for (const auto& [key, entry] : document["children"].items()) {
+            GatheringLink link;
+            if (key.size() != 53 || key[36] != '/' || !link_of(entry, link)) {
+                return fail("the capital child " + key + " is not a placement UUID and a spawner entity with a template and a row");
+            }
+            if (!m_capitals.emplace(lower_ascii(key), link).second) {
+                return fail("two capital nodes have the key " + key);
+            }
+        }
     }
     if (!document["creatures"].is_object()) {
         return fail("the member creatures is not an object");

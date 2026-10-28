@@ -132,6 +132,9 @@ QuestDoc event_quests() {
     doc.task("Test18c_Chest_Root", "simpletaskcontainer", 0);
     doc.objective("Test18c_ChestQuest", json::object(),
                   {{0, "Test18c_Chest", {}}, {1, "Test18c_ChestEvent", {}}, {2, "Test18c_Chest_Root", {0, 1}}});
+    // Stage QG5a: a task of two events of the quest object (the object stays open for the character while the task is Active).
+    doc.task("Test18c_ChestTwice", "taskgameevent", 14, {{"KillEnemyType", "Test18c_ChestRow_interact"}, {"TargetQty", "2"}, {"InteractTag", "IO_Test18c_Chest"}});
+    doc.objective("Test18c_ChestTwiceQuest", json::object(), {{0, "Test18c_ChestTwice", {}}});
     // The crafts and the refines.
     doc.task("Test18c_Craft", "taskcraftrecipe", 38, {{"CraftingRecipeId", "Test_Recipe"}, {"TargetQty", "2"}, {"MinGearScore", "250"}});
     doc.task("Test18c_CraftAny", "taskcraftrecipe", 38, {{"CraftAnyRecipe", "1"}, {"TargetQty", "3"}});
@@ -489,6 +492,59 @@ void quest_objects(const Options&) {
     shop.gather(shop.clientB, shop.capital_block(), 1500);
     shop.settle();
     check(count_of(b, "TestHideT1") == 1 && state_of(shop.quest(kCharacterB, "Test18c_ChestQuest"), 0) == kComplete, "B gathers its own object after A");
+}
+
+/**
+ * QG5F (stage QG5a): the per-character state of a gathered quest object (the rule of the destructible objects of stage 1.8e): its
+ * LootTracker entry Looted for its character only, no second gather by the character until the respawn of its row, the gather of B;
+ * and the requirement conditional of a bound (a variation requirement that is an expression).
+ */
+void gathered_quest_objects(const Options&) {
+    QuestShop shop;
+    check(shop.host.gathering.set(chest_gathering_document().dump(), {{kRegion, region_records()}}), "setup: the capital node is a quest object");
+    gamedata::InteractionObject object = object_of(kCapitalTag, InteractionKind::gathering, kCapitalPlace, {kGatherOptionIndex});
+    object.bounds[0].conditional = "Test18c_Flag || Test18c_Stay";
+    check(shop.host.interactions.set({option_row("GatherOption", 14, true)}, {}, {object}), "setup: the bound of the object has a conditional");
+    shop.enter();
+    world::Entity& a = *shop.entity(kCharacterA);
+    world::Entity& b = *shop.entity(kCharacterB);
+    check(shop.grant(kCharacterA, "Test18c_ChestTwiceQuest").ok() && shop.grant(kCharacterB, "Test18c_ChestTwiceQuest").ok(), "setup: A and B have the task");
+    shop.request(shop.clientA, shop.capital_block());
+    shop.end_block(shop.clientA);
+    check(shop.gathering().counts().begins == 0, "the conditional of the bound is false for A (no bit): the use is refused");
+    const auto flag = shop.host.world.ownership().achievement_bit("Test18c_Flag");
+    check(flag && shop.host.world.ownership().unlock_achievement(a, "Test18c_Flag", *flag) && flag
+              && shop.host.world.ownership().unlock_achievement(b, "Test18c_Flag", *flag),
+          "setup: A and B get a bit of the conditional");
+    const std::array<std::uint8_t, 16> actor = object.actor;
+    const std::size_t fromB = shop.clientB.got.size();
+    shop.gather(shop.clientA, shop.capital_block(), 1500);
+    shop.settle();
+    const world::QuestInstance* quest = shop.quest(kCharacterA, "Test18c_ChestTwiceQuest");
+    check(progress_of(quest, 0) == 1 && a.questGathers.size() == 1 && chests::tracker_state(shop.clientA, actor) == world::quest_object_rules::kLooted,
+          "A gathers the quest object: its event (1 of 2) and its LootTracker entry Looted");
+    const std::uint64_t completions = shop.gathering().counts().completions;
+    shop.gather(shop.clientA, shop.capital_block(), 1500);
+    shop.settle();
+    check(progress_of(shop.quest(kCharacterA, "Test18c_ChestTwiceQuest"), 0) == 1 && shop.gathering().counts().completions == completions
+              && shop.gathering().counts().refusals[static_cast<std::size_t>(world::GatherRefusal::gatheredQuestObject)] == 1,
+          "a second gather of A is refused until the respawn: no second event from one object");
+    check(!chests::tracker_state(shop.clientB, actor, fromB) && b.questGathers.empty(), "the entry of A does not reach B (owner only, MP-10)");
+    shop.gather(shop.clientB, shop.capital_block(), 1500);
+    shop.settle();
+    check(progress_of(shop.quest(kCharacterB, "Test18c_ChestTwiceQuest"), 0) == 1, "B gathers its own object (each character its own)");
+    // The clients go on with their reports (a session with no datagram for long ends) while the world clock passes 301 s.
+    for (int second = 0; second < 301; ++second) {
+        shop.report(shop.clientA, std::nullopt);
+        shop.report(shop.clientB, std::nullopt);
+        shop.host.advance(std::chrono::seconds(1));
+        shop.host.steps(1, {&shop.clientA, &shop.clientB});
+    }
+    shop.settle();
+    check(shop.entity(kCharacterA) == &a && a.questGathers.empty() && shop.gathering().counts().questObjectRespawns >= 1, "after the respawn bounds of the row (200 to 300 s) the entry of A goes");
+    shop.gather(shop.clientA, shop.capital_block(), 1500);
+    shop.settle();
+    check(state_of(shop.quest(kCharacterA, "Test18c_ChestTwiceQuest"), 0) == kComplete, "after the respawn A gathers it again: 2 of 2");
 }
 
 void crafts(const Options&) {
@@ -957,7 +1013,9 @@ void tool_checks(const Options& options) {
 } // namespace
 
 std::vector<Case> quest_event_cases() {
-    return {{"QE1", "quests (1.8c, G10): a credited kill with its vitals categories, the kill event, the credit list, a kill drop", kills},
+    return {{"QG5F", "quests QG5a (I4, MP-10): a gathered quest object for its character only, its respawn; the conditional of a bound",
+             gathered_quest_objects},
+            {"QE1", "quests (1.8c, G10): a credited kill with its vitals categories, the kill event, the credit list, a kill drop", kills},
             {"QE2", "quests (1.8c, G11): give with AwardOnlyOnce, a StayActive possession and its regression, equip, take by item id, reset", items},
             {"QE3", "quests (1.8c, G12): the quest drop of a skinning, TaskRequireGatherItems", gathers},
             {"QE4", "quests (1.8c, G14): a quest object: InteractOnlyOnQuest, its drop, its game event, no shared depletion", quest_objects},

@@ -448,6 +448,10 @@ backend. The tool of each system is also in the document of that system.
   refuses a list of a wrong size, a row that is not a number and a flag, and a list that goes down; a file with no member has no item level
   (an artifact grants no objective). An older backend reads the file of stage QG4 (it does not know the member). `check_progression_tool.py`
   has the case `equip-gear-scores`; case QG4C.
+- `gathering-data.json`, stage QG5a: the member `children` (`{UUID/ENTITY: [TEMPLATE, ROW, TAG, ONLY_ON_QUEST]}`: the quest children of the
+  spawners of the placements; the loader refuses a key of a wrong form and a key of a capital), the quest tables Gatherables_NPCRescue_01
+  and Gatherable_Quest_AncientGlyph, the quest placements of any slice path, the direct bindings of the quest form, the tool type AzothStaff,
+  and the flag RequireControllingFaction (above, the changes of stage QG5a).
 - `gathering-data.json`, stage 1.8c: the quest objects of the variation table Gatherable_Quest (the slice Master_Quest_Instanced of the
   layers): a capital entry `[TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST]`, its row with the member `"quest": true` (a loot container with the
   loot table Empty is not a refusal for it), and its game event with no row of the event tables (the event of the quests). The format stays
@@ -461,7 +465,14 @@ backend. The tool of each system is also in the document of that system.
   GameEventID (`event`). The build: 169 objects of 85,430 capital placements, 69 rows, 16 variant names with no row (counted in
   `unknownVariants`; their placements are left out). The tool stops when a source is not there or not complete. Without the file the
   backend starts, and no quest object can be destroyed. `gathering.py` reads the same variation table (`DAMAGEABLE_TABLES`) and does not
-  change its output for it.
+  change its output for it. Stage QG5a (still format 1): the member `proximity` (each object of the variation table
+  Gatherable_Quest_Proximity, or a GatherableController with m_isProximityGatherable and no table, with `radius`: DetectionVolumeSphereRadius
+  of the row, else the sphere of the slice; 284 objects of 0.75 to 10 m), the direct destructible bindings (m_isDamageableGatherable and no
+  table) and the destructible and proximity children of the spawners of the placements (the key "UUID/ENTITY", the client id of a child as
+  the actor: 53 children), the variant of the placement else m_selectedVariant of the slice; a direct row must have the quest form
+  (`gathering.quest_form`: 286 direct rows that do not are counted, `directNotQuest`), and a variant row that names a gatherable row of no
+  table is counted (`variantRowMissing`: 1). The loader refuses a proximity object with no radius above 0 or above 64 m, and a member that
+  is not a list; a file with no member has no proximity object.
 - `interaction-data.json` format 4 (stage 2.5c, [Persons](../systems/persons.md)): the persons. A person child (the child of a
   PrefabSpawner of a level placement with m_isClientAuthoratative false and m_spawnOnInitialize true whose slice has an NPC component)
   is an object with the client id of its place, yaw, and slice asset (`child_group`: client 0x6160B60), the actor G and 8 zero bytes, the
@@ -485,6 +496,14 @@ backend. The tool of each system is also in the document of that system.
   2 idTaken). The other members are the same as the file of stage 2.5c. An older backend reads the file (the new members and the person
   of a template have the form that it knows). The loader refuses a person apart with no npc, cause, or world, and a member that is not a
   list (case QG4C). `tools/release.sh` takes the new file with the game data folder.
+  Stage QG5a (still format 4; [Interactions](../systems/interactions.md), [Quests](../systems/quests.md)): the variation of a bound (the
+  actions "Set Interact Tag", "Set InteractOnlyOnQuest", "Set interaction req achievement" of the selected variant: 2,208 bounds with a tag
+  of a variation, 81 with a required achievement); a required achievement that is an expression is `requires.conditional` (a text; 11);
+  the quest children of the spawners of the placements (`questChild`, the key "UUID/ENTITY": 81 objects; 452 with m_spawnOnInitialize false
+  in `excluded`); a person whose presence names an NPA with an ObjectiveFlow is not resolved (code review of QG4, finding QG4R-R2: 211
+  persons, the count `personsObjectiveFlow`). The build: 44,617 objects (44,536 before), 0 objects removed. A backend of before stage QG5a
+  reads the file (it does not know `conditional` and `questChild`: such a bound has no conditional check there, and a child object has no
+  capital node of its gathering data). `check_interactions_tool.py --persons` has the case `person-flow`.
   Write the file again with `tools/gamedata/interactions.sh`. `check_interactions_tool.py --persons` (case NC1) checks the id rule against an independent
   bit builder and the bindings with made-up slices. A file of format 3 loads: it has no person child.
 - `conversation-data.json` (stage 2.5c, `tools/gamedata/conversations.sh`, `check_conversations_tool.py` (case NC2),
@@ -549,6 +568,17 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   stage 2.2 (a compare of the two files of the supported build). The backend reads the member as a binding key of the behavior trees
   ([Creature behavior](../systems/creature-behavior.md), section "Behavior trees"); a file with no member works (no creature has a server
   tree), and a member with a wrong form refuses the file (test case BTB1). `tools/release.sh` takes the new file with the game data folder.
+
+- Stage QG5a changes `gathering-data.json` and its folder `gathering/` (still format 1: the quest tables Gatherables_NPCRescue_01 and
+  Gatherable_Quest_AncientGlyph, a quest placement of any slice path with the variant of the placement or of the slice, the direct
+  bindings of the quest form, the member `children` of the quest children of the spawners, the tool type AzothStaff (264 tools), the flag
+  RequireControllingFaction; 1,207 rows (1,001 before), 35,118 capitals (34,705 before; 0 removed, 0 changed), 81 children; the region
+  files are the same bytes), `quest-objects.json` (still format 1: the member `proximity` with 284 proximity objects and their radius, 27
+  more destructible objects (the direct bindings and the children; 196 in all), 240 rows; the 169 objects of before keep their values), and
+  `interaction-data.json` (above). Write the three again (`tools/gamedata/gathering.sh`, `quest-objects.sh`, `interactions.sh`): with the
+  files of before the backend has none of the new quest objects, and a quest row with RequireControllingFaction "0" is refused. A backend
+  of before stage QG5a reads the three files: it does not know `children` and `proximity`, and it refuses the rows of the type AzothStaff.
+  `tools/release.sh` takes them with the game data folder.
 
 - Stage QG4 changes `interaction-data.json` (the persons; still format 4) and `progression-tables.json` (the member `equipGearScores`;
   still format 4). Write both again (`tools/gamedata/interactions.sh`, `tools/gamedata/progression.sh`): with the older files the backend

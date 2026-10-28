@@ -77,6 +77,9 @@ void QuestObjects::strike(Entity& character, std::uint32_t visit, std::uint32_t 
     const float forwardY = std::cos(character.look);
     for (const std::uint32_t index : inReach) {
         const gamedata::QuestObjectPlacement& object = objects->objects()[index];
+        if (object.proximity) {
+            continue; // Stage QG5a: a proximity object takes no strike (the character finds it in its sphere).
+        }
         const float dx = object.position.x - character.position.x;
         const float dy = object.position.y - character.position.y;
         const float dz = object.position.z - character.position.z;
@@ -147,6 +150,60 @@ void QuestObjects::strike(Entity& character, std::uint32_t visit, std::uint32_t 
     }
 }
 
+void QuestObjects::moved(const Entity& character) {
+    if (data() != nullptr && data()->proximity_count() != 0 && character.kind == EntityKind::player) {
+        m_moved.insert(character.id);
+    }
+}
+
+void QuestObjects::tick() {
+    if (m_moved.empty()) {
+        return;
+    }
+    const std::set<EntityId> moved = std::move(m_moved);
+    m_moved.clear();
+    for (const EntityId id : moved) {
+        if (Entity* character = m_world.find(id); character != nullptr && character->kind == EntityKind::player) {
+            look(*character);
+        }
+    }
+}
+
+void QuestObjects::look(Entity& character) {
+    const gamedata::QuestObjectData* objects = data();
+    // An accepted position only (a camera estimate or a travel changes nothing), a character that lives, no cutscene or cinematic.
+    if (objects == nullptr || character.life.dead || character.positionEstimated || character.quests.cutsceneStarted
+        || character.quests.pendingCinematic != 0) {
+        return;
+    }
+    ++m_counts.proximityLooks;
+    for (const std::uint32_t index : objects->nearby(character.position, objects->proximity_reach(), &m_counts.proximityVisits)) {
+        const gamedata::QuestObjectPlacement& object = objects->objects()[index];
+        if (!object.proximity) {
+            continue;
+        }
+        const float dx = object.position.x - character.position.x;
+        const float dy = object.position.y - character.position.y;
+        const float dz = object.position.z - character.position.z;
+        if (dx * dx + dy * dy + dz * dz > object.radius * object.radius) {
+            continue;
+        }
+        if (object.onlyOnQuest && !m_world.quests().quest_object_open(character, object.tag)) {
+            continue; // The client shows the object only during the task (0x8261FC0): no event for a character with no task.
+        }
+        if (const auto found = character.questObjects.find(index); found != character.questObjects.end() && found->second.destroyed) {
+            continue; // Found before: it is back after its respawn.
+        }
+        ++m_counts.proximityFound;
+        const std::string mark = log::session_mark(character.owner, character.characterId);
+        const log::Context context(mark);
+        log::write("world: quest object: %s is in the sphere of the proximity object %s (%s, %.2f m of %.2f m)", character.name.c_str(),
+                   object.key.c_str(), object.variant.c_str(), static_cast<double>(std::sqrt(dx * dx + dy * dy + dz * dz)),
+                   static_cast<double>(object.radius));
+        destroy(character, index);
+    }
+}
+
 void QuestObjects::destroy(Entity& character, std::uint32_t index) {
     const gamedata::QuestObjectPlacement& object = m_data->objects()[index];
     const gamedata::QuestObjectRow& row = m_data->rows()[object.row];
@@ -190,8 +247,9 @@ void QuestObjects::destroy(Entity& character, std::uint32_t index) {
     const std::string characterId = character.characterId;
     const std::uint64_t generation = hits.generation;
     m_world.after(delay, [characterId, index, generation](World& world) { world.quest_objects().respawn_due(characterId, index, generation); });
-    log::write("world: quest object: %s destroyed %s (%s), the game event %s; it is back for the character in %.1f s", character.name.c_str(),
-               object.key.c_str(), object.variant.c_str(), row.event.empty() ? "(none)" : row.event.c_str(), static_cast<double>(seconds));
+    log::write("world: quest object: %s %s %s (%s), the game event %s; it is back for the character in %.1f s", character.name.c_str(),
+               object.proximity ? "found" : "destroyed", object.key.c_str(), object.variant.c_str(), row.event.empty() ? "(none)" : row.event.c_str(),
+               static_cast<double>(seconds));
 }
 
 void QuestObjects::respawn_due(const std::string& characterId, std::uint32_t index, std::uint64_t generation) {

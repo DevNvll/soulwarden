@@ -86,6 +86,10 @@ The source of each rule is in brackets: game data, client code, live check (the 
   LootTracker of the client: a repeated actor hides a different chest) [code review of stage 3.5b.1, finding CH-R4]. The loot file of
   format 2 must have a container floor for each level of its gear score ranges: else the loader refuses it (a level with no floor gave
   weaker gear) [finding CH-R8].
+- Stage QG5a ([Quests](quests.md), the quest chest drops): a successful open of a chest gives the quest drops of the tasks of the character
+  with ChestDropProbability (`Quests::plan_chest_drops`: a chest in a point of interest of the tags of the task) in the same grant as the
+  chest loot, and the award rows in the same transaction as the claim (MP-7). A full bag gives none of them (the claim keeps the roll of the
+  chest only); a refused write gives no item and no claim; a Looted claim refuses a second open. The count `questDrops` of the counts.
 - Stage 1.8e ([Quests](quests.md)): the LootTracker state of a character also has the entries of its destroyed quest objects
   (`Entity::questObjectTracker`: the managed actor of the placement, the state Looted, the kind 0); `encode_loot_tracker_state` adds them
   to the claims of the chests. The client removes the object for that entry [live I0 of stage 1.8e].

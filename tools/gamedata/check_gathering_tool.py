@@ -10,7 +10,7 @@ functions of the tool made-up tables, rows, and distribution files, and compares
   row                a gatherable row: its values, the type None for an empty cell, the trade skill "None" as no trade skill,
                      ItemRequired with no item (nothing to check: supported)
   row-unsupported    the causes of a row that the backend refuses: ItemRequired with an item, a song, a loot container, two
-                     gatherers, AzothStaff
+                     gatherers, fishing; stage QG5a: AzothStaff is a tool type, RequireControllingFaction a flag (0: no rule)
   row-stops          BaseGatherTime 0 or not a number, the respawn bounds 120 to 60, a rank 1.5: each one stops the tool
   tables             the tables of each type: the rows, the variations, the ranks, the events, the tools (only weapon rows with a type)
   table-stops        a rank table with a gap, a table with no needed column, a tool range 3 to 2, two variation rows of one id with
@@ -405,12 +405,17 @@ def check(case: str) -> tuple[bool, str]:
             "song": tool.row_entry("B", "T", good_row(RequiredSongId="Song1"))["unsupported"],
             "container": tool.row_entry("C", "T", good_row(IsLootContainer="1"))["unsupported"],
             "gatherers": tool.row_entry("D", "T", good_row(NumRequiredToGather="2"))["unsupported"],
-            "azoth": tool.row_entry("E", "T", good_row(GatheringType="AzothStaff"))["unsupported"],
+            "fishing": tool.row_entry("E", "T", good_row(GatheringType="Fishing"))["unsupported"],
+            # Stage QG5a: the Azoth Staff is a tool type (slot 38); RequireControllingFaction is a flag ("0": no rule, "1": a faction).
+            "azoth": tool.row_entry("F", "T", good_row(GatheringType="AzothStaff"))["unsupported"],
+            "faction0": tool.row_entry("G", "T", good_row(RequireControllingFaction="0"))["unsupported"],
+            "faction1": tool.row_entry("H", "T", good_row(RequireControllingFaction="1"))["unsupported"],
         }
         passed = (causes["restriction"] == ["the restriction ItemRequired"] and causes["song"] == ["a song"]
                   and causes["container"] == ["a loot container (a chest: stage 3.5b)"]
                   and causes["gatherers"] == ["more than one gatherer (NumRequiredToGather)"]
-                  and causes["azoth"] == ["the gathering type AzothStaff"])
+                  and causes["fishing"] == ["the gathering type Fishing"] and causes["azoth"] == []
+                  and causes["faction0"] == [] and causes["faction1"] == ["a faction"])
         return passed, "; ".join(f"{name}: {value}" for name, value in causes.items())
     if case == "row-stops":
         messages = [stops(lambda cells=cells: tool.row_entry("X", "T", good_row(**cells))) for cells in

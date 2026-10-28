@@ -7393,6 +7393,54 @@ the entry of the development character shows "Acquire a Mount", "Faction Introdu
 `shots/05-journal-push-change.png`, `shots/06-journal-push-change-new.png`). The schedule and the Retrigger rule of the original server
 are not known (project rules: the entry, a change of the bits or of the level; Retrigger is a grant of one time).
 
+### 4.60 The quest chest drops, the proximity quest objects, the glyph locks, the variation of a bound (live proof of stage QG5a; static proof for the client code and the game data; the place of a chest drop, the instant find of a proximity object, and the per-character respawn are project rules with the values of the game data)
+
+Research: the static read of stage QG5a (`~/Games/soulwarden/work/evidence/quests/qg5a/implement/static/ANSWERS.md`), the live run of
+stage QG5a (`~/Games/soulwarden/work/evidence/quests/qg5a/implement/RESULT.md`). The addresses are image-relative (client build
+1.400.6031.6004151). No new message or state: the backend uses the Objectives state (4.53), the bag and its loot notice, and the LootTracker
+state (4.41).
+
+**ChestDropProbability** [static: the item task field +0x6A4 (reflection 0x3B0AAF0, loader 0x445EDE0 at 0x445F71B); the description
+0x825F500 "0-100, probability to drop items for loot chests/POI loot"; the roll of the task 0x3B0B290: `floor(random(0, 100)) <= chance` at
+0x3B0B2F3 to 0x3B0B336, one item (0x3B0B359); PauseAndClearLootOnTaskComplete +0x68D at 0x3B0B2D6; the item tasks of the enum values 25,
+26, 29, 30 (factory 0x4461150 at 0x446235D); the data check 0x3A6D4D0 sums the chest counts of the territory record of the task (0x3A6E2E3
+to 0x3A6E30A, message 0x8259070)]. The chest open, its receiver, and its place filter of the original server are not in the image. The
+backend gives the quest item in the result of the open (one grant with the chest loot, the cause ItemGathered: the loot notice). Live:
+`02A_Side02_02_EarthProvide` at the Ancient Chest of Postrekhin (`ancient_ruins_40214`): the notice "+1 Alkahest" with the chest loot
+(`shots/I1-04-chest-opened.png`), the journal "0 / 2" before (`shots/I1-03-journal-scroll.png`) and "1 / 2 - Collect Alkahest from chests in
+Postrekhin" after (`shots/I1-05-journal-after.png`).
+
+**The proximity quest objects** [static: the server facet field m_isProximityGatherable of the GatherableController (string 0x81C4F38,
+reader 0x3378C1D); the messages 5078 OnEnteredProximityGatherable (u32, the key of a GatherableData row; decoder 0x26FEC60, handler
+0x4900030) and 5118 OnExitedProximityGatherable (handler 0x49002B0) go from the server to the client: the handler writes the tags of the row
+(+0x70) to the data path `Hud.LocalPlayer.Gathering.GatherableTags` and sends nothing; the sender of the server is not in the image; data:
+the slice master_quest_proximity_instanced has a DetectionVolumeComponent with a sphere (the column DetectionVolumeSphereRadius, the action
+"Change Sphere Shape Radius") and an Interact component with no option]. The client sends nothing at a proximity object: the server finds
+the character in the sphere. The backend does not send 5078 or 5118 (the HUD value has no use that a live check showed). Live P1: the walk
+over the trail `04A_Side01_01_Proximity_Trail1` (0.71 m of 0.75 m) gives no request of the client; the server completes the task, the client
+plays the effect of the depletion and the progress line of the HUD, and the beam of the trail goes (`videos/I2-trail-walk.mp4`,
+`shots/I2-05-find-effect.png`).
+
+**The per-character state of a quest object** [data: InstancedLootType 4 (Quest, 0x36FDA37 to 0x36FDA47) of the quest slices; the rule of
+4.58]: a Looted entry of the LootTracker state with the managed actor of the object hides an instanced quest object for its character
+(live: the trapped boar of `09A_S1_SaveAnimals` and its marker go after the gather, `shots/I4-02-boar-after.png`). A glyph tablet (no
+instanced slice) keeps its prompt after the gather (`shots/I3-02-glyph-after.png`); the server refuses a second gather until the respawn.
+
+**The glyph locks** [static: the paperdoll slot 38 of the Azoth Staff (AZOTHSTAFF_SLOT, 0x5CAB873 to 0x5CAB883; the tool query 0x48FF240);
+the rank gate of the row (Tradeskill +0x2C, RequiredTradeskillLevel +0x2E: loader 0x440D879 to 0x440D8E6, condition 0x33732F0); the
+column RequiredAchievement of a variation row goes to the required achievement of the Interact component ("Set interaction req
+achievement": 0x42D4BF0, 0x35D5FA0), which the validation 0x35C2E60 and the prompt 0x35D7970 evaluate as an achievement conditional
+(0x2ED8BB0)]. Live: with Darkness_AzothStaff_T1 in slot 38 and the rank 5 of AzothStaff the client shows "E UNSEAL ANCIENT GLYPH", the gather
+takes 3 s, and `16_Side_01_Glyphs` goes to "Read the Ancient Glyph" (`shots/I3-00-glyph-arrival.png`, `shots/I3-02-glyph-after.png`).
+
+**The variation of a bound** [static: "Set Interact Tag" 0x42D5240 calls the setter 0x35D60F0 (the tag and its CRC: 0x35D6117 to 0x35D6155);
+"Set InteractOnlyOnQuest" 0x42D4B70 and 0x35D5EF0; the quest gate reads the effective tag and flag at 0x35C36CC to 0x35C36E1]: the selected
+variant (the placement, else m_selectedVariant of the slice) sets the tag, InteractOnlyOnQuest, and the required achievement of the Interact
+component of the entity of each action. A blank cell of the row: not proved (no such case in this build).
+
+**RequireControllingFaction** [static: the gatherable loader 0x440D2A0 reads it with the flag converter 0x5BF6BC0 at 0x440DC07, as
+IsLootContainer (0x440E41C) and ResetGatherTimeOnEndInteraction (0x440E3D4)]: a flag; the cell "0" of 557 rows is no rule.
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

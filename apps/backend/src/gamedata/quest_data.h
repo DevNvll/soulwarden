@@ -130,6 +130,11 @@ struct QuestTask {
     std::vector<std::string> dropSources;
     /** ItemDropProbability: 0 to 100 (a blank cell: 0). */
     double dropChance{0.0};
+    /**
+     * Stage QG5a: ChestDropProbability, 0 to 100 (a blank cell: 0). The chance of the quest item at a successful open of a chest
+     * ("0-100, probability to drop items for loot chests/POI loot": client 0x825F500; item task field +0x6A4, reflection 0x3B0AAF0).
+     */
+    double chestChance{0.0};
     /** GuranteedDropAttempts (the spelling of the data): the next drop after this many misses is sure. 0: none. */
     std::uint32_t guaranteedAttempts{0};
     bool awardOnce{false};
@@ -279,6 +284,12 @@ struct QuestNpa {
     std::string conditional;
     /** ReqStatusEffectId: a status effect that the character must have (stage 1.8a has no rule for it: the value is false). */
     std::string status;
+    /**
+     * Code review of stage QG4, finding QG4R-R2: ObjectiveFlow, the rule of the quest state of the NPA ("u:Quest_18018,l:Quest_18018/
+     * Quest_18018_Task_5:c"; client: loader 0x43B57F3, parser 0x43B5827, evaluator 0x318A5F0, predicate 0x3189E83 and 0x3189F5F). The
+     * backend has no rule for it yet: an NPA with a flow is false, also when it has a conditional (its gate must not go).
+     */
+    std::string flow;
 };
 
 /** One row of the backstory table with an override (a template of the developers, or an archetype row of the creation). */

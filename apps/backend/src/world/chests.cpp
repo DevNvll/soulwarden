@@ -420,7 +420,16 @@ bool Chests::complete(Entity& entity, const InteractionContext& context) {
         items = m_world.rewards().grant_items(m_world.rewards().roll_root(root, context), character->progression.level);
         ++m_counts.rolls;
     }
-    // One transaction: the items and the claim (MP-7). A full bag keeps the roll in the claim (Rolled) and gives no item.
+    // Stage QG5a: the quest drops of the open (ChestDropProbability of the tasks of the character, client 0x825F500). They are a part of
+    // the result: one transaction with the items and the claim, whole or not at all; a full bag gives none of them, and they are not a part
+    // of the kept roll (the next open rolls them again). A Looted claim refuses a second open: no second award.
+    const std::vector<QuestDrop> drops = m_world.quests().plan_chest_drops(*character, chest.position);
+    std::vector<GrantItem> result = items;
+    for (const QuestDrop& drop : drops) {
+        result.push_back(GrantItem{drop.itemId, drop.quantity, std::nullopt, {}});
+    }
+    // One transaction: the items, the claim, and the award rows of the quest drops (MP-7). A full bag keeps the roll in the claim (Rolled)
+    // and gives no item.
     ChestClaim next;
     next.chest = index;
     next.generation = kept ? existing->second.generation : ++own.generation;
@@ -430,8 +439,8 @@ bool Chests::complete(Entity& entity, const InteractionContext& context) {
     state::Store::Batch batch(m_world.store());
     bool written = batch.open();
     ItemResult given;
-    if (written && !items.empty()) {
-        given = m_world.inventory().grant(characterId, items, 0, nullptr, true);
+    if (written && !result.empty()) {
+        given = m_world.inventory().grant(characterId, result, 0, nullptr, true);
         written = given.error != ItemError::storeFailed;
     }
     // A full bag, or an item of the roll that the catalog does not have (finding CH-R3): no change, and the claim keeps the complete
@@ -451,6 +460,7 @@ bool Chests::complete(Entity& entity, const InteractionContext& context) {
     if (written && !(full && kept)) {
         written = m_world.store().write_loot_claim(characterId, row_of(chest.key, next));
     }
+    written = written && (full || m_world.quests().write_drops(*character, drops));
     written = written && batch.commit();
     if (!written) {
         character->bag = bagBefore;
@@ -481,11 +491,13 @@ bool Chests::complete(Entity& entity, const InteractionContext& context) {
     }
     m_due.emplace(next.reset, DueReset{characterId, chest.key, next.generation});
     ++m_counts.completions;
-    m_counts.itemsGiven += items.size();
+    m_counts.itemsGiven += result.size();
+    m_counts.questDrops += drops.size();
+    m_world.quests().drops_done(*character, drops);
     set_gather(*character, kGatherDone, 0.0F, false, kNoTarget);
     refresh_tracker(*character, own);
     log::write("world: chests: character %s opened the %s chest %s: %s; the reset in %.0f s (claim %llu)", characterId.c_str(),
-               gamedata::chest_kind_text(chest.kind), chest.key.c_str(), item_list(items).c_str(),
+               gamedata::chest_kind_text(chest.kind), chest.key.c_str(), item_list(result).c_str(),
                std::chrono::duration<double>(next.reset - now).count(), static_cast<unsigned long long>(next.generation));
     return true;
 }

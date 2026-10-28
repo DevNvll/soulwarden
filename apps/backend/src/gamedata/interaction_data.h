@@ -144,6 +144,11 @@ struct InteractionBound {
     std::uint32_t progressionRank{0};
     bool onlyOnQuest{false};
     bool condition{false};
+    /**
+     * Stage QG5a: the required achievement of the variation of the object when it is an expression ("A || B": the column RequiredAchievement
+     * of a glyph row; the client evaluates it as an achievement conditional, 0x35C2E60 through 0x2ED8BB0). Empty: none.
+     */
+    std::string conditional;
     /** Names of the data with no row (a required achievement, a lore id): the backend refuses each use of the bound. */
     std::vector<std::string> unresolved;
     /** m_interactTagString: the tag of a quest task. Not a requirement. */

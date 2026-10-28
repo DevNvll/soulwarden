@@ -404,6 +404,11 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
             }
         }
     }
+    // Stage QG5a: the required achievement of a variation that is an expression: the achievement conditional of the quests (the reader of
+    // TaskAchievement: ids, !, &&, ||, parentheses; an id that the data does not know is false).
+    if (!bound.conditional.empty() && !m_world.quests().conditional(character, bound.conditional)) {
+        return InteractionVerdict::requirement;
+    }
     // A gather (GatherResource) has no limit of users: the client skips the ordinary capacity check for the action 14 (client code
     // 0x35C2E60 at 0x35C3858; research gathering-stage.md Q1). Stage 3.6a: two characters can begin at one node; the gathering system
     // decides the completion (docs/systems/gathering.md).

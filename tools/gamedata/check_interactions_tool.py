@@ -538,15 +538,23 @@ def swap_controller(swap: bool, state: int | None, achievement: str = "DevWorld_
 
 
 def person_child_slice(swap: bool = True, npc_key: str = "0317_Generic", state: int | None = 4, variation_table: bool = True,
-                       npc_controller: int | None = None, child: str | None = None) -> list[Element]:
+                       npc_controller: int | None = None, child: str | None = None, bound_actions: bool = False) -> list[Element]:
     """A person child (stage 2.5c): the root with the NPC component (a generic key), the variation component of the table NPC with the
     columns NPCId and SwapAchievementId, the GatherableController with the achievement swap, and the Interact entity (slot 5). Stage QG4:
     `state` the m_achievementServerState of the controller (4 in masternpc_swap_defaultshown), no variation table (a direct NPC
     template), a second controller on the NPC entity with the state `npc_controller` (a cage and its person), and the state child above the
     person entity (`child`; default: the state of the byte, Healthy for 4 and Depleted for 8; no child with no swap)."""
+    actions = []
+    if bound_actions:
+        # Stage QG5a: the actions of the variation on the Interact entity (the tag, the flag, the required achievement of the bound).
+        for action, column in (("Set Interact Tag", "InteractTag"), ("Set InteractOnlyOnQuest", "InteractOnlyOnQuest"),
+                               ("Set interaction req achievement", "RequiredAchievement")):
+            actions.append(element(None, children=[element("m_entity", children=[entity_ref(PERSON_INTERACT_ENTITY)]), text("m_action", action),
+                                                   text("m_colName", column)]))
     variation = element(None, children=[text("m_variationTableUniqueName", "NPC"),
                                         element("m_variantData", children=[element(None, children=[text("m_colName", "NPCId")]),
-                                                                           element(None, children=[text("m_colName", "SwapAchievementId")])])])
+                                                                           element(None, children=[text("m_colName", "SwapAchievementId")])]
+                                                + actions)])
     root = [transform(NO_ENTITY, (0.0, 0.0, 0.0))] + ([variation] if variation_table else []) + ([swap_controller(swap, state)] if swap else [])
     state_child = child if child is not None else {4: "Healthy", 8: "Depleted", 6: "Locked"}.get(state or 0, "") if swap else ""
     person = [transform(PERSON_STATE_ENTITY if state_child else PERSON_ROOT, (0.0, 0.0, 1.0)),
@@ -592,7 +600,7 @@ class PersonSources(MadeUpSources):
         child = {"person-swap-unknown": PERSON_UNKNOWN_ASSET, "person-template": PERSON_TEMPLATE_ASSET, "person-swap-hidden": PERSON_HIDDEN_ASSET,
                  "person-two-controllers": PERSON_CAGE_ASSET, "person-nested": PERSON_HOLDER_ASSET}.get(mode, PERSON_CHILD_ASSET)
         self.slices[PERSON_SPAWNER_SLICE] = person_spawner_slice(child, variant, mode == "person-client", mode != "person-not-init")
-        self.slices[PERSON_CHILD_SLICE] = person_child_slice()
+        self.slices[PERSON_CHILD_SLICE] = person_child_slice(bound_actions=mode == "person-variation")
         self.slices[PERSON_UNKNOWN_SLICE] = person_child_slice(state=6)
         self.slices[PERSON_DIRECT_SLICE] = person_child_slice(swap=False, npc_key="Test_Direct_Npc")
         self.slices[PERSON_TEMPLATE_SLICE] = person_child_slice(swap=False, npc_key="Test_Template_Npc", variation_table=False)
@@ -616,9 +624,16 @@ class PersonSources(MadeUpSources):
                 "id": "2b0c0d0e-0000-4000-8000-000000000005", "worldPosition": {"x": 10.0, "y": 20.0, "z": 30.0}, "rotation": {"w": 1.0},
                 "sliceName": "Slices/Test/Direct_Person.slice", "sliceAssetId": "{2B0C0D0E-0000-4000-8000-0000000000A2}:2"}]}).encode()
         self.files[LAYER] = json.dumps({"Capitals": placements}).encode()
+        swap = "*Test_Flow" if mode == "person-flow" else "Test_Swap"
         self.files[tool.TABLES_FOLDER + "javelindata_variations_npcs.datasheet"] = sheet("NPC", tool.VARIATION_TABLE_TYPE, [
-            {"VariantID": "Test_Person", "NPCId": "Test_Person_Npc", "SwapAchievementId": "Test_Swap"},
-            {"VariantID": "Test_No_Npc", "NPCId": "", "SwapAchievementId": "Test_Swap"}])
+            {"VariantID": "Test_Person", "NPCId": "Test_Person_Npc", "SwapAchievementId": swap, "InteractTag": "IO_Test_Person",
+             "InteractOnlyOnQuest": "1", "RequiredAchievement": "Test_A || Test_B"},
+            {"VariantID": "Test_No_Npc", "NPCId": "", "SwapAchievementId": "Test_Swap", "InteractTag": "", "InteractOnlyOnQuest": "",
+             "RequiredAchievement": ""}])
+        # Code review of stage QG4, finding QG4R-R2: the NPA rows (the form of the data: NPAId, ReqAchievementConditional, ObjectiveFlow).
+        self.files[tool.TABLES_FOLDER + "javelindata_achievements_nonpersisted.datasheet"] = sheet("NPADataTable", "NPAData", [
+            {"NPAId": "*Test_Flow", "ReqAchievementConditional": "", "ObjectiveFlow": "u:Test_Quest,l:Test_Quest/Test_Task:c"},
+            {"NPAId": "*Test_Bits", "ReqAchievementConditional": "Test_Swap", "ObjectiveFlow": ""}])
 
 
 # Each case: the mode, and the text of the line. Each case writes a file.
@@ -638,6 +653,8 @@ PERSON_CASES = [
     ("person-nested", "stage QG4: a person below a nested PrefabSpawner: no object, in personsApart (nested)"),
     ("person-level-script", "stage QG4: a person of a dungeon level script: in personsApart (levelScript)"),
     ("person-other-world", "stage QG4: a person of a placement of another world: in personsApart (otherWorld, its world)"),
+    ("person-flow", "review of QG4 (QG4R-R2): a presence condition that names an NPA with an ObjectiveFlow: a binding with that cause"),
+    ("person-variation", "stage QG5a: the variation of the slice sets the tag, InteractOnlyOnQuest, and the conditional of the bound"),
 ]
 
 
@@ -686,6 +703,13 @@ def check_person(mode: str, document: dict) -> bool:
         return person["actor"] == expected.to_bytes(8, "little").hex() + "00" * 8 and (expected >> 51) & 0xF == 10
     if mode in ("person-no-row", "person-no-npc", "person-swap-unknown"):
         return bool(binding.get("unresolved")) and document["counts"]["personsUnresolved"] == 1
+    if mode == "person-variation":
+        bound = objects[0]["bounds"][0] if len(objects) == 1 else {}
+        return (bound.get("tag") == "IO_Test_Person" and bound.get("requires") == {"onlyOnQuest": True, "conditional": "Test_A || Test_B"}
+                and document["counts"].get("variationTags") == 1 and document["counts"].get("variationConditional") == 1)
+    if mode == "person-flow":
+        return ("ObjectiveFlow" in binding.get("unresolved", "") and "*Test_Flow" in binding.get("unresolved", "") and "presence" not in binding
+                and document["counts"]["personsUnresolved"] == 1 and document["counts"].get("personsObjectiveFlow") == 1)
     bound = person["bounds"][0]
     k = PERSON_ROOT ^ expected
     target = ((PERSON_INTERACT_ENTITY ^ k) + PERSON_INTERACT) & 0xFFFFFFFFFFFFFFFF

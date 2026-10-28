@@ -325,8 +325,8 @@ struct Subscriber {
  * The index of the active tasks of one character by the key of their event (stage 1.8c; code review of stage 1.8a, finding QR8A-R7). A key
  * is a kind and a value: "k:" a vitals category (a kill), "e:" a game event, "g:" an item of a gather, "c:" a recipe (a craft; "c:*" any
  * recipe), "r:" a recipe of a refine, "s:" a screen CRC, "i:" a tag of TaskInteract, "t:" a tag of a quest object, "kd:" and "gd:" a source
- * of a quest drop, "items" the possession and equip tasks, "place" the tasks of a place, "ach" TaskAchievement, "die" TaskDie, "level"
- * TaskHaveLevel of the level of the character (stage QG2a).
+ * of a quest drop, "cd" a task with a quest drop of a chest (stage QG5a), "items" the possession and equip tasks, "place" the tasks of a
+ * place, "ach" TaskAchievement, "die" TaskDie, "level" TaskHaveLevel of the level of the character (stage QG2a).
  */
 struct Quests::Subscriptions {
     std::unordered_map<std::string, std::vector<Subscriber>> byKey;
@@ -532,8 +532,9 @@ struct Quests::Plan {
             return has_bit(*bit);
         }
         if (const gamedata::QuestNpa* npa = data.npa(id)) {
-            if (depth >= kNpaDepth || !npa->status.empty() || npa->conditional.empty()) {
-                return false; // No rule for a status requirement in stage 1.8a.
+            // No rule for a status requirement in stage 1.8a, and none for an ObjectiveFlow (code review of stage QG4, finding QG4R-R2).
+            if (depth >= kNpaDepth || !npa->status.empty() || !npa->flow.empty() || npa->conditional.empty()) {
+                return false;
             }
             return evaluate_conditional(npa->conditional, [this, depth](const std::string& inner) { return id_value(inner, depth + 1); });
         }
@@ -1322,6 +1323,10 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
                     subscriptions.add(prefix + source, entry);
                 }
             }
+            // Stage QG5a: a possession task with ChestDropProbability looks at each successful open of a chest of its character.
+            if (gamedata::is_possession(task.type) && task.minGearScore == 0 && task.chestChance > 0.0) {
+                subscriptions.add("cd", entry);
+            }
             switch (task.type) {
             case task_type::kKillContribution:
                 for (const std::string& target : task.targets) {
@@ -1859,7 +1864,8 @@ bool Quests::conditional(const Entity& entity, const std::string& text) const {
         }
         if (m_data != nullptr && m_data->loaded()) {
             if (const gamedata::QuestNpa* npa = m_data->npa(id)) {
-                if (depth >= kNpaDepth || !npa->status.empty() || npa->conditional.empty()) {
+                // No rule for a status requirement, and none for an ObjectiveFlow (finding QG4R-R2): false.
+                if (depth >= kNpaDepth || !npa->status.empty() || !npa->flow.empty() || npa->conditional.empty()) {
                     return false;
                 }
                 return evaluate_conditional(npa->conditional, [&](const std::string& inner) { return value(inner, depth + 1); });
@@ -2475,38 +2481,80 @@ std::vector<QuestDrop> Quests::plan_drops(Entity& entity, bool gather, const std
             seen.push_back(entry);
             const QuestInstance* quest = instance_of(entity, entry.instance);
             const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
-            if (objective == nullptr || quest->tasks[entry.index].state != quest_state::kActive) {
+            if (objective == nullptr) {
                 continue;
             }
             const QuestTask& task = m_data->task(objective->nodes[entry.index].task);
-            const std::uint32_t target = objective->nodes[entry.index].target;
-            // PauseAndClearLootOnTaskComplete: no drop while the character has the target count (0x825F3B0).
-            if (task.pauseLoot && Inventory::count(entity, task.itemName) >= target) {
-                continue;
+            if (std::optional<QuestDrop> drop = roll_drop(entity, entry.instance, entry.index, task.dropChance)) {
+                drops.push_back(std::move(*drop));
             }
-            const auto key = std::make_pair(quest->objectiveCrc, entry.index);
-            const auto award = entity.quests.awards.find(key);
-            if (task.awardOnce && award != entity.quests.awards.end() && award->second >= target) {
-                continue; // AwardOnlyOnce: the task gave its target count of items (0x825F8F0).
-            }
-            if (task.enforceLocation && !task.poiTags.empty()
-                && (pois() == nullptr || entity.positionEstimated
-                    || !pois()->inside(task.poiTags, task.territory, entity.position.x, entity.position.y))) {
-                continue;
-            }
-            // The roll: ItemDropProbability in percent; GuranteedDropAttempts: the drop after that many misses is sure (0x825F630).
-            std::uint32_t& misses = m_misses[{entity.characterId, entry.instance, entry.index}];
-            const bool sure = task.guaranteedAttempts != 0 && misses >= task.guaranteedAttempts;
-            if (!sure && !(static_cast<double>(m_world.random_unit()) * 100.0 < task.dropChance)) {
-                ++misses;
-                ++m_counts.dropMisses;
-                continue;
-            }
-            // One item for each kill or gather (a decision of an agent: the data has no quantity of a drop).
-            drops.push_back(QuestDrop{task.itemName, 1, quest->objectiveCrc, quest->objective, entry.instance, entry.index, task.awardOnce});
         }
     }
     return drops;
+}
+
+std::vector<QuestDrop> Quests::plan_chest_drops(Entity& entity, const state::WorldPosition& chest) {
+    std::vector<QuestDrop> drops;
+    if (data() == nullptr || !entity.quests.loaded) {
+        return drops;
+    }
+    const auto found = m_subscriptions.find(entity.id);
+    const std::vector<Subscriber>* list = found != m_subscriptions.end() && found->second ? found->second->find("cd") : nullptr;
+    for (std::size_t position = 0; list != nullptr && position < list->size(); ++position) {
+        const Subscriber entry = (*list)[position];
+        ++m_counts.subscribersVisited;
+        const QuestInstance* quest = instance_of(entity, entry.instance);
+        const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
+        if (objective == nullptr) {
+            continue;
+        }
+        const QuestTask& task = m_data->task(objective->nodes[entry.index].task);
+        // The place of the chest: a task with a POITag takes only the chests in a point of interest of its tags (and of its TerritoryID);
+        // a task with no POITag takes each chest (docs/systems/quests.md, the quest chest drops).
+        if (!task.poiTags.empty() && (pois() == nullptr || !pois()->inside(task.poiTags, task.territory, chest.x, chest.y))) {
+            continue;
+        }
+        if (std::optional<QuestDrop> drop = roll_drop(entity, entry.instance, entry.index, task.chestChance, true)) {
+            drops.push_back(std::move(*drop));
+        }
+    }
+    return drops;
+}
+
+std::optional<QuestDrop> Quests::roll_drop(Entity& entity, std::uint64_t instance, std::uint8_t index, double chance, bool chest) {
+    const QuestInstance* quest = instance_of(entity, instance);
+    const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
+    if (objective == nullptr || index >= quest->tasks.size() || quest->tasks[index].state != quest_state::kActive) {
+        return std::nullopt;
+    }
+    const QuestTask& task = m_data->task(objective->nodes[index].task);
+    const std::uint32_t target = objective->nodes[index].target;
+    // PauseAndClearLootOnTaskComplete: no drop while the character has the target count (0x825F3B0).
+    if (task.pauseLoot && Inventory::count(entity, task.itemName) >= target) {
+        return std::nullopt;
+    }
+    const auto key = std::make_pair(quest->objectiveCrc, index);
+    const auto award = entity.quests.awards.find(key);
+    if (task.awardOnce && award != entity.quests.awards.end() && award->second >= target) {
+        return std::nullopt; // AwardOnlyOnce: the task gave its target count of items (0x825F8F0).
+    }
+    if (task.enforceLocation && !task.poiTags.empty()
+        && (pois() == nullptr || entity.positionEstimated || !pois()->inside(task.poiTags, task.territory, entity.position.x, entity.position.y))) {
+        return std::nullopt;
+    }
+    // The roll: the chance in percent; GuranteedDropAttempts: the drop after that many misses is sure (0x825F630). Stage QG5a: the chest
+    // chance takes the roll of the client (the integer part of a number of 0 to 100 at or below the chance: 40 is 41 of 100; 0x3B0B2F3 to
+    // 0x3B0B336); the other chances a uniform number below the chance.
+    std::uint32_t& misses = m_misses[{entity.characterId, instance, index}];
+    const bool sure = task.guaranteedAttempts != 0 && misses >= task.guaranteedAttempts;
+    const double roll = static_cast<double>(m_world.random_unit()) * 100.0;
+    if (!sure && !(chest ? std::floor(roll) <= chance : roll < chance)) {
+        ++misses;
+        ++m_counts.dropMisses;
+        return std::nullopt;
+    }
+    // One item for each kill, gather, or chest (a decision of an agent: the data has no quantity of a drop).
+    return QuestDrop{task.itemName, 1, quest->objectiveCrc, quest->objective, instance, index, task.awardOnce};
 }
 
 bool Quests::write_drops(const Entity& entity, const std::vector<QuestDrop>& drops) {

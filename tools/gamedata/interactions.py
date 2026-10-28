@@ -208,6 +208,12 @@ OWNERSHIP_CLASS = uuid.UUID("2a333c23-a549-bc11-1a9a-ae905170f2f6")
 POSITION_CLASS = uuid.UUID("6c2fc842-f451-4b45-9d7d-a6ee954df025")
 VITALS_CLASS = uuid.UUID("0c848755-1f41-4408-b2be-0a3627674f50")
 SPAWNER_CLASS = uuid.UUID("b52d0d52-99cd-41be-b6f7-d2519c15bf14")
+# Stage QG5a: the GatherableController (gathering.py CONTROLLER_CLASS) and its gatherable row, for a quest object child of a spawner.
+CONTROLLER_CLASS = uuid.UUID("0b382af4-7946-4698-9223-206d1187b612")
+GATHERABLE_ENTRY = field_id("m_gatherableEntryId")
+# Stage QG5a: the variation tables of the quest objects of a gather (gathering.py QUEST_TABLES): a child of a spawner with such a slice and a
+# bound of GatherOption is an object of the file (the client id rule of a child of a level placement, client 0x6160B60).
+QUEST_GATHER_TABLES = ("Gatherable_Quest", "Gatherables_NPCRescue_01", "Gatherable_Quest_AncientGlyph")
 # The classes of the parts of a loot container (stage 3.5b.2; research chests-ground-loot.md Q3, K6, K7).
 INSTANCED_LOOT_CLASS = uuid.UUID("4fda5200-13f8-4f21-af8c-19706e74758f")
 LOOT_DROP_CLASS = uuid.UUID("de250033-8ed6-4a2f-bdc8-8cd8ebeee9db")
@@ -273,6 +279,7 @@ SWAP_ENABLED = field_id("m_enableUseAchievementForClientState")
 SWAP_STATE = field_id("m_achievementServerState")
 SPAWN_ON_TRIGGER = field_id("m_spawnOnTrigger")
 VARIATION_TABLE_TYPE = "VariationData"
+NPA_TABLE_TYPE = "NPAData"
 # The presence of a person child for one character (stage 2.5c; research npc-conversations.md decision 4 and quest-engine-3.md Q2): the
 # client shows the child of a swap slice by the achievement of its GatherableController (client 0x3369430 asks the local player for the
 # achievement; the variation action "Change Gatherable Achievement" sets it from the column SwapAchievementId), and the child of the
@@ -296,6 +303,20 @@ GATHERABLE_STATES = frozenset({"Invalid", "Initialized", "Healthy", "Depleted", 
 SWAP_STATE_OF_BYTE = {4: "Healthy", 8: "Depleted"}
 # The columns of a variation row that a presence rule reads.
 PRESENCE_COLUMNS = ("SwapAchievementId", "AE.3_RequiredAchievementConditional")
+# Stage QG5a (docs/systems/interactions.md, the variation of a bound): the actions of a VariationDataComponent that set a part of the Interact
+# component of their entity from the column of the selected variant (static read evidence/quests/qg5a/implement/static/ANSWERS.md, D1, D2,
+# C1): "Set Interact Tag" (0x42D5240 calls the setter 0x35D60F0: the tag of the interaction), "Set InteractOnlyOnQuest" (0x42D4B70,
+# 0x35D5EF0), "Set interaction req achievement" (0x42D4BF0, 0x35D5FA0: the required achievement of the interaction). The placement selects
+# the variant (variantName), else the slice (m_selectedVariant); a spawner child takes m_sliceVariant of its spawner, else its slice.
+SELECTED_VARIANT = field_id("m_selectedVariant")
+VARIANT_DATA = field_id("m_variantData")
+VARIANT_ACTION = field_id("m_action")
+VARIANT_ENTITY = field_id("m_entity")
+ACTION_TAG = "Set Interact Tag"
+ACTION_ONLY_ON_QUEST = "Set InteractOnlyOnQuest"
+ACTION_REQUIRED = "Set interaction req achievement"
+BOUND_ACTIONS = (ACTION_TAG, ACTION_ONLY_ON_QUEST, ACTION_REQUIRED)
+BOUND_COLUMNS = ("InteractTag", "InteractOnlyOnQuest", "RequiredAchievement")
 SWAP_COLUMN = "SwapAchievementId"
 # The client id of a child that the client makes for a PrefabSpawner of a level placement (live check L1 of stage 2.5c; client 0x6160B60,
 # called from 0x69EE550): the place, the yaw, and the slice asset of the child, with the low three bits 7.
@@ -352,6 +373,9 @@ CAUSE_NO_INTERACT = ("a placement whose slice has no Interact component (a Prefa
                      "stage 2.5b)")
 CAUSE_PERSON_ID_TAKEN = ("a person child whose client id an earlier person slot has (one place, one yaw bucket, and the same low bits "
                          "of the slice asset): the first slot keeps the id (stage 2.5c)")
+CAUSE_QUEST_CHILD_NO_INIT = ("a quest object child of a PrefabSpawner with m_spawnOnInitialize false: the client does not make it at the "
+                             "load; the server source of such an object is not known (stage QG5a)")
+CAUSE_QUEST_CHILD_ID_TAKEN = ("a quest object child whose client id an earlier child slot has: the first slot keeps the id (stage QG5a)")
 CAUSE_PERSON_NO_INIT = ("a person child of a PrefabSpawner with m_spawnOnInitialize false: the client does not make it at the load "
                         "(stage 2.5c), and the server source of such a person is not known")
 # Stage QG4: the persons that the file does not make objects, in the member "personsApart" with one of these causes (the support manifest
@@ -623,10 +647,64 @@ def read_variation_tables(sources: Sources) -> dict[str, dict[str, dict]]:
                 variant = str(sheet.cell(row, "VariantID"))
                 if variant and variant not in rows:
                     rows[variant] = {"row": row, "npc": str(sheet.cell(row, "NPCId")),
-                                     **{column: str(sheet.cell(row, column)) for column in PRESENCE_COLUMNS}}
+                                     **{column: str(sheet.cell(row, column)) for column in PRESENCE_COLUMNS + BOUND_COLUMNS}}
         except (struct.error, ValueError, IndexError, TypeError) as error:
             raise Failure(f"{path}: the table did not parse: {error}") from error
     return tables
+
+
+def read_flow_npas(sources: Sources) -> set[str]:
+    """@return The ids (lower case) of the non-persisted achievements (NPAData) with an ObjectiveFlow (code review of stage QG4, finding
+    QG4R-R2): the rule of the quest state of the NPA (`u:Quest_18018,l:Quest_18018/Quest_18018_Task_5:c`; client: loader 0x43B57F3, parser
+    0x43B5827, evaluator 0x318A5F0). The backend has no rule for it yet: such an NPA is false, and a presence rule that names it is not
+    resolved."""
+    ids: set[str] = set()
+    for path in sources.paths(TABLES_FOLDER, ".datasheet"):
+        if "achievement" not in path.rsplit("/", 1)[-1]:
+            continue
+        data = sources.read(path)
+        if data is None or sheet_type(data) != NPA_TABLE_TYPE:
+            continue
+        try:
+            sheet = Sheet(data)
+            if "NPAId" not in sheet.columns or "ObjectiveFlow" not in sheet.columns:
+                raise Failure(f"{path}: the NPA table has no column NPAId or ObjectiveFlow")
+            for row in range(sheet.row_count):
+                identifier = str(sheet.cell(row, "NPAId")).strip()
+                if identifier and str(sheet.cell(row, "ObjectiveFlow")).strip():
+                    ids.add(identifier.lower())
+        except (struct.error, ValueError, IndexError, TypeError) as error:
+            raise Failure(f"{path}: the table did not parse: {error}") from error
+    return ids
+
+
+def read_quest_form_rows(sources: Sources) -> set[str]:
+    """@return The ids (lower case) of the gatherable rows (GatherableData) with the form of a row of the quest tables (stage QG5a; the rule
+    of gathering.quest_form): IsLootContainer, the loot table Empty or blank, and a GameEventID. A direct binding of a spawner child with
+    such a row is a quest object; a different direct row (the body of a creature, a door with no event) is not."""
+    ids: set[str] = set()
+    for path in sources.paths(TABLES_FOLDER, ".datasheet"):
+        if "gatherable" not in path.rsplit("/", 1)[-1] or "variation" in path.rsplit("/", 1)[-1]:
+            continue
+        data = sources.read(path)
+        if data is None or sheet_type(data) != "GatherableData":
+            continue
+        try:
+            sheet = Sheet(data)
+            for row in range(sheet.row_count):
+                identifier = str(sheet.cell(row, "GatherableID")).strip()
+                container = str(sheet.cell(row, "IsLootContainer")).strip().lower() in ("1", "true")
+                loot = str(sheet.cell(row, "FinalLootTable")).strip() in ("", "Empty")
+                if identifier and container and loot and str(sheet.cell(row, "GameEventID")).strip():
+                    ids.add(identifier.lower())
+        except (struct.error, ValueError, IndexError, TypeError) as error:
+            raise Failure(f"{path}: the table did not parse: {error}") from error
+    return ids
+
+
+def condition_ids(condition: str) -> list[str]:
+    """@return The achievement ids of a conditional (the words between !, &&, ||, and the parentheses)."""
+    return [word for word in re.split(r"[\s!&|()]+", condition) if word]
 
 
 def walk(element: Element):
@@ -756,6 +834,11 @@ class Template:
         self.npc_key = ""
         self.variation_table = ""
         self.variation_columns: list[str] = []
+        # Stage QG5a: m_selectedVariant of the variation, and its actions on an Interact component: (entity, action, column).
+        self.selected_variant = ""
+        # Stage QG5a: the m_gatherableEntryId of each GatherableController of the slice.
+        self.controller_entries: list[str] = []
+        self.bound_actions: list[tuple[int, str, str]] = []
         self.swap_achievement = ""
         # Stage QG4: m_achievementServerState of that GatherableController (-1: the field is not there). The controller of a person: the
         # one of the entity of the NPC component, else of its nearest parent entity, else the only one of the slice (a slice of a cage and
@@ -853,6 +936,8 @@ class Template:
                              "entity": entity_id, "component": identifier}
         if component.type_id in (INSTANCED_LOOT_CLASS, LOOT_DROP_CLASS, DELAYED_EVENT_CLASS, STORAGE_CLASS):
             self._read_loot_part(what, entity_id, name, component)
+        if component.type_id == CONTROLLER_CLASS:
+            self.controller_entries.append(text_of(find_field(component, GATHERABLE_ENTRY)).strip())
         if component.type_id == NPC_CLASS and not self.npc_key:
             self.npc_key = text_of(find_field(component, NPC_KEY))
             self.npc_entity = entity_id
@@ -860,6 +945,18 @@ class Template:
         if table is not None and not self.variation_table:
             self.variation_table = text_of(table)
             self.variation_columns = [text_of(node) for node in walk(component) if node.name == VARIATION_COLUMN and text_of(node)]
+            # Stage QG5a: the selected variant of the slice and the actions of its variation that set a part of an Interact component.
+            self.selected_variant = text_of(find_field(component, SELECTED_VARIANT)).strip()
+            data = find_field(component, VARIANT_DATA)
+            for entry in data.children if data is not None else []:
+                action = text_of(child_of(entry, VARIANT_ACTION))
+                column = text_of(child_of(entry, VARIATION_COLUMN))
+                if action in BOUND_ACTIONS and column:
+                    reference = child_of(entry, VARIANT_ENTITY)
+                    target = next((int.from_bytes(node.value, "big") for node in walk(reference) if node.value is not None
+                                   and len(node.value) == 8), None) if reference is not None else None
+                    if target is not None:
+                        self.bound_actions.append((target, action, column))
         swap = find_field(component, SWAP_ENABLED)
         if swap is not None and flag_of(swap, f"{what}: m_enableUseAchievementForClientState"):
             # The state is a field of the server facet of the controller (BaseClass1/m_serverFacetPtr/m_achievementServerState).
@@ -963,6 +1060,14 @@ class Template:
     def is_station(self) -> bool:
         """@return True for a crafting station or a camp: an Assembly and a bound with a station option (stage 2.5b)."""
         return self.assembly is not None and any(name in STATION_OPTIONS for name in self.option_names())
+
+    def is_quest_gather(self, quest_rows: set[str]) -> bool:
+        """@return True for a quest object of a gather (stage QG5a): one GatherableController, a variation table of QUEST_GATHER_TABLES or
+        no variation table with a gatherable row of the quest form in the slice (a direct binding: read_quest_form_rows), and a bound with
+        GatherOption."""
+        return (len(self.controller_entries) == 1 and "GatherOption" in self.option_names() and not self.npc_key
+                and (self.variation_table in QUEST_GATHER_TABLES
+                     or (not self.variation_table and self.controller_entries[0].lower() in quest_rows)))
 
     def is_person(self) -> bool:
         """@return True for a person (stage 2.5c): an NPC component or a variation table, and a bound with OpenConversation."""
@@ -1169,9 +1274,65 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
 
     station_keys = read_station_keys(sources)
     variation_tables = read_variation_tables(sources)
+    flow_npas = read_flow_npas(sources)
+    quest_rows = read_quest_form_rows(sources)
+    counts.update({"variationBounds": 0, "variationTags": 0, "variationRequired": 0, "variationOnlyOnQuest": 0, "variationNoRow": 0,
+                   "variationBlankTagKept": 0, "variationOtherColumn": 0, "variationNoBound": 0})
+
+    def varied_bounds(template: Template, variant: str) -> list[dict]:
+        """@return The bounds of a slice with the parts that its variation sets from the row of the selected variant (stage QG5a,
+        BOUND_ACTIONS): the variant of the placement (or of the spawner), else m_selectedVariant of the slice. The tag and the required
+        achievement come from a cell with a text (a blank cell keeps the value of the slice: the client rule for a blank cell is not
+        known, static read D1); InteractOnlyOnQuest from a cell with a flag. A variant with no row changes nothing (counted)."""
+        if not template.bound_actions:
+            return template.bounds
+        name = (variant or template.selected_variant).strip()
+        row = variation_tables.get(template.variation_table, {}).get(name) if name else None
+        if row is None:
+            counts["variationNoRow"] += 1 if name else 0
+            return template.bounds
+        entities = {bound["entity"] for bound in template.bounds}
+        counts["variationNoBound"] += sum(1 for entity, _, _ in template.bound_actions if entity not in entities)
+        bounds = []
+        for bound in template.bounds:
+            changed = dict(bound, requires=dict(bound["requires"]))
+            for entity, action, column in template.bound_actions:
+                if entity != bound["entity"]:
+                    continue
+                if column not in row:
+                    counts["variationOtherColumn"] += 1
+                    continue
+                value = row[column].strip()
+                if action == ACTION_TAG:
+                    if value and value != changed["tag"]:
+                        changed["tag"] = value
+                        counts["variationTags"] += 1
+                    elif not value and changed["tag"]:
+                        counts["variationBlankTagKept"] += 1
+                elif action == ACTION_REQUIRED and value:
+                    # The client evaluates the text as an achievement conditional (0x35C2E60 through 0x2ED8BB0): a single id is the
+                    # required bit of the bound; an expression (!, &&, ||, parentheses) is the member "conditional" of its requirements.
+                    if re.search(r"[!&|()\s]", value):
+                        changed["requires"].pop("achievement", None)
+                        changed["requires"]["conditional"] = value
+                        counts["variationConditional"] = counts.get("variationConditional", 0) + 1
+                    else:
+                        changed["requires"].pop("conditional", None)
+                        changed["requires"]["achievement"] = value
+                    counts["variationRequired"] += 1
+                elif action == ACTION_ONLY_ON_QUEST and value:
+                    if value.lower() in ("1", "true"):
+                        changed["requires"]["onlyOnQuest"] = True
+                        counts["variationOnlyOnQuest"] += 1
+                    else:
+                        changed["requires"].pop("onlyOnQuest", None)
+            if changed != bound:
+                counts["variationBounds"] += 1
+            bounds.append(changed)
+        return bounds
     person_groups: set[int] = set()
     counts.update({"persons": 0, "personsDirect": 0, "personsUnresolved": 0, "personSlotsWithTwoIds": 0, "personsFromTemplate": 0,
-                   "personsAlsoOnTrigger": 0, "personsOfLevelScripts": 0, "personSwapStateDiffers": 0})
+                   "personsAlsoOnTrigger": 0, "personsOfLevelScripts": 0, "personSwapStateDiffers": 0, "personsObjectiveFlow": 0})
     # The asset id of each slice path (the catalog of the game): the metadata state of a fixture.
     path_assets = {path: asset for asset, path in getattr(catalog, "paths", {}).items()}
     template_index: dict[str, int] = {}
@@ -1277,6 +1438,12 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 binding["unresolved"] = f"the row of the variant {variant!r} has no NPCId"
                 return binding
             presence, cause = presence_rule(slice_path, template, row)
+        # Code review of stage QG4, finding QG4R-R2: a condition that names an NPA with an ObjectiveFlow has no rule of the backend (the
+        # persons of Nighthaven: `*SwapActive_18007_Cecilia`). The binding stays unresolved with that cause.
+        flows = [word for word in condition_ids(presence["condition"]) if word.lower() in flow_npas] if presence is not None else []
+        if not cause and flows:
+            cause = f"the presence condition names the NPA {flows[0]} with an ObjectiveFlow (no rule of the backend for it)"
+            counts["personsObjectiveFlow"] += 1
         if cause:
             binding["unresolved"] = cause
         elif presence is not None:
@@ -1376,7 +1543,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
             person_groups.add(group)
             k = child.root ^ group
             bounds = []
-            for bound in child.bounds:
+            for bound in varied_bounds(child, spawner["variant"]):
                 target = ((bound["entity"] ^ k) + bound["component"]) & 0xFFFFFFFFFFFFFFFF
                 entry, _ = bound_entry(bound, f"{layer}: the person child of {identifier}", k, apply(world, bound["translation"]))
                 entry["target"] = f"{target:016x}"
@@ -1393,6 +1560,42 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                             "sub": spawner["asset"][1], "actor": (group.to_bytes(8, "little") + bytes(8)).hex(), "region": region,
                             "position": [round(value, 3) for value in place], "assembly": None, "bounds": bounds,
                             "person": dict(binding)})
+
+    def quest_children(layer: str, region: str, identifier: str, matrix: tuple[float, ...], template: Template, spawner: dict,
+                       child_path: str, child: Template) -> None:
+        """Adds a quest object child of a PrefabSpawner of a level placement (stage QG5a): the client makes it at the load, with the id of
+        client 0x6160B60 from its place, its yaw, and its slice asset (the rule of a person child, live check L1 of stage 2.5c). Its key is
+        "UUID/ENTITY" of the spawner (gathering.py names its row by the same key); the first id of a slot near a border of the rule."""
+        world = multiply(matrix, template.matrices.get(spawner["entity"], IDENTITY))
+        place = (world[3], world[7], world[11])
+        if not all(math.isfinite(value) for value in place):
+            raise Failure(f"{layer}: the quest object child of the placement {identifier} has a place that is not finite")
+        if child.root is None:
+            raise Failure(f"{child_path}: the slice of a quest object child has no root entity")
+        group = child_groups(*place, yaw_of(world), spawner["asset"][0])[0]
+        if group in person_groups:
+            exclude(CAUSE_QUEST_CHILD_ID_TAKEN)
+            return
+        person_groups.add(group)
+        k = child.root ^ group
+        bounds = []
+        for bound in varied_bounds(child, spawner["variant"]):
+            target = ((bound["entity"] ^ k) + bound["component"]) & 0xFFFFFFFFFFFFFFFF
+            entry, _ = bound_entry(bound, f"{layer}: the quest object child of {identifier}", k, apply(world, bound["translation"]))
+            entry["target"] = f"{target:016x}"
+            text = json.dumps(entry, sort_keys=True)
+            if (group, target) in references and references[(group, target)] != text:
+                raise Failure(f"two bounds have the reference {group:016x} {target:016x} with different content")
+            references[(group, target)] = text
+            bounds.append(entry)
+        kind = kind_of(child.bounds)
+        counts["byKind"][kind] = counts["byKind"].get(kind, 0) + 1
+        counts["bounds"] += len(bounds)
+        counts["questChildren"] = counts.get("questChildren", 0) + 1
+        objects.append({"key": f"{identifier}/{spawner['entity']:016x}", "kind": kind, "slice": child_path, "asset": spawner["asset"][0].hex(),
+                        "sub": spawner["asset"][1], "actor": (group.to_bytes(8, "little") + bytes(8)).hex(), "region": region,
+                        "position": [round(value, 3) for value in place], "assembly": None, "bounds": bounds,
+                        "questChild": {"spawner": identifier, "variant": spawner["variant"] or child.selected_variant}})
 
     def template_entry(slice_path: str, asset: tuple[bytes, int] | None, depth: int = 0) -> int:
         """@return The index of the template of a slice in "templates" (with its server children)."""
@@ -1534,6 +1737,12 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                             add_apart(apart_cause(slice_path, [], False, False), WORLD, layer, identifier, child_path,
                                       person_binding(child_path, child, spawner["variant"]), [slice_path])
                         continue
+                    if not child.is_station() and child.is_quest_gather(quest_rows):
+                        if spawner["onInit"]:
+                            quest_children(layer, region, identifier, matrix, template, spawner, child_path, child)
+                        else:
+                            exclude(CAUSE_QUEST_CHILD_NO_INIT)
+                        continue
                     if not child.is_station():
                         exclude(CAUSE_SPAWNER)
                         # Stage QG4: the persons below the child slice (a nested PrefabSpawner) stay apart with their cause.
@@ -1553,7 +1762,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 k = template.root ^ group
                 object_position = [round(position[axis], 3) for axis in "xyz"]
                 bounds = []
-                for bound in template.bounds:
+                for bound in varied_bounds(template, str(placement.get("variantName") or "")):
                     instance = bound["entity"] ^ k
                     target = (instance + bound["component"]) & 0xFFFFFFFFFFFFFFFF
                     what = f"{layer}: the object {identifier}"

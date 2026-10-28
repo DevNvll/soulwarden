@@ -630,6 +630,16 @@ ItemResult Inventory::finish(Plan& plan, const char* what) {
         const ItemInstance* held = Combat::weapon_in_hand(*entity);
         const gamedata::CombatTables* combatTables = m_world.combat().tables();
         const gamedata::WeaponRow* before = held != nullptr && combatTables != nullptr ? combatTables->weapon_of(held->itemId) : nullptr;
+        // Stage QG4 (code review of stage QG4, finding QG4R-R1): an equip is a new item instance in a paperdoll slot with the action
+        // ItemEquipped. The action stays on a slot after its equip (a later perk edit keeps it): the change of the instance is the event.
+        std::vector<std::uint32_t> equips;
+        for (const std::uint32_t slot : touched.equipment) {
+            const EquipmentSlot& next = items.equipment.slots[slot];
+            const EquipmentSlot& previous = entity->equipment.slots[slot];
+            if (next.action == sync::kItemEquipped && next.item && (!previous.item || previous.item->instance != next.item->instance)) {
+                equips.push_back(slot);
+            }
+        }
         entity->bag = std::move(items.bag);
         entity->equipment = std::move(items.equipment);
         // The perks, the attributes, the armor, and the equip load of the new equipment (stage 1.3b).
@@ -653,11 +663,9 @@ ItemResult Inventory::finish(Plan& plan, const char* what) {
             m_world.consumables().items_changed(*entity);
         }
         // Stage QG4: an equip of an item with OnEquipObjectiveId (an artifact) grants its objective (the quest system, at the next tick).
-        for (const std::uint32_t slot : touched.equipment) {
+        for (const std::uint32_t slot : equips) {
             const EquipmentSlot& equipped = entity->equipment.slots[slot];
-            if (equipped.action == sync::kItemEquipped && equipped.item) {
-                m_world.quests().item_equipped(*entity, equipped.item->itemId, equipped.item->gearScore);
-            }
+            m_world.quests().item_equipped(*entity, equipped.item->itemId, equipped.item->gearScore);
         }
     }
     result.slots.assign(touched.bag.begin(), touched.bag.end());

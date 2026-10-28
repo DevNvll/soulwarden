@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -50,6 +51,12 @@ struct QuestObjectPlacement {
     std::string tag;
     bool onlyOnQuest{false};
     state::WorldPosition position;
+    /**
+     * Stage QG5a: a proximity object (the member "proximity" of the file: Gatherable_Quest_Proximity, the trails and the torches): no strike
+     * hits it; a character in the sphere of its detection volume (`radius`, DetectionVolumeSphereRadius) finds it.
+     */
+    bool proximity{false};
+    float radius{0.0F};
 };
 
 class QuestObjectData {
@@ -83,8 +90,19 @@ public:
      */
     [[nodiscard]] std::vector<std::uint32_t> nearby(const state::WorldPosition& place, float radius, std::uint64_t* visits = nullptr) const;
 
+    /** Stage QG5a: the largest radius of the proximity objects (0: none), and their count. */
+    [[nodiscard]] float proximity_reach() const {
+        return m_proximityReach;
+    }
+    [[nodiscard]] std::size_t proximity_count() const {
+        return m_proximityCount;
+    }
+
     /** The side of a cell of the grid (meters). */
     static constexpr float kCell = 64.0F;
+    /** Stage QG5a: the largest radius of a proximity object (the data: 0.75 to 15 m) and the largest coordinate of a place (finding QG4R-R3). */
+    static constexpr double kLargestRadius = 64.0;
+    static constexpr double kMaxCoordinate = 1.0e9;
 
 private:
     bool fail(std::string cause);
@@ -95,6 +113,8 @@ private:
     std::vector<QuestObjectRow> m_rows;
     std::vector<QuestObjectPlacement> m_objects;
     std::unordered_map<std::int64_t, std::vector<std::uint32_t>> m_cells;
+    float m_proximityReach{0.0F};
+    std::size_t m_proximityCount{0};
 };
 
 } // namespace soulwarden::backend::gamedata

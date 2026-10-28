@@ -686,15 +686,16 @@ int main(int argc, char** argv) {
                    "tools/gamedata/pois.sh",
                    poiDataPath.c_str(), poiData.error().c_str());
     }
-    // The destructible quest objects (stage 1.8e): the corruption nodules and the monolith of the beach chain. Without the file no quest
-    // object can be destroyed.
+    // The destructible quest objects (stage 1.8e): the corruption nodules and the monolith of the beach chain; stage QG5a: the proximity
+    // objects (the trails and the torches). Without the file no quest object can be destroyed or found.
     const std::string questObjectDataPath = (gameDataDirectory / gamedata::kQuestObjectDataFile).string();
     gamedata::QuestObjectData questObjectData;
     if (questObjectData.load(questObjectDataPath)) {
-        log::write("backend: quest object data %s: %zu destructible quest objects, %zu gatherable rows", questObjectDataPath.c_str(),
-                   questObjectData.objects().size(), questObjectData.rows().size());
+        log::write("backend: quest object data %s: %zu destructible and %zu proximity quest objects, %zu gatherable rows", questObjectDataPath.c_str(),
+                   questObjectData.objects().size() - questObjectData.proximity_count(), questObjectData.proximity_count(),
+                   questObjectData.rows().size());
     } else {
-        log::write("backend: no quest object data at %s (%s): no quest object can be destroyed. Make the file with "
+        log::write("backend: no quest object data at %s (%s): no quest object can be destroyed or found. Make the file with "
                    "tools/gamedata/quest-objects.sh",
                    questObjectDataPath.c_str(), questObjectData.error().c_str());
     }

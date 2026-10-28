@@ -305,7 +305,8 @@ public:
             bound.progression = progression[0].get<std::string>();
             bound.progressionRank = progression[1].get<std::uint32_t>();
         }
-        if (!flag(needs, "onlyOnQuest", bound.onlyOnQuest, false) || !flag(needs, "condition", bound.condition, false)) {
+        if (!flag(needs, "onlyOnQuest", bound.onlyOnQuest, false) || !flag(needs, "condition", bound.condition, false)
+            || !text(needs, "conditional", bound.conditional, false)) {
             return false;
         }
         if (needs.contains("unresolved")) {

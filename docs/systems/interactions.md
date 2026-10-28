@@ -239,6 +239,22 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   person binding that the tool could not make (`unresolved`) is refused as unsupported. A person of a file of format 3 or before keeps the
   conversation of stage 2.5a. The count `referenceLookups` counts the lookups of the reference map (case NC7).
 
+- Stage QG5a, the variation of a bound ([Quests](quests.md)): the VariationDataComponent of a slice sets parts of the Interact component of
+  the entity of each action from the row of the selected variant (the variant of the placement or of the spawner, else m_selectedVariant of
+  the slice): "Set Interact Tag" the tag (`tag` of the bound), "Set InteractOnlyOnQuest" the flag (`requires.onlyOnQuest`), "Set interaction
+  req achievement" the required achievement [client: 0x42D5240 and the setter 0x35D60F0; 0x42D4B70 and 0x35D5EF0; 0x42D4BF0 and 0x35D5FA0].
+  A required achievement that is an expression (`Lore_unlock_..._13_26 || Lore_unlock_ElysianWilds_Title_01_01` of the glyph bridges) is
+  the member `requires.conditional` (a text): the base evaluates it with the achievement conditional of the quests (`Quests::conditional`;
+  the client evaluates it through 0x2ED8BB0, validation 0x35C2E60); a false value is the verdict `requirement`. A blank cell keeps the value
+  of the slice [agent: the client rule for a blank cell is not proved; no such case in this build: `variationBlankTagKept` 0]. The build:
+  2,208 bounds with a tag of a variation (for example `IO_99F_MSQ_07_EmpressPoetry` of a PlayCinematicVideo object: the presentation handler
+  accepts its use, and the start and the completion count for TaskInteract), 81 with a required achievement (11 conditionals).
+- Stage QG5a, the quest children: a child of a PrefabSpawner of a level placement (not client-authoritative, m_spawnOnInitialize true)
+  whose slice is a quest object of a gather (a variation table of the quest tables, or a direct binding with a row of the quest form, and a
+  GatherOption bound) is an object of the file with the key "UUID/ENTITY", the client id of a child of a level placement (`child_groups`,
+  client 0x6160B60: the rule of the person children), and the member `questChild` (the spawner, the variant). 81 children; 452 with
+  m_spawnOnInitialize false are in `excluded`.
+
 ## Commands
 
 ```sh

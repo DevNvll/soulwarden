@@ -162,6 +162,8 @@ void World::tick() {
         m_gathering.tick();
         // The characters whose items or place changed: their possession, equip, and place tasks (stage 1.8c; one look each).
         m_quests.tick();
+        // Stage QG5a: the characters that moved: their proximity quest objects (one look each, the cells near them).
+        m_questObjects.tick();
         // The characters with a person conversation whose bits changed: the presence of the person (stage 2.5c; one look each).
         m_persons.tick();
     } catch (const std::exception& error) {
@@ -1064,6 +1066,10 @@ void World::place(Entity& entity, const state::WorldPosition& position, bool est
         m_lootBags.moved(entity);
         // The tasks of a place of its quests look at the next tick (stage 1.8c; O(1) for a character with no such task).
         m_quests.moved(entity);
+        // Stage QG5a: its proximity quest objects look at the next tick (an accepted position only; O(1)).
+        if (!estimated) {
+            m_questObjects.moved(entity);
+        }
     }
 }
 

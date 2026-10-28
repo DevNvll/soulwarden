@@ -200,6 +200,7 @@ bool QuestData::load_text(const std::string& text) {
         task.pin = !trimmed(cell(cells, "OverrideLocation")).empty();
         task.dropSources = lower_list(cell(cells, "ItemDropVC"));
         task.dropChance = std::clamp(number(cell(cells, "ItemDropProbability")).value_or(0.0), 0.0, 100.0);
+        task.chestChance = std::clamp(number(cell(cells, "ChestDropProbability")).value_or(0.0), 0.0, 100.0); // Stage QG5a.
         task.guaranteedAttempts = static_cast<std::uint32_t>(std::clamp(number(cell(cells, "GuranteedDropAttempts")).value_or(0.0), 0.0, 1e6));
         task.awardOnce = flag(cell(cells, "AwardOnlyOnce"));
         task.pauseLoot = flag(cell(cells, "PauseAndClearLootOnTaskComplete"));
@@ -389,6 +390,9 @@ bool QuestData::load_text(const std::string& text) {
             if (row.is_array() && row.size() >= 2 && row[0].is_string() && row[1].is_string()) {
                 QuestNpa npa;
                 npa.conditional = row[1].get<std::string>();
+                if (row.size() >= 3 && row[2].is_string()) {
+                    npa.flow = trimmed(row[2].get<std::string>()); // Finding QG4R-R2.
+                }
                 if (row.size() >= 4 && row[3].is_string()) {
                     npa.status = row[3].get<std::string>();
                 }

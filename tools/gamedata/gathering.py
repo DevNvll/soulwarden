@@ -70,6 +70,8 @@ Output:
    "templates": [{"slice", "asset", "sub", "root", "controllerSlot", "table", "bound": {"entity", "component", "slot", "rangeSq",
                   "capacity", "translation": [X, Y, Z], "option": OPTION_ENTITY}}, ...],
    "capitals": {PLACEMENT_UUID: [TEMPLATE, ROW] or [TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST] (a quest object), ...},
+   "children" (stage QG5a): {PLACEMENT_UUID/SPAWNER_ENTITY: [TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST], ...} (a quest object child of a
+              spawner of a placement: the key of its object in interaction-data.json),
    "regions": [{"name", "x", "y", "file", "records", "tails", "version", "digest", "types": [[TEMPLATE, ROW, VARIANT], ...]}, ...],
    "creatures": {ASSET:SUB: {"slice", "template", "row"}, ...},
    "counts": {...}}
@@ -112,7 +114,7 @@ sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure, field_id  # noqa: E402
 from creature_data import CATALOG_PATH, REGIONS_FOLDER, TABLES_FOLDER, WORLD, Catalog, Sources  # noqa: E402
-from interactions import UI_DATABASE, Template, read_options, walk  # noqa: E402
+from interactions import SPAWNER_CLASS, UI_DATABASE, Template, read_options, walk  # noqa: E402
 from item_catalog import Sheet, sheet_type  # noqa: E402
 from slice_ids import Element, find_field  # noqa: E402
 
@@ -135,6 +137,7 @@ CONTROLLER_CLASS = uuid.UUID("0b382af4-7946-4698-9223-206d1187b612")
 TABLE_FIELD = field_id("m_variationTableUniqueName")
 ENTRY_FIELD = field_id("m_gatherableEntryId")
 SLOT_FIELD = field_id("m_replicationIndex")
+SELECTED_FIELD = field_id("m_selectedVariant")
 # The variation tables of the ordinary resource slices of the world (research Q1, the census families: Master_Tree, Master_Bush,
 # Master_Minerals, Master_Alchemy, Master_Plants, Master_Log, Master_Stones, and the _Snap slices that use the same tables; and the
 # dye plants). The other gathering tables (quests, chests, cyclic, events, holidays, cinematics) belong to their own stages.
@@ -145,19 +148,31 @@ ORDINARY_TABLES = ("Gatherable_Trees", "Gatherable_Bushes", "Gatherable_Minerals
 # drops of the tasks of its character and its game event; the loot container of the row with the loot table Empty is not a refusal), and its
 # capital entry gets the InteractTag and InteractOnlyOnQuest of the variation row (the client shows the object only during a task with the
 # tag: live check G1 of stage 1.8c). The other quest tables (proximity, glyphs, damageable objects) belong to later stages.
-QUEST_TABLES = ("Gatherable_Quest",)
+# Stage QG5a: also the rescue objects (Gatherables_NPCRescue_01: the trapped animals of 09A_S1_SaveAnimals, the captives of the faction
+# introductions; the same columns, GatherableEntryId with a lower-case d) and the glyph locks (Gatherable_Quest_AncientGlyph: the Azoth Staff
+# tool, the rank of AzothStaff, and the required achievement of the row: interactions.py BOUND_ACTIONS). A quest placement of any slice path
+# (not only slices/gatherables/: the custommqi_ slices of the main story) is a quest object, with the variant of the placement, else the
+# m_selectedVariant of its slice.
+QUEST_TABLES = ("Gatherable_Quest", "Gatherables_NPCRescue_01", "Gatherable_Quest_AncientGlyph")
 # Stage 1.8e (docs/systems/quests.md, quest_objects.py): the variation table of the destructible quest objects (the corruption nodules of
 # 06_survivors, the monolith of 06_demonstorm2). This tool reads its rows for quest_objects.py and writes no node of it.
 DAMAGEABLE_TABLES = ("Gatherable_Quest_Damageable",)
+# Stage QG5a (quest_objects.py): the variation table of the proximity quest objects (trails, footprints, torches: the slice
+# master_quest_proximity_instanced with a DetectionVolumeComponent and m_isProximityGatherable). This tool reads its rows for
+# quest_objects.py and writes no node of it.
+PROXIMITY_TABLES = ("Gatherable_Quest_Proximity",)
 # The cause of a loot container that a quest object does not have (its loot is the quest drops).
 LOOT_CONTAINER_CAUSE = "a loot container (a chest: stage 3.5b)"
 # The causes of a row that the backend refuses (a rule of the data that the backend has no predicate for).
 UNSUPPORTED_COLUMNS = (("RequiredSongId", "a song"), ("RequiredWhisperId", "a whisper"), ("UsableEmoteTags", "an emote"),
                        ("AddedStatusEffect", "a status effect"), ("RequiredStatusEffect", "a status effect"),
-                       ("ConsumedStatusEffect", "a status effect"), ("RequireControllingFaction", "a faction"),
-                       ("ProgressionCurrencyCosts", "a cost"))
+                       ("ConsumedStatusEffect", "a status effect"), ("ProgressionCurrencyCosts", "a cost"))
+# Stage QG5a: RequireControllingFaction is a flag (the client loader 0x440D2A0 reads it with the flag converter 0x5BF6BC0 at 0x440DC07, as
+# IsLootContainer and ResetGatherTimeOnEndInteraction): "0" (557 rows of the quest tables) is no rule; before stage QG5a any text of the cell
+# was the cause "a faction", and those quest objects were refused.
 UNSUPPORTED_FLAGS = (("IsLootContainer", "a loot container (a chest: stage 3.5b)"), ("OpenAfterGathering", "OpenAfterGathering"),
-                     ("RequireLootItems", "RequireLootItems"), ("IsFFARestricted", "IsFFARestricted"))
+                     ("RequireLootItems", "RequireLootItems"), ("IsFFARestricted", "IsFFARestricted"),
+                     ("RequireControllingFaction", "a faction"))
 # The columns of the gates of a gatherable row (code review of stage 3.6a, finding GA-R4): each GatherableData table must have them. A
 # blank cell is no rule; a missing column is a source that is not complete, and the tool stops (it does not read the gate as false).
 GATE_COLUMNS = (("Restriction", "ItemRestrictionId", "NumRequiredToGather", "ResetGatherTimeOnEndInteraction")
@@ -176,7 +191,9 @@ SUPPORTED_RESTRICTIONS = ("NoToolNecessary", "ToolRequired")
 ITEM_RESTRICTION = "ItemRequired"
 # The gathering types of the four tools (GatheringTypes of the weapon rows; the paperdoll slots 33 to 36 of protocol notes 4.11). A row of
 # a different type (AzothStaff: an encounter of a later stage; fishing: stage 3.6b) is refused.
-TOOL_TYPES = ("Chopping", "Cutting", "Dressing", "Mining")
+# Stage QG5a: AzothStaff, the Azoth Staff of the glyph locks (paperdoll slot 38: client 0x5CAB873, the query 0x48FF240; static read
+# evidence/quests/qg5a/implement/static/ANSWERS.md C2).
+TOOL_TYPES = ("Chopping", "Cutting", "Dressing", "Mining", "AzothStaff")
 # The folder of a set of region files that the tool writes before it moves the folder to its name (finding GA-R6).
 STAGING_PREFIX = ".staging-"
 STALE_PREFIX = ".old-"
@@ -289,16 +306,21 @@ class Tables:
                                                               if sheet.source(row, name) != ""})
 
     def _variations(self, sheet: Sheet, path: str) -> None:
-        tagged = sheet.name in QUEST_TABLES or sheet.name in DAMAGEABLE_TABLES
+        tagged = sheet.name in QUEST_TABLES or sheet.name in DAMAGEABLE_TABLES or sheet.name in PROXIMITY_TABLES
         if sheet.name not in ORDINARY_TABLES and not tagged:
             return
-        need(sheet, path, ("VariantID", "GatherableEntryID") + (("InteractTag", "InteractOnlyOnQuest") if tagged else ()))
+        # The column of the gatherable row: GatherableEntryID (Gatherables_NPCRescue_01 spells it GatherableEntryId).
+        entry_column = next((column for column in sheet.columns if column.lower() == "gatherableentryid"), "GatherableEntryID")
+        need(sheet, path, ("VariantID", entry_column) + (("InteractTag", "InteractOnlyOnQuest") if tagged else ()))
         rows = self.variations.setdefault(sheet.name, {})
         for row in range(sheet.row_count):
             identifier = sheet.source(row, "VariantID").strip()
             if not identifier:
                 continue
-            cells = {"row": row, "gatherable": sheet.source(row, "GatherableEntryID").strip()}
+            cells = {"row": row, "gatherable": sheet.source(row, entry_column).strip()}
+            if sheet.name in PROXIMITY_TABLES:
+                # Stage QG5a: the sphere of the detection volume of a proximity object (Change Sphere Shape Radius of the root entity).
+                cells["radius"] = finite(sheet.source(row, "DetectionVolumeSphereRadius"), f"{path}: DetectionVolumeSphereRadius of {identifier}", 0.0)
             if tagged:
                 cells["tag"] = sheet.source(row, "InteractTag").strip()
                 cells["onlyOnQuest"] = flag(sheet.source(row, "InteractOnlyOnQuest"), f"{path}: InteractOnlyOnQuest of {identifier}")
@@ -366,6 +388,13 @@ class Tables:
                 if "GatheringMultiplier" in sheet.columns else 0.0}
 
 
+def quest_form(cells: dict, what: str) -> bool:
+    """@return True for a gatherable row with the form of a row of the quest tables (stage QG5a, the direct bindings): IsLootContainer, the
+    loot table Empty or blank (no roll: the result is the quest drops of the tasks), and a GameEventID (the event of the quests)."""
+    return (flag(cells.get("IsLootContainer", ""), f"IsLootContainer of {what}") and cells.get("FinalLootTable", "").strip() in ("", "Empty")
+            and bool(cells.get("GameEventID", "").strip()))
+
+
 def row_entry(identifier: str, table: str, cells: dict) -> dict:
     """@return A gatherable row of the file. A value with a wrong form stops the tool."""
     what = f"the gatherable row {identifier}"
@@ -424,10 +453,13 @@ class Slices:
         self.assets = {path: asset for asset, path in catalog.paths.items()}
         self.by_path: dict[str, int | None] = {}
         self.templates: list[dict] = []
+        self.extra: list[dict] = []
         self.counts: dict[str, int] = {}
 
-    def template_of(self, path: str) -> int | None:
-        """@return The index of the template of a gathering slice, or no value for a slice that is not one."""
+    def template_of(self, path: str, strict: bool = True) -> int | None:
+        """@return The index of the template of a gathering slice, or no value for a slice that is not one. strict (the slices of
+        slices/gatherables/ and of the distribution files): a slice of an ordinary resource table with a missing part stops the tool;
+        stage QG5a reads the other placed slices and spawner children with strict False (such a slice is no gathering slice)."""
         if path in self.by_path:
             return self.by_path[path]
         self.by_path[path] = None
@@ -441,6 +473,7 @@ class Slices:
         controllers = []
         tables = []
         entries = []
+        selected = []
         for root in roots or []:
             for element in walk(root):
                 if element.type_id == CONTROLLER_CLASS:
@@ -450,12 +483,14 @@ class Slices:
                     entries.append(entry.value.decode("utf-8", "replace") if entry is not None and entry.value else "")
                 if element.name == TABLE_FIELD and element.value:
                     tables.append(element.value.decode("utf-8", "replace"))
+                if element.name == SELECTED_FIELD and element.value:
+                    selected.append(element.value.decode("utf-8", "replace").rstrip("\0").strip())
         template = Template(path, roots or [])
         bounds = [bound for bound in template.bounds if any(GATHER_OPTION in names for _, names in bound["options"])]
         if len(controllers) != 1 or not bounds or template.root is None:
             # A slice of an ordinary resource table must have all parts; a different slice (a quest object, a creature with no skinning
             # bound) is not a gathering slice of this stage.
-            if any(table in ORDINARY_TABLES for table in tables):
+            if strict and any(table in ORDINARY_TABLES for table in tables):
                 raise Failure(f"{path}: the gathering slice has {len(controllers)} GatherableController components (not one), or no "
                               f"root entity, or no Interact bound with {GATHER_OPTION}")
             self.counts["notGatheringSlices"] = self.counts.get("notGatheringSlices", 0) + 1
@@ -469,12 +504,16 @@ class Slices:
             raise Failure(f"{path}: the range of the bound is not above 0")
         self.templates.append({
             "slice": path, "asset": asset[0].hex(), "sub": asset[1], "root": f"{template.root:016x}", "controllerSlot": controllers[0],
-            "table": tables[0] if tables else "", "entry": entries[0],
+            "table": tables[0] if tables else "", "entry": entries[0].rstrip("\0").strip(),
             "bound": {"entity": f"{bound['entity']:016x}", "component": f"{bound['component']:016x}", "slot": bound["slot"],
                       "rangeSq": bound["rangeSq"], "capacity": bound["capacity"],
                       "translation": [round(value, 4) for value in bound["translation"]], "option": f"{option_entity:016x}",
                       "lineOfSight": bound["lineOfSight"], "arcRequired": bound["arcRequired"],
                       "requires": sorted(bound["requires"])}})
+        # Stage QG5a: the selected variant of the slice, and the tag and InteractOnlyOnQuest of its GatherOption bound (a direct binding
+        # has no variation row: its own bound names them). Not written into the file (main removes the members of this tool).
+        self.extra.append({"selected": selected[0] if selected else "", "tag": bound["tag"],
+                           "onlyOnQuest": bool(bound["requires"].get("onlyOnQuest"))})
         self.by_path[path] = len(self.templates) - 1
         return self.by_path[path]
 
@@ -721,8 +760,51 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
             (out_folder / file_name).write_bytes(region_data)
         print(f"gathering: {name}: {len(indexes)} records, {gathering} gathering nodes", file=sys.stderr)
 
-    # The capital nodes: the placements of the layers whose slice is a gathering slice.
+    def quest_capital(template: int, variant: str, what: str) -> list | None:
+        """@return The capital entry of a quest object (stage 1.8c; stage QG5a: any slice path, the variant of the placement or of the
+        spawner, else the m_selectedVariant of the slice, and the direct bindings), or no value for a slice that is not one."""
+        table = slices.templates[template]["table"]
+        extra = slices.extra[template]
+        if table in QUEST_TABLES:
+            name = variant.strip() or extra["selected"]
+            row = variant_row(template, name, what)
+            if row < 0:
+                return None
+            entry = tables.variations[table][name.lower()]
+            return [template, row, entry["tag"], entry["onlyOnQuest"]]
+        identifier = slices.templates[template]["entry"]
+        if table or not identifier:
+            return None
+        # A direct binding (stage QG5a): a gathering slice with no variation table names its gatherable row itself. Its row is a quest
+        # object when it has the form of a row of the quest tables (quest_form: a loot container with the loot table Empty or blank and a
+        # game event; its result is the quest drops and its game event); its tag and InteractOnlyOnQuest are the ones of its own GatherOption
+        # bound. A different direct row (a body of a creature, a door with no event, a hazard, a fishing spot) is no quest object.
+        if identifier.lower() not in tables.rows:
+            counts["directNoRow"] = counts.get("directNoRow", 0) + 1
+            return None
+        if not quest_form(tables.rows[identifier.lower()][1], f"the direct gatherable row {identifier}"):
+            counts["directNotQuest"] = counts.get("directNotQuest", 0) + 1
+            return None
+        row = row_of(identifier, f"{what}: the direct gatherable row")
+        rows[row]["quest"] = True
+        rows[row]["unsupported"] = [cause for cause in rows[row]["unsupported"] if cause != LOOT_CONTAINER_CAUSE]
+        counts["directQuest"] = counts.get("directQuest", 0) + 1
+        return [template, row, extra["tag"], extra["onlyOnQuest"]]
+
+    spawner_cache: dict[str, list[dict]] = {}
+
+    def spawners_of(path: str) -> list[dict]:
+        """@return The PrefabSpawners of a placed slice (stage QG5a: the quest object children). Only a slice with the class reads."""
+        if path not in spawner_cache:
+            raw = sources.read(path)
+            spawner_cache[path] = (Template(path, sources.stream(path) or []).spawner_list
+                                   if raw is not None and SPAWNER_CLASS.bytes in raw else [])
+        return spawner_cache[path]
+
+    # The capital nodes: the placements of the layers whose slice is a gathering slice. Stage QG5a: the quest object children of their
+    # spawners in the member "children" (a key "UUID/ENTITY"; a backend of before reads only "capitals").
     capitals: dict[str, list[int]] = {}
+    children: dict[str, list] = {}
     capital_regions = regions or sorted({path[len(REGIONS_FOLDER):].split("/")[0]
                                          for path in sources.paths(REGIONS_FOLDER, ".capitals.json")})
     for name in capital_regions:
@@ -742,26 +824,45 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
                 match = re.fullmatch(r"\{?([0-9A-Fa-f-]{36})\}?:([0-9A-Fa-f]+)", str(placement.get("sliceAssetId", "")))
                 slice_path = slices.catalog.path((uuid.UUID(match[1]).bytes, int(match[2], 16))) if match else None
                 slice_path = slice_path or slice_path_of(slice_name, sources)
-                if slice_path is None or not slice_path.startswith("slices/gatherables/"):
-                    continue
-                template = slices.template_of(slice_path)
-                table = slices.templates[template]["table"] if template is not None else ""
-                if template is None or (table not in ORDINARY_TABLES and table not in QUEST_TABLES):
+                if slice_path is None:
                     continue
                 key = str(placement.get("id", "")).strip().lower()
-                if not re.fullmatch(r"[0-9a-f-]{36}", key):
-                    raise Failure(f"{path}: a gathering placement has no UUID")
                 variant = str(placement.get("variantName", ""))
-                row = variant_row(template, variant, f"{path}: the placement {key}")
-                if row < 0:
+                template = slices.template_of(slice_path, slice_path.startswith("slices/gatherables/"))
+                table = slices.templates[template]["table"] if template is not None else ""
+                if template is not None and slice_path.startswith("slices/gatherables/") and table in ORDINARY_TABLES:
+                    if not re.fullmatch(r"[0-9a-f-]{36}", key):
+                        raise Failure(f"{path}: a gathering placement has no UUID")
+                    row = variant_row(template, variant, f"{path}: the placement {key}")
+                    if row >= 0:
+                        capitals[key] = [template, row]
+                        counts["capitalsByTable"][table] = counts["capitalsByTable"].get(table, 0) + 1
                     continue
-                if table in QUEST_TABLES:
-                    entry = tables.variations[table][variant.lower()]
-                    capitals[key] = [template, row, entry["tag"], entry["onlyOnQuest"]]
-                    counts["questCapitals"] = counts.get("questCapitals", 0) + 1
-                else:
-                    capitals[key] = [template, row]
-                counts["capitalsByTable"][table] = counts["capitalsByTable"].get(table, 0) + 1
+                if template is not None:
+                    entry = quest_capital(template, variant, f"{path}: the placement {key}")
+                    if entry is not None:
+                        if not re.fullmatch(r"[0-9a-f-]{36}", key):
+                            raise Failure(f"{path}: a gathering placement has no UUID")
+                        capitals[key] = entry
+                        counts["questCapitals"] = counts.get("questCapitals", 0) + 1
+                        counts["capitalsByTable"][table or "(direct)"] = counts["capitalsByTable"].get(table or "(direct)", 0) + 1
+                        continue
+                # Stage QG5a: the quest object children of the PrefabSpawners of the placed slice (not client-authoritative, made at the
+                # init: the client makes them with the id of interactions.py quest_children; the key "UUID/ENTITY" of the spawner).
+                for spawner in spawners_of(slice_path):
+                    child_path = slices.catalog.path(spawner["asset"]) if spawner["asset"] is not None else None
+                    if spawner["client"] or not spawner["onInit"] or child_path is None or not sources.has(child_path):
+                        continue
+                    child = slices.template_of(child_path, False)
+                    entry = quest_capital(child, spawner["variant"], f"{path}: a child of the placement {key}") if child is not None else None
+                    if entry is None:
+                        continue
+                    if not re.fullmatch(r"[0-9a-f-]{36}", key):
+                        raise Failure(f"{path}: a gathering placement has no UUID")
+                    children[f"{key}/{spawner['entity']:016x}"] = entry
+                    counts["questChildren"] = counts.get("questChildren", 0) + 1
+                    child_table = slices.templates[child]["table"] or "(direct)"
+                    counts["capitalsByTable"][child_table] = counts["capitalsByTable"].get(child_table, 0) + 1
     counts["capitals"] = len(capitals)
 
     # The skinning of a creature: the creature slices of the creature data with a GatherableController and a GatherOption bound.
@@ -807,11 +908,13 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
             tools[item["id"]] = weapon
     # Only the slices that a node or a creature names (a quest slice of a capital placement is read and not used).
     used = sorted({template for region in region_list for template, _, _ in region["types"] if template >= 0}
-                  | {entry[0] for entry in capitals.values()} | {entry["template"] for entry in creatures.values()})
+                  | {entry[0] for entry in capitals.values()} | {entry[0] for entry in children.values()}
+                  | {entry["template"] for entry in creatures.values()})
     renumber = {old: new for new, old in enumerate(used)}
     for region in region_list:
         region["types"] = [[renumber[template] if template >= 0 else -1, row, variant] for template, row, variant in region["types"]]
     capitals = {key: [renumber[entry[0]]] + entry[1:] for key, entry in capitals.items()}
+    children = {key: [renumber[entry[0]]] + entry[1:] for key, entry in children.items()}
     for entry in creatures.values():
         entry["template"] = renumber[entry["template"]]
     templates = [slices.templates[old] for old in used]
@@ -821,7 +924,8 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
     document = {"format": FORMAT, "world": WORLD,
                 "option": {"name": GATHER_OPTION, "id": option["id"], "action": option["action"]},
                 "rows": rows, "events": events, "ranks": tables.ranks, "tools": dict(sorted(tools.items())),
-                "templates": templates, "capitals": dict(sorted(capitals.items())), "regions": region_list,
+                "templates": templates, "capitals": dict(sorted(capitals.items())), "children": dict(sorted(children.items())),
+                "regions": region_list,
                 "creatures": dict(sorted(creatures.items())), "counts": counts}
     if near is not None:
         document["near"] = sorted(found_near)

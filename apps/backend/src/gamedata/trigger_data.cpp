@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <optional>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -50,13 +51,45 @@ bool unbounded(const TriggerVolume& volume) {
 /** @return The radius of a sphere around the center that holds the volume (the cells of the grid). */
 float reach(const TriggerVolume& volume);
 
-/** @return The count of the cells of the grid that the sphere of a volume covers (QG3R-R3: in double, before any integer conversion). */
-double cell_count(const TriggerVolume& volume) {
+/**
+ * Code review of stage QG4, finding QG4R-R3: the largest absolute coordinate of a corner of the sphere of a volume in the grid (meters; the
+ * open world is about 14 km). The cells of a corner are whole numbers only inside it: a far center is no grid volume.
+ */
+constexpr double kMaxCoordinate = 1.0e9;
+
+/** The cells of the grid that the sphere of a volume covers (the first and the last cell of each axis). */
+struct CellSpan {
+    std::int64_t x0{0};
+    std::int64_t x1{0};
+    std::int64_t y0{0};
+    std::int64_t y1{0};
+};
+
+/**
+ * @return The cells of the sphere of a volume, computed in double from the center and the reach (QG3R-R3: before any integer conversion),
+ *         or no value when a corner is not finite or is outside kMaxCoordinate (QG4R-R3). The count, the check of the loader, and the
+ *         insertion of the grid use this one span.
+ */
+std::optional<CellSpan> cell_span(const TriggerVolume& volume) {
     const double radius = reach(volume);
-    const double side = std::floor((static_cast<double>(volume.center[0]) + radius) / kCell) - std::floor((static_cast<double>(volume.center[0]) - radius) / kCell) + 1.0;
-    const double depth = std::floor((static_cast<double>(volume.center[1]) + radius) / kCell) - std::floor((static_cast<double>(volume.center[1]) - radius) / kCell) + 1.0;
-    const double cells = side * depth;
-    return std::isfinite(cells) ? cells : kMaxVolumeCells * 2.0;
+    const double corners[4] = {static_cast<double>(volume.center[0]) - radius, static_cast<double>(volume.center[0]) + radius,
+                               static_cast<double>(volume.center[1]) - radius, static_cast<double>(volume.center[1]) + radius};
+    for (const double corner : corners) {
+        if (!std::isfinite(corner) || std::fabs(corner) > kMaxCoordinate) {
+            return std::nullopt;
+        }
+    }
+    const auto cell = [](double value) { return static_cast<std::int64_t>(std::floor(value / kCell)); };
+    return CellSpan{cell(corners[0]), cell(corners[1]), cell(corners[2]), cell(corners[3])};
+}
+
+/** @return The count of the cells of the grid that the sphere of a volume covers (no span: above each bound). */
+double cell_count(const TriggerVolume& volume) {
+    const std::optional<CellSpan> span = cell_span(volume);
+    if (!span) {
+        return kMaxVolumeCells * 2.0;
+    }
+    return static_cast<double>(span->x1 - span->x0 + 1) * static_cast<double>(span->y1 - span->y0 + 1);
 }
 
 float reach(const TriggerVolume& volume) {
@@ -227,6 +260,9 @@ bool TriggerData::load_text(const std::string& text) {
                 return fail("the file has more than " + std::to_string(kMaxUnboundedVolumes) + " turned volumes with no height limit");
             }
         } else {
+            if (!cell_span(volume)) {
+                return fail("the volume " + volume.tag + " has a corner outside the coordinates of the grid of the place view");
+            }
             const double cells = cell_count(volume);
             entries += cells;
             if (cells > kMaxVolumeCells || entries > kMaxGridEntries) {
@@ -267,15 +303,15 @@ void TriggerData::index() {
     for (std::size_t index = 0; index < m_volumes.size(); ++index) {
         const TriggerVolume& volume = m_volumes[index];
         m_byTag[volume.tag].push_back(static_cast<std::uint32_t>(index));
-        // QG3R-R2 and QG3R-R3: a volume that the grid cannot hold (no horizontal limit, or too many cells: only `set` of a test can give
-        // the second) is in the list that each lookup tests.
-        if (unbounded(volume) || cell_count(volume) > kMaxVolumeCells) {
+        // QG3R-R2, QG3R-R3, and QG4R-R3: a volume that the grid cannot hold (no horizontal limit, too many cells, or a corner outside the
+        // coordinates of the grid: only `set` of a test can give the last two) is in the list that each lookup tests.
+        const std::optional<CellSpan> span = cell_span(volume);
+        if (unbounded(volume) || !span || cell_count(volume) > kMaxVolumeCells) {
             m_unbounded.push_back(static_cast<std::uint32_t>(index));
             continue;
         }
-        const float radius = reach(volume);
-        for (std::int64_t x = cell_of(volume.center[0] - radius); x <= cell_of(volume.center[0] + radius); ++x) {
-            for (std::int64_t y = cell_of(volume.center[1] - radius); y <= cell_of(volume.center[1] + radius); ++y) {
+        for (std::int64_t x = span->x0; x <= span->x1; ++x) {
+            for (std::int64_t y = span->y0; y <= span->y1; ++y) {
                 m_cells[cell_key(x, y)].push_back(static_cast<std::uint32_t>(index));
             }
         }

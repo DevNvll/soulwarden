@@ -138,6 +138,8 @@ struct ChestCounts {
     /** Completions that found no place in the bag: the roll stays in the claim. */
     std::uint64_t kept{0};
     std::uint64_t itemsGiven{0};
+    /** Stage QG5a: the quest drops of the opens (ChestDropProbability; also in itemsGiven). */
+    std::uint64_t questDrops{0};
     std::uint64_t resets{0};
     std::uint64_t storeFailures{0};
     /** The maps of the characters made again, the claims and the cells that they looked at (case LC8). */

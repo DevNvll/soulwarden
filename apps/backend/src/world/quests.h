@@ -473,6 +473,14 @@ public:
      * caller gives the items in its own transaction, writes the award rows there (write_drops), and calls drops_done after the commit.
      */
     [[nodiscard]] std::vector<QuestDrop> plan_drops(Entity& entity, bool gather, const std::vector<std::string>& sources);
+    /**
+     * Stage QG5a: the quest drops of a successful open of a chest (ChestDropProbability: "0-100, probability to drop items for loot
+     * chests/POI loot", client 0x825F500) for one character. Each Active possession task with ChestDropProbability above 0 and
+     * MinGearScore 0 whose place admits the chest (docs/systems/quests.md, the quest chest drops) rolls its chance, with the rules of the
+     * other drops (PauseAndClearLootOnTaskComplete, AwardOnlyOnce, GuranteedDropAttempts, EnforceLocationRequirement). No change: the chest
+     * system gives the items in its own transaction with the claim of the chest (write_drops in its batch, drops_done after the commit).
+     */
+    [[nodiscard]] std::vector<QuestDrop> plan_chest_drops(Entity& entity, const state::WorldPosition& chest);
     /** Writes the award rows of the counted drops (in the batch of the caller). */
     [[nodiscard]] bool write_drops(const Entity& entity, const std::vector<QuestDrop>& drops);
     /** The drops are in the database: the award counts of the entity, the counters of the guaranteed drops, the log. */
@@ -660,6 +668,13 @@ private:
      */
     [[nodiscard]] std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> matched_tasks(const Entity& entity, const QuestEvent& event,
                                                                                                     const Subscriptions& subscriptions);
+    /**
+     * The rules of one drop of a task (a kill, a gather, a chest; stage QG5a: one rule for each): an Active task, PauseAndClearLootOnTaskComplete,
+     * AwardOnlyOnce, EnforceLocationRequirement, and the roll of `chance` with GuranteedDropAttempts. `chest`: the roll of the client for
+     * ChestDropProbability (an integer of 0 to 99 at or below the chance: 0x3B0B2F3 to 0x3B0B336), else a uniform number below the chance.
+     * @return The drop, or no value (a miss counts for the guaranteed drop).
+     */
+    [[nodiscard]] std::optional<QuestDrop> roll_drop(Entity& entity, std::uint64_t instance, std::uint8_t index, double chance, bool chest = false);
 
     World& m_world;
     state::Store& m_store;

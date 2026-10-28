@@ -155,6 +155,8 @@ const char* gather_refusal_text(GatherRefusal refusal) {
         return "the progression tables have no trade skill of the event of the row";
     case GatherRefusal::notOnQuest:
         return "the object is a quest object, and no active quest task of the character has its tag";
+    case GatherRefusal::gatheredQuestObject:
+        return "the character gathered the quest object: it is back after the respawn of its row";
     }
     return "?";
 }
@@ -590,6 +592,10 @@ InteractionVerdict Gathering::begin(Entity& character, const InteractionContext&
     if (target->onlyOnQuest && !m_world.quests().quest_object_open(character, target->interactTag)) {
         return refuse(GatherRefusal::notOnQuest, character, key, row.id + ": " + target->interactTag);
     }
+    // Stage QG5a: a quest object that the character gathered is not there for it until its respawn (its own LootTracker entry).
+    if (row.quest && character.questGathers.count(target->key) != 0) {
+        return refuse(GatherRefusal::gatheredQuestObject, character, key, row.id);
+    }
     if (!row.quest && is_depleted(target->key)) {
         return refuse(GatherRefusal::depleted, character, key, row.id);
     }
@@ -882,12 +888,27 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
     m_work.erase(characterId);
     m_world.quests().drops_done(character, drops);
     if (row.quest) {
-        // Stage 1.8c: a quest object stays for the other characters (InstancedLootType 4): no depletion, no node state.
+        // Stage 1.8c: a quest object stays for the other characters (InstancedLootType 4): no depletion, no node state. Stage QG5a: it goes
+        // for this character (the per-character state of the quest objects of stage 1.8e: its LootTracker entry Looted) until a uniform
+        // draw of the respawn bounds of its row.
         ++m_counts.completions;
         m_counts.itemsGiven += given.size();
         set_gather(character, gathering_rules::kStatusDone, 0.0F, work.parts.speed, false, kNoTarget);
-        log::write("world: gathering: character %s gathered the quest object %s (%s): %s; the object stays for the other characters",
-                   characterId.c_str(), target->key.c_str(), row.id.c_str(), item_list(given).c_str());
+        QuestGatherState gathered;
+        if (context.object != nullptr) {
+            gathered.actor = context.object->actor;
+        }
+        gathered.position = target->position;
+        gathered.generation = ++m_questGeneration;
+        character.questGathers[target->key] = gathered;
+        publish_quest_objects(character);
+        const std::string objectKey = target->key;
+        const std::uint64_t generation = gathered.generation;
+        m_world.after(wait, [characterId, objectKey, generation](World& world) { world.gathering().quest_object_due(characterId, objectKey, generation); });
+        log::write("world: gathering: character %s gathered the quest object %s (%s): %s; it is back for the character in %lld s, and it stays "
+                   "for the other characters",
+                   characterId.c_str(), target->key.c_str(), row.id.c_str(), item_list(given).c_str(),
+                   static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(wait).count()));
         quest_events(character, row, items, target->interactTag, context.bound->tag);
         return true;
     }
@@ -951,6 +972,36 @@ void Gathering::quest_events(Entity& character, const gamedata::GatherableRow& r
     }
     if (!interacted.keys.empty()) {
         m_world.quests().event(character, interacted);
+    }
+}
+
+void Gathering::quest_object_due(const std::string& characterId, const std::string& key, std::uint64_t generation) {
+    Entity* character = m_world.find_character(characterId);
+    if (character == nullptr) {
+        return; // The character left: its gathered objects went with its entity.
+    }
+    const auto found = character->questGathers.find(key);
+    if (found == character->questGathers.end() || found->second.generation != generation) {
+        return;
+    }
+    character->questGathers.erase(found);
+    ++m_counts.questObjectRespawns;
+    publish_quest_objects(*character);
+}
+
+void Gathering::publish_quest_objects(Entity& character) {
+    std::vector<LootTrackerEntry> entries;
+    for (const auto& [key, gathered] : character.questGathers) {
+        LootTrackerEntry entry;
+        entry.actor = gathered.actor;
+        entry.state = quest_object_rules::kLooted;
+        entry.kind = quest_object_rules::kEntryKind;
+        entry.position = gathered.position;
+        entries.push_back(entry);
+    }
+    if (entries != character.questGatherTracker) {
+        character.questGatherTracker = std::move(entries);
+        m_world.touch(character.id, ComponentKey::lootTracker);
     }
 }
 

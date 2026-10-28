@@ -73,7 +73,7 @@ json chests_view(world::World& target, const std::string& character, float radiu
                {"trackerEntries", view.trackerEntries},
                {"counts",
                 {{"begins", counts.begins}, {"completions", counts.completions}, {"cancels", counts.cancels}, {"refusals", refusals},
-                 {"rolls", counts.rolls}, {"kept", counts.kept}, {"itemsGiven", counts.itemsGiven}, {"resets", counts.resets},
+                 {"rolls", counts.rolls}, {"kept", counts.kept}, {"itemsGiven", counts.itemsGiven}, {"questDrops", counts.questDrops}, {"resets", counts.resets},
                  {"storeFailures", counts.storeFailures}, {"claimsInMemory", target.chests().claim_count()},
                  {"dueResets", target.chests().due_count()}, {"opens", target.chests().open_count()}}}};
     if (data != nullptr) {

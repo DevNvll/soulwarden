@@ -175,8 +175,13 @@ enum class GatherRefusal : std::uint8_t {
      * client shows no prompt then; live check G1).
      */
     notOnQuest,
+    /**
+     * Stage QG5a: a quest object that the character gathered: it is not there for the character until the respawn of its row (the
+     * per-character state of the quest objects of stage 1.8e; its LootTracker entry Looted).
+     */
+    gatheredQuestObject,
 };
-inline constexpr std::size_t kGatherRefusalCount = 11;
+inline constexpr std::size_t kGatherRefusalCount = 12;
 
 [[nodiscard]] const char* gather_refusal_text(GatherRefusal refusal);
 
@@ -187,6 +192,8 @@ struct GatheringCounts {
     std::array<std::uint64_t, kGatherRefusalCount> refusals{};
     /** Completions that found the node depleted by a different character (the first valid completion wins). */
     std::uint64_t contested{0};
+    /** Stage QG5a: the quest objects that came back for their character after their respawn. */
+    std::uint64_t questObjectRespawns{0};
     /** Completions that found no place in the bag for the whole result: nothing changed. */
     std::uint64_t fullBags{0};
     std::uint64_t storeFailures{0};
@@ -274,6 +281,11 @@ public:
 
     /** The world tick: the stored nodes at the first tick, the respawns whose time came (the due list). */
     void tick();
+    /**
+     * Stage QG5a: the respawn timer of a gathered quest object of a character (World::after): its entry goes, and the object is there for
+     * the character again. An old generation changes nothing.
+     */
+    void quest_object_due(const std::string& characterId, const std::string& key, std::uint64_t generation);
     /** The world calls it at the leave of a character: its work ends (the rest of its work stays only while it is in the world). */
     void left(Entity& character);
     /** The creature system calls it at the death of a creature: a body with a skinning row gets the node state Healthy. */
@@ -363,6 +375,8 @@ private:
     void quest_events(Entity& character, const gamedata::GatherableRow& row, const std::vector<GrantItem>& items, const std::string& interactTag,
                       const std::string& boundTag);
     [[nodiscard]] bool is_depleted(const std::string& key) const;
+    /** Stage QG5a: the LootTracker entries of the gathered quest objects of a character (Entity::questGatherTracker). */
+    void publish_quest_objects(Entity& character);
     /** Gives a node its state on its entity (the node state of its GatherableController): each observer gets it. */
     void publish(GatherNode& node);
     [[nodiscard]] std::optional<ExternalObject> natural_object(const gamedata::NaturalNode& node) const;
@@ -389,6 +403,8 @@ private:
     std::multimap<WorldClock::time_point, Due> m_due;
     bool m_loaded{false};
     GatheringCounts m_counts;
+    /** Stage QG5a: the generation of the gathers of quest objects (the key of a respawn timer). */
+    std::uint64_t m_questGeneration{0};
 };
 
 } // namespace soulwarden::backend::world

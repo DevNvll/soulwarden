@@ -1,5 +1,6 @@
 #include "gamedata/quest_object_data.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <map>
@@ -58,6 +59,8 @@ bool QuestObjectData::fail(std::string cause) {
     m_rows.clear();
     m_objects.clear();
     m_cells.clear();
+    m_proximityReach = 0.0F;
+    m_proximityCount = 0;
     return false;
 }
 
@@ -83,6 +86,8 @@ bool QuestObjectData::load_text(const std::string& text) {
     m_rows.clear();
     m_objects.clear();
     m_cells.clear();
+    m_proximityReach = 0.0F;
+    m_proximityCount = 0;
     const json document = json::parse(text, nullptr, false);
     if (document.is_discarded() || !document.is_object()) {
         return fail("the file is not a JSON object");
@@ -116,37 +121,57 @@ bool QuestObjectData::load_text(const std::string& text) {
     // LootTracker entry of the client (the rule of the chest loader, finding CH-R4), and the strike keeps its work by the object.
     std::set<std::string> keys;
     std::map<std::array<std::uint8_t, 16>, std::string> actors;
-    for (const json& entry : document["objects"]) {
-        QuestObjectPlacement object;
-        if (!entry.is_object() || !hex_bytes(entry.value("actor", json()), object.actor) || !hex_bytes(entry.value("asset", json()), object.asset)
-            || !entry.contains("row") || !entry["row"].is_number_unsigned() || !entry.contains("position") || !entry["position"].is_array()
-            || entry["position"].size() != 3 || !entry.contains("slot") || !entry["slot"].is_number_unsigned()) {
-            return fail("an object does not have the members actor, asset, row, slot, and position");
+    // Stage QG5a: the proximity objects (the member "proximity": a file of before has none) are objects with the radius of their detection
+    // volume; a backend of before reads only "objects".
+    if (document.contains("proximity") && !document["proximity"].is_array()) {
+        return fail("the member proximity is not a list");
+    }
+    for (const bool proximity : {false, true}) {
+        if (proximity && !document.contains("proximity")) {
+            break;
         }
-        for (const json& axis : entry["position"]) {
-            if (!finite_number(axis)) {
-                return fail("an object has a position that is not finite");
+        for (const json& entry : document[proximity ? "proximity" : "objects"]) {
+            QuestObjectPlacement object;
+            if (!entry.is_object() || !hex_bytes(entry.value("actor", json()), object.actor) || !hex_bytes(entry.value("asset", json()), object.asset)
+                || !entry.contains("row") || !entry["row"].is_number_unsigned() || !entry.contains("position") || !entry["position"].is_array()
+                || entry["position"].size() != 3 || !entry.contains("slot") || !entry["slot"].is_number_unsigned()) {
+                return fail("an object does not have the members actor, asset, row, slot, and position");
             }
+            for (const json& axis : entry["position"]) {
+                if (!finite_number(axis) || std::fabs(axis.get<double>()) > kMaxCoordinate) {
+                    return fail("an object has a position that is not finite or that is outside the coordinates of the grid");
+                }
+            }
+            object.key = lower_text(text_of(entry, "key"));
+            object.sub = entry.contains("sub") && entry["sub"].is_number_unsigned() ? entry["sub"].get<std::uint32_t>() : 2;
+            object.slot = entry["slot"].get<std::uint32_t>();
+            object.variant = text_of(entry, "variant");
+            object.row = entry["row"].get<std::uint32_t>();
+            object.tag = lower_text(text_of(entry, "tag"));
+            object.onlyOnQuest = entry.contains("onlyOnQuest") && entry["onlyOnQuest"].is_boolean() && entry["onlyOnQuest"].get<bool>();
+            object.position = state::WorldPosition{entry["position"][0].get<float>(), entry["position"][1].get<float>(), entry["position"][2].get<float>()};
+            object.proximity = proximity;
+            if (proximity) {
+                if (!entry.contains("radius") || !finite_number(entry["radius"]) || !(entry["radius"].get<double>() > 0.0)
+                    || entry["radius"].get<double>() > kLargestRadius) {
+                    return fail("the proximity object " + object.key + " has no radius above 0 and at most " + std::to_string(kLargestRadius) + " m");
+                }
+                object.radius = entry["radius"].get<float>();
+                m_proximityReach = std::max(m_proximityReach, object.radius);
+                ++m_proximityCount;
+            }
+            if (object.key.empty() || object.row >= m_rows.size()) {
+                return fail("the object " + object.key + " has no key or names a row that the file does not have");
+            }
+            if (!keys.insert(object.key).second) {
+                return fail("two objects have the key " + object.key + ": one object for each placement key");
+            }
+            if (const auto [other, added] = actors.emplace(object.actor, object.key); !added) {
+                return fail("the object " + object.key + " has the actor of the object " + other->second + ": one object for each actor");
+            }
+            m_cells[cell_of(object.position.x, object.position.y)].push_back(static_cast<std::uint32_t>(m_objects.size()));
+            m_objects.push_back(std::move(object));
         }
-        object.key = lower_text(text_of(entry, "key"));
-        object.sub = entry.contains("sub") && entry["sub"].is_number_unsigned() ? entry["sub"].get<std::uint32_t>() : 2;
-        object.slot = entry["slot"].get<std::uint32_t>();
-        object.variant = text_of(entry, "variant");
-        object.row = entry["row"].get<std::uint32_t>();
-        object.tag = lower_text(text_of(entry, "tag"));
-        object.onlyOnQuest = entry.contains("onlyOnQuest") && entry["onlyOnQuest"].is_boolean() && entry["onlyOnQuest"].get<bool>();
-        object.position = state::WorldPosition{entry["position"][0].get<float>(), entry["position"][1].get<float>(), entry["position"][2].get<float>()};
-        if (object.key.empty() || object.row >= m_rows.size()) {
-            return fail("the object " + object.key + " has no key or names a row that the file does not have");
-        }
-        if (!keys.insert(object.key).second) {
-            return fail("two objects have the key " + object.key + ": one object for each placement key");
-        }
-        if (const auto [other, added] = actors.emplace(object.actor, object.key); !added) {
-            return fail("the object " + object.key + " has the actor of the object " + other->second + ": one object for each actor");
-        }
-        m_cells[cell_of(object.position.x, object.position.y)].push_back(static_cast<std::uint32_t>(m_objects.size()));
-        m_objects.push_back(std::move(object));
     }
     m_loaded = true;
     return true;

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,14 @@
 //      of an instanced object, type 982: live check I0, the client removes the object, its marker, and its corruption). A refusal (a full
 //      bag, a refused write) keeps the object with its last unit of work. After a uniform draw of the respawn bounds of the row the entry
 //      goes (the map with no entry: the object is back for the character).
+//
+// Stage QG5a: the proximity quest objects (the variation table Gatherable_Quest_Proximity: the trails of 04A_Side01_01, the torches of
+// 99C_MSQ2 and 17_MSQ; docs/systems/quests.md, the proximity objects). The slice has a DetectionVolumeComponent and its GatherableController
+// has m_isProximityGatherable in its server facet: the server finds the character. The client sends nothing (its handler 0x4900030 of 5078
+// only sets a value of the HUD; live P1 of stage QG5a: no request at a trail). No strike hits such an object. The rules: an accepted
+// position of the character (World::place marks it; the next tick looks one time) in the sphere of the detection volume of the object
+// (3D, DetectionVolumeSphereRadius of the row), the rule 3 above (InteractOnlyOnQuest), and the object is not found for the character
+// now; then the step 6 above (one plan of the quest system, then the LootTracker entry and the respawn of the row).
 //
 // The state is a value of the character (Entity::questObjects, rule MP-1): each character has its own objects (InstancedLootType 4 of the
 // data), and its entries go only to its own sessions (the LootTracker state is owner only). The store has none: a new world entry has the
@@ -98,6 +107,10 @@ struct QuestObjectCounts {
     std::uint64_t respawns{0};
     std::uint64_t storeFailures{0};
     std::uint64_t refused[kQuestObjectVerdicts]{};
+    /** Stage QG5a: the looks at the proximity objects (one for each marked character at a tick), the objects that they visited, and the finds. */
+    std::uint64_t proximityLooks{0};
+    std::uint64_t proximityVisits{0};
+    std::uint64_t proximityFound{0};
 };
 
 class QuestObjects {
@@ -113,6 +126,13 @@ public:
      * character in its reach take one unit of work each. `visit` and `strike` are the identity of the strike (a second call changes nothing).
      */
     void strike(Entity& character, std::uint32_t visit, std::uint32_t strike);
+    /**
+     * Stage QG5a: the accepted position of a character changed (World::place): its proximity objects look at the next tick (O(1); nothing
+     * with no proximity object in the data).
+     */
+    void moved(const Entity& character);
+    /** Stage QG5a: the world tick: the proximity objects of the characters that moved (one look each, the cells of the grid near them). */
+    void tick();
     /** The character leaves the world: its objects go with its entity (the respawn timers end themselves). */
     void left(const Entity& character);
     /** The respawn timer of a destroyed object of a character (World::after): the entry goes. An old generation changes nothing. */
@@ -123,6 +143,8 @@ public:
     }
 
 private:
+    /** Stage QG5a: the proximity objects whose sphere holds the accepted position of a character. */
+    void look(Entity& character);
     void destroy(Entity& character, std::uint32_t index);
     /** The LootTracker entries of the destroyed objects of a character (Entity::questObjectTracker). */
     void publish(Entity& character);
@@ -132,6 +154,8 @@ private:
     const gamedata::QuestObjectData* m_data;
     QuestObjectCounts m_counts;
     std::uint64_t m_generation{0};
+    /** Stage QG5a: the characters whose accepted position changed since the last tick. */
+    std::set<EntityId> m_moved;
 };
 
 } // namespace soulwarden::backend::world

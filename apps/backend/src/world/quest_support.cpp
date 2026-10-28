@@ -1,6 +1,7 @@
 #include "world/quest_support.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <functional>
 #include <map>
@@ -145,6 +146,12 @@ std::string blank_item(const std::string& kind) {
                  "4.5, 5.4)"
                : "the task has no ItemName (a blank cell of the data)";
 }
+
+/**
+ * Stage QG5a: the trade skills of a gather (their ranks rise with the gathers: the manifest takes their rank gates as reachable). A rank gate of
+ * another trade skill (AzothStaff) has no source in a history.
+ */
+constexpr std::array<const char*, 4> kGatheringSkills{"Mining", "Logging", "Harvesting", "Skinning"};
 
 /** Stage QG2a: @return True for a KillEnemyWeaponID that names an ability table of a weapon (BowAbilityTable): a filter, not an item. */
 bool weapon_filter(const std::string& weapon) {
@@ -331,6 +338,18 @@ struct QuestSupport::Index {
     std::unordered_map<std::string, std::string> gatherEvents;
     /** The gatherable rows with a node in the world (lower case id). */
     std::unordered_set<std::string> gatherRows;
+    /**
+     * Stage QG5a: the cause of a game event whose only gatherable rows of the world the backend does not gather (a refusal cause of the row,
+     * or a rank of a trade skill with no source: AzothStaff), for the block of its task (lower case event id).
+     */
+    std::unordered_map<std::string, std::string> refusedEvents;
+    /**
+     * Stage QG5a: the tags of the points of interest of the ordinary chests (each tag, and each tag with the territory of its point of interest),
+     * for the quest drops of a chest (ChestDropProbability; Quests::plan_chest_drops); `anyChest` with no tag.
+     */
+    std::unordered_set<std::string> chestTags;
+    std::set<std::pair<std::string, std::uint16_t>> chestTagTerritories;
+    bool anyChest{false};
     /** The interact tags of the quest objects and of the bounds of the interaction data (lower case). */
     std::unordered_set<std::string> objectTags;
     /**
@@ -397,6 +416,25 @@ struct QuestSupport::History {
     std::vector<std::string> cause;
     std::uint32_t rounds{0};
 };
+
+namespace {
+
+/**
+ * Stage QG5a: @return True when an ordinary chest of the world can give the quest drop of a task (ChestDropProbability; the rule of
+ * Quests::plan_chest_drops): a chest in a point of interest of a tag of the task (of its TerritoryID when it has one); a task with no tag:
+ * each chest.
+ */
+bool chest_drop(bool anyChest, const std::unordered_set<std::string>& tags, const std::set<std::pair<std::string, std::uint16_t>>& territories,
+                const gamedata::QuestTask& task) {
+    if (task.poiTags.empty()) {
+        return anyChest;
+    }
+    return std::any_of(task.poiTags.begin(), task.poiTags.end(), [&](const std::string& tag) {
+        return task.territory == 0 ? tags.count(tag) != 0 : territories.count({tag, task.territory}) != 0;
+    });
+}
+
+} // namespace
 
 QuestSupport::QuestSupport(World& world) : m_world(world) {}
 
@@ -534,6 +572,24 @@ void QuestSupport::build() {
                 return;
             }
             const gamedata::GatherableRow& gatherable = gathering->rows()[row];
+            // Stage QG5a: only a row that the backend gathers is a source (Gathering::begin): no refusal cause of the row, and a rank gate of
+            // a trade skill whose ranks a history can reach. The gathering trade skills rise with the gathers; another one (AzothStaff of the
+            // glyph locks: its ranks come only from the ProgressionReward of 11 game events, which the backend does not pay) gives no rank
+            // [agent: the manifest does not model the ranks of the gathering skills].
+            std::string cause;
+            if (!gatherable.unsupported.empty()) {
+                cause = "its gatherable row " + gatherable.id + " is refused (" + gatherable.unsupported.front() + ")";
+            } else if (gatherable.level > 0 && !gatherable.tradeskill.empty()
+                       && std::find(kGatheringSkills.begin(), kGatheringSkills.end(), gatherable.tradeskill) == kGatheringSkills.end()) {
+                cause = "its gatherable row " + gatherable.id + " needs the rank " + std::to_string(gatherable.level) + " of the trade skill "
+                        + gatherable.tradeskill + " (no source of its ranks in the backend: ProgressionReward has no owner)";
+            }
+            if (!cause.empty()) {
+                if (!gatherable.event.empty()) {
+                    index.refusedEvents.emplace(lower_text(gatherable.event), cause);
+                }
+                return;
+            }
             index.gatherRows.insert(lower_text(gatherable.id));
             if (!gatherable.event.empty()) {
                 index.gatherEvents.emplace(lower_text(gatherable.event), kind);
@@ -590,12 +646,30 @@ void QuestSupport::build() {
         for (const gamedata::QuestObjectPlacement& object : objects->objects()) {
             const gamedata::QuestObjectRow& row = objects->rows()[object.row];
             if (!row.event.empty()) {
-                index.gatherEvents.emplace(lower_text(row.event), "a destructible quest object");
+                // Stage QG5a: a proximity object (the trails and the torches) gives its event when its character is in its sphere.
+                index.gatherEvents.emplace(lower_text(row.event), object.proximity ? "a proximity quest object" : "a destructible quest object");
             }
             if (!object.tag.empty()) {
                 index.objectTags.insert(object.tag);
             }
             index.gatherRows.insert(lower_text(row.id));
+        }
+    }
+    // Stage QG5a: the points of interest of the ordinary chests of the chest data (the quest drops of a chest: a chest in a point of interest
+    // of the tags of the task, of its TerritoryID; a task with no tag takes each chest).
+    if (options.chestData != nullptr) {
+        for (const gamedata::ChestDefinition& chest : options.chestData->chests()) {
+            if (!chest.available) {
+                continue;
+            }
+            index.anyChest = true;
+            for (const gamedata::Poi* poi : options.poiData != nullptr ? options.poiData->at(chest.position.x, chest.position.y)
+                                                                         : std::vector<const gamedata::Poi*>{}) {
+                for (const std::string& tag : poi->tags) {
+                    index.chestTags.insert(tag);
+                    index.chestTagTerritories.emplace(tag, poi->territory);
+                }
+            }
         }
     }
     // The items of a quest drop of a task whose source is in the world (a kill of a spawn point, a gather of a node or of an object): an item
@@ -607,7 +681,14 @@ void QuestSupport::build() {
                 continue;
             }
             const QuestTask& task = data.task(node.task);
-            if (!gamedata::is_possession(task.type) || task.minGearScore != 0 || !(task.dropChance > 0.0) || task.itemName.empty()) {
+            if (!gamedata::is_possession(task.type) || task.minGearScore != 0 || task.itemName.empty()) {
+                continue;
+            }
+            if (task.chestChance > 0.0 && chest_drop(index.anyChest, index.chestTags, index.chestTagTerritories, task)) {
+                index.gives[at].push_back(lower_text(task.itemName));
+                index.questItems.emplace(lower_text(task.itemName), "the quest drop of a chest");
+            }
+            if (!(task.dropChance > 0.0)) {
                 continue;
             }
             const bool gather = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
@@ -996,8 +1077,10 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                 // Stage QG2a: a pin or a map task of the data (PinTask, Dummy_WorldPin): no event, it never completes.
                 block("the task names no game event: a pin or a map task of the data (it never completes)");
             } else if (found.empty()) {
-                block("no producer of the game event " + (task.targets.empty() ? std::string{} : task.targets.front())
-                      + " (no creature, gatherable, or destructible object of the data gives it)");
+                const auto refused = index.refusedEvents.find(task.targets.front());
+                block("no producer of the game event " + task.targets.front()
+                      + (refused != index.refusedEvents.end() ? " (" + refused->second + ")"
+                                                              : std::string(" (no creature, gatherable, or destructible object of the data gives it)")));
             } else {
                 fact.supplier = found;
             }
@@ -1054,6 +1137,8 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                     }
                 }
             }
+            // Stage QG5a: the quest drop of a chest (ChestDropProbability): an ordinary chest in a point of interest of its tags.
+            const bool chestDrop = task.type != task_type::kEquipItem && task.minGearScore == 0 && task.chestChance > 0.0 && chest_drop(index.anyChest, index.chestTags, index.chestTagTerritories, task);
             const std::string item = lower_text(task.itemName);
             if (trimmed_blank(task.itemName)) {
                 block(blank_item(row.kind));
@@ -1061,6 +1146,8 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                 block("the item catalog has no " + task.itemName);
             } else if (!dropSource.empty()) {
                 fact.supplier = "the quest drop of " + dropSource;
+            } else if (chestDrop) {
+                fact.supplier = "the quest drop of the chests" + (task.poiTags.empty() ? std::string(" of the world") : " of " + task.poiTags.front());
             } else if (const auto world = index.items.find(item); world != index.items.end()) {
                 fact.supplier = world->second;
             } else if (const auto quest = index.questItems.find(item); quest != index.questItems.end()) {

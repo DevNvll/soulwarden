@@ -369,6 +369,17 @@ struct QuestObjectHits {
 };
 
 /**
+ * Stage QG5a: one gathered quest object of a character (world/gathering.h, a node of a quest row: the quest objects of a gather keep the
+ * per-character state of the destructible objects of stage 1.8e): its managed actor and place (its LootTracker entry Looted), and the
+ * generation of the gather (an old respawn timer changes nothing). A value of the world: the store has none.
+ */
+struct QuestGatherState {
+    std::array<std::uint8_t, 16> actor{};
+    state::WorldPosition position;
+    std::uint64_t generation{0};
+};
+
+/**
  * Health, stamina, and mana of a character. The progress system sets the maximum of the health
  * from the level and from the constitution of the character (world/progress.h). These are the
  * values of a backend with no progression tables.
@@ -1976,6 +1987,9 @@ struct Entity {
     std::map<std::uint32_t, QuestObjectHits> questObjects;
     /** Stage 1.8e: the LootTracker entries (Looted) of the destroyed quest objects of the character: a copy of the values of the system. */
     std::vector<LootTrackerEntry> questObjectTracker;
+    /** Stage QG5a: the gathered quest objects of the character by their node key (world/gathering.h), and their LootTracker entries. */
+    std::map<std::string, QuestGatherState> questGathers;
+    std::vector<LootTrackerEntry> questGatherTracker;
     /** The items of the loot bag that the character opened (stage 3.5b.2, slot 76): the loot bag system sets them. */
     Bag selectedContainer;
     /** The items of each loot bag of the character (stage 3.5b.2, slot 77): the loot bag system sets them. */

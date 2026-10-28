@@ -35,6 +35,8 @@ std::int64_t cell_of(float value) {
  */
 constexpr double kMaxShapeCells = 16384.0;
 constexpr double kMaxGridEntries = 2000000.0;
+/** Code review of stage QG4, finding QG4R-R3: the largest absolute coordinate of a shape point in the grid (meters; the open world is about 14 km). */
+constexpr double kMaxCoordinate = 1.0e9;
 
 bool finite_number(const json& value) {
     return value.is_number() && std::isfinite(value.get<double>());
@@ -148,6 +150,12 @@ bool PoiData::load_text(const std::string& text) {
         }
         for (const std::string& tag : poi.tags) {
             m_byTag[tag].push_back(static_cast<std::uint32_t>(m_pois.size()));
+        }
+        // Code review of stage QG4, finding QG4R-R3: each corner of the shape is inside the coordinates of the grid before a cell number
+        // (a whole number) is made of it.
+        if (std::fabs(static_cast<double>(poi.minX)) > kMaxCoordinate || std::fabs(static_cast<double>(poi.maxX)) > kMaxCoordinate
+            || std::fabs(static_cast<double>(poi.minY)) > kMaxCoordinate || std::fabs(static_cast<double>(poi.maxY)) > kMaxCoordinate) {
+            return fail("the point of interest " + std::to_string(poi.id) + " has a shape point outside the coordinates of the grid of the place view");
         }
         // QG3R-R3: the cells of the shape are counted in double before the grid and before any integer conversion.
         const double cellsX = std::floor(static_cast<double>(poi.maxX) / kCell) - std::floor(static_cast<double>(poi.minX) / kCell) + 1.0;
