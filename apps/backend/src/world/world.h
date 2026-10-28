@@ -36,6 +36,7 @@
 #include "world/ids.h"
 #include "world/chests.h"
 #include "world/crafting.h"
+#include "world/encounters.h"
 #include "world/gathering.h"
 #include "world/item_containers.h"
 #include "world/loot_bags.h"
@@ -315,6 +316,8 @@ struct WorldOptions {
     const gamedata::TriggerData* triggerData{nullptr};
     /** Stage 1.8e: the destructible quest objects (game data quest-objects.json), or null: no quest object can be destroyed. */
     const gamedata::QuestObjectData* questObjectData{nullptr};
+    /** Stage QG5c2: the encounter recipes of the quests (game data encounter-data.json), or null: the world has no encounter. */
+    const gamedata::EncounterData* encounterData{nullptr};
     /**
      * Stage 2.5c: the conversation data of the persons (game data conversation-data.json), or null: a person keeps its conversation (3743
      * result 1), with no state selection, no topic, and no service.
@@ -686,6 +689,14 @@ public:
     void remove_object(EntityId id);
 
     /**
+     * Makes the root entity of an encounter (stage QG5c2, world/encounters.h): an actor of the id allocator, the body of its recipe, the
+     * position index. Only the encounter system calls it. @return Null for a position that is not a position of the world.
+     */
+    Entity* make_encounter(const EncounterBody& body, const state::WorldPosition& position);
+    /** Removes the root entity of an encounter: each session that observes it sends the stop. Only the encounter system calls it. */
+    void remove_encounter(EntityId id);
+
+    /**
      * Makes the entity of a spell (stage 3.3b-S2a). Only the spell system calls it (world/spells.h). Its actor id comes from
      * the id allocator; the sessions near it look for it in the same tick (last_spell).
      */
@@ -897,6 +908,13 @@ public:
     [[nodiscard]] const QuestObjects& quest_objects() const {
         return m_questObjects;
     }
+    /** @return The encounters of the quests (stage QG5c2): the recipes, the instances, the members, the participants, the credit. */
+    [[nodiscard]] Encounters& encounters() {
+        return m_encounters;
+    }
+    [[nodiscard]] const Encounters& encounters() const {
+        return m_encounters;
+    }
     [[nodiscard]] Persons& persons() {
         return m_persons;
     }
@@ -1071,6 +1089,8 @@ private:
     Crafting m_crafting;
     Quests m_quests;
     QuestObjects m_questObjects;
+    /** The encounters (stage QG5c2): after the creatures, the interactions, the gathering, and the quests (it uses each of them). */
+    Encounters m_encounters;
     /** The persons (stage 2.5c): after the interactions (its handler of OpenConversation) and the quests (the conditionals, the tasks). */
     Persons m_persons;
     /** The build presets (stage B0): they use the inventory, the progress, the skill, and the ownership systems. */

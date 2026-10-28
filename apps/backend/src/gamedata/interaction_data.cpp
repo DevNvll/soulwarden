@@ -695,7 +695,69 @@ bool InteractionData::load(const std::string& path) {
         }
     }
     set_persons_apart(std::move(apart));
+    // Stage QG5c2: the start objects of the encounter recipes (a slice path to the template and the variation; a file of before has none).
+    std::map<std::string, EncounterObject, std::less<>> encounterObjects;
+    if (document.contains("encounterObjects")) {
+        if (!document["encounterObjects"].is_object()) {
+            *this = InteractionData{};
+            m_error = "the member encounterObjects is not an object";
+            return false;
+        }
+        for (const auto& [slice, entry] : document["encounterObjects"].items()) {
+            const auto number = [&entry](const char* name, std::uint64_t limit, std::uint64_t& value) {
+                if (!entry.contains(name) || !entry[name].is_number_unsigned() || entry[name].get<std::uint64_t>() > limit) {
+                    return false;
+                }
+                value = entry[name].get<std::uint64_t>();
+                return true;
+            };
+            std::uint64_t index = 0;
+            std::uint64_t slot = 0;
+            std::uint64_t variant = 0;
+            if (!entry.is_object() || !number("template", 0xFFFFFFFFULL, index) || !number("variationSlot", 0xFFFFFFFFULL, slot)
+                || !number("variant", 0xFFFFULL, variant)) {
+                *this = InteractionData{};
+                m_error = "the start object " + slice + " has no template index, no variation slot, or no variant from 0 to 65535";
+                return false;
+            }
+            encounterObjects.emplace(lower_ascii(slice), EncounterObject{static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(slot),
+                                                                         static_cast<std::uint16_t>(variant)});
+        }
+    }
+    if (!set_encounter_objects(std::move(encounterObjects))) {
+        const std::string cause = m_error;
+        *this = InteractionData{};
+        m_error = cause;
+        return false;
+    }
     return true;
+}
+
+bool InteractionData::set_encounter_objects(std::map<std::string, EncounterObject, std::less<>> objects) {
+    for (const auto& [slice, object] : objects) {
+        if (object.templateIndex >= m_templates.size()) {
+            m_error = "the start object " + slice + " names a template that the file does not have";
+            return false;
+        }
+        const InteractionTemplate& entry = m_templates[object.templateIndex];
+        bool used = object.variationSlot > 4095 || object.variationSlot == entry.positionSlot || object.variationSlot == entry.buildableSlot
+                    || object.variationSlot == entry.ownershipSlot || object.variationSlot == entry.vitalsSlot;
+        for (const InteractionBound& bound : entry.bounds) {
+            used = used || object.variationSlot == bound.slot;
+        }
+        if (object.variationSlot != 0 && used) {
+            m_error = "the variation slot " + std::to_string(object.variationSlot) + " of the start object " + slice
+                      + " is above 4095 or is the slot of an other state of its template";
+            return false;
+        }
+    }
+    m_encounterObjects = std::move(objects);
+    return true;
+}
+
+const EncounterObject* InteractionData::encounter_object(std::string_view slice) const {
+    const auto found = m_encounterObjects.find(lower_ascii(slice));
+    return found != m_encounterObjects.end() ? &found->second : nullptr;
 }
 
 void InteractionData::set_persons_apart(std::vector<PersonApart> persons) {

@@ -57,6 +57,8 @@ const char* hit_verdict_text(HitVerdict verdict) {
         return "the creature is on its way back (immune)";
     case HitVerdict::noStrike:
         return "no strike of the attack fits the contact";
+    case HitVerdict::blocked:
+        return "a wall between the character and the creature";
     }
     return "unknown";
 }
@@ -906,6 +908,11 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     if (target->creature.immune()) {
         m_world.creatures().behavior().immune_hit();
         return refuse(HitVerdict::immune);
+    }
+    // Code review of stage QG5c1, finding QG5C1R-R2: a contact through a wall is refused before a path takes a phase, a strike, or a
+    // result (the ability contact, the attack graph, and the light or heavy attack below); the rule of the sight of the creatures.
+    if (!m_world.navigation().sees(attacker->position, target->position)) {
+        return refuse(HitVerdict::blocked);
     }
     // A contact in the window of a phase of an ability that plays (world/abilities.h): a hit of
     // that phase, with its damage row. The hit check of a melee attack stays.

@@ -127,6 +127,8 @@ const char* node_kind_text(NodeKind kind) {
         return "natural";
     case NodeKind::body:
         return "body";
+    case NodeKind::encounter:
+        return "encounter";
     }
     return "?";
 }
@@ -338,7 +340,25 @@ std::optional<Gathering::Target> Gathering::target_of(const InteractionContext& 
     Target target;
     if (!context.external) {
         if (context.instance != 0) {
-            return std::nullopt; // A server child is not a node.
+            // Stage QG5c2: the start object of an encounter stage (a server child of the encounter system). Each other server child is no
+            // node.
+            const std::string* slice = m_world.encounters().start_object(context.instance);
+            const std::optional<gamedata::GatheringLink> link = slice != nullptr ? m_data->encounter_object(*slice) : std::nullopt;
+            if (!link) {
+                return std::nullopt;
+            }
+            target.key = "encounter/" + hex64(context.instance);
+            target.kind = NodeKind::encounter;
+            target.row = link->row;
+            target.templateIndex = link->templateIndex;
+            target.objectIndex = context.objectIndex;
+            target.group = context.instance;
+            target.source = "encounter";
+            const Entity* object = m_world.find(context.instance);
+            target.position = object != nullptr ? object->position : state::WorldPosition{};
+            target.interactTag = link->interactTag;
+            target.onlyOnQuest = link->onlyOnQuest;
+            return target;
         }
         const std::optional<gamedata::GatheringLink> link = m_data->capital(context.object->key);
         if (!link) {
@@ -900,6 +920,18 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
     rests.erase(std::remove_if(rests.begin(), rests.end(), [&](const Rest& rest) { return rest.node == work.node; }), rests.end());
     m_work.erase(characterId);
     m_world.quests().drops_done(character, drops);
+    if (row.quest && target->kind == NodeKind::encounter) {
+        // Stage QG5c2: the start object of an encounter stage: its quest events (the game event of its row, its tag), then the encounter
+        // system removes it in its next tick (its stage counts it: SliceDestroyedObjective). No LootTracker entry: the object goes.
+        ++m_counts.completions;
+        m_counts.itemsGiven += given.size();
+        set_gather(character, gathering_rules::kStatusDone, 0.0F, work.parts.speed, false, kNoTarget);
+        log::write("world: gathering: character %s used the start object %s of an encounter (%s): %s", characterId.c_str(),
+                   target->key.c_str(), row.id.c_str(), item_list(given).c_str());
+        quest_events(character, row, items, target->interactTag, context.bound->tag);
+        m_world.encounters().object_gathered(target->group, character);
+        return true;
+    }
     if (row.quest) {
         // Stage 1.8c: a quest object stays for the other characters (InstancedLootType 4): no depletion, no node state. Stage QG5a: it goes
         // for this character (the per-character state of the quest objects of stage 1.8e: its LootTracker entry Looted) until a uniform
@@ -1027,6 +1059,16 @@ std::chrono::milliseconds Gathering::respawn_time(const gamedata::GatherableRow&
     return std::chrono::milliseconds(static_cast<long long>(std::lround(std::max(seconds, 1.0F) * 1000.0F)));
 }
 
+void Gathering::encounter_object_made(Entity& object, const std::string& slice) {
+    const std::optional<gamedata::GatheringLink> link = data() != nullptr ? m_data->encounter_object(slice) : std::nullopt;
+    if (!link || object.kind != EntityKind::object || link->templateIndex >= m_data->templates().size()) {
+        return;
+    }
+    object.object.nodeSlot = m_data->templates()[link->templateIndex].controllerSlot;
+    object.object.nodeState = gathering_rules::kHealthy;
+    m_world.touch(object.id, ComponentKey::gatherable);
+}
+
 void Gathering::publish(GatherNode& node) {
     if (data() == nullptr) {
         return;
@@ -1052,6 +1094,8 @@ void Gathering::publish(GatherNode& node) {
             m_world.touch(entity->id, ComponentKey::gatherable);
         }
         return;
+    case NodeKind::encounter:
+        return; // Stage QG5c2: a start object has no node entry (encounter_object_made gives its state).
     }
     if (entity == nullptr || entity->kind != EntityKind::object) {
         return;

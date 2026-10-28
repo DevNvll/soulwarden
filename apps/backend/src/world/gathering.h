@@ -85,6 +85,12 @@ enum class NodeKind : std::uint8_t {
     natural,
     /** The body of a dead creature (skinning). */
     body,
+    /**
+     * Stage QG5c2 (world/encounters.h): the start object of an encounter stage (a server child of a template; its row and its tag are the
+     * member encounterObjects of the gathering data). Its gather is a quest gather; its commit goes to the encounter system, which removes
+     * the object (the stage counts it).
+     */
+    encounter,
 };
 
 [[nodiscard]] const char* node_kind_text(NodeKind kind);
@@ -295,6 +301,11 @@ public:
     void left(Entity& character);
     /** The creature system calls it at the death of a creature: a body with a skinning row gets the node state Healthy. */
     void creature_died(Entity& creature);
+    /**
+     * Stage QG5c2: the encounter system made the start object of a stage (a server child): it gets the node state Healthy at the slot of the
+     * GatherableController of its template (the member encounterObjects of the gathering data). No effect for a slice with no link.
+     */
+    void encounter_object_made(Entity& object, const std::string& slice);
     /**
      * The world removed a creature (code review of stage 3.6a, finding GA-R1): the entry of its skinned body goes now. The due list also
      * removes an entry whose body is gone (kBodyCheck), and a new creature has a new entity id.

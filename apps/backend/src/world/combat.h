@@ -202,8 +202,13 @@ enum class HitVerdict : std::uint8_t {
      * that fragment fits it (stage 3.3b-M1), or the strike hurt its largest number of creatures.
      */
     noStrike,
+    /**
+     * Code review of stage QG5c1, finding QG5C1R-R2: the line from the character to the creature is blocked (a wall of the navigation data,
+     * Navigation::sees at the eye height of the two bodies; no navigation data: no check). No damage, no phase, no result.
+     */
+    blocked,
 };
-inline constexpr std::size_t kHitVerdictCount = 16;
+inline constexpr std::size_t kHitVerdictCount = 17;
 
 /** @return A short text for a log line, for example "too far". */
 [[nodiscard]] const char* hit_verdict_text(HitVerdict verdict);

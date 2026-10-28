@@ -27,6 +27,7 @@
 #include "gamedata/conversation_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/quest_object_data.h"
+#include "gamedata/encounter_data.h"
 #include "gamedata/trigger_data.h"
 #include "gamedata/quest_data.h"
 #include "gamedata/travel_places.h"
@@ -106,8 +107,10 @@ struct ServerHost {
     gamedata::TriggerData triggers;
     /** The destructible quest objects (stage 1.8e). Empty until a case loads them: no quest object can be destroyed. */
     gamedata::QuestObjectData questObjects;
+    /** The encounter recipes (stage QG5c2). Empty until a case loads them: the world has no encounter. */
+    gamedata::EncounterData encounters;
     world::World world{clock, store, tables,
-                       with_quest_objects(with_triggers(with_conversations(with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
+                       with_encounters(with_quest_objects(with_triggers(with_conversations(with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
                                                                                                               combat, places, terrain, navigation,
                                                                                                               loot, abilities, perks, spells,
                                                                                                               projectiles, weaponActions),
@@ -118,7 +121,7 @@ struct ServerHost {
                                      crafting),
                                      quests),
                                      pois),
-                                     conversations), triggers), questObjects)};
+                                     conversations), triggers), questObjects), encounters)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -312,6 +315,10 @@ struct ServerHost {
     }
     static world::WorldOptions with_quest_objects(world::WorldOptions options, const gamedata::QuestObjectData& questObjects) {
         options.questObjectData = &questObjects;
+        return options;
+    }
+    static world::WorldOptions with_encounters(world::WorldOptions options, const gamedata::EncounterData& encounters) {
+        options.encounterData = &encounters;
         return options;
     }
 

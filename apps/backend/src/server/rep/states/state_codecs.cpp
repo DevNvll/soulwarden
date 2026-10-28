@@ -145,11 +145,17 @@ std::uint32_t object_node_slot(const world::Entity& entity) {
     return entity.object.nodeSlot;
 }
 
+std::uint32_t object_variation_slot(const world::Entity& entity) {
+    return entity.object.variationSlot;
+}
+
 std::span<const StateCodec> object_codecs() {
     // The slot of each state is a value of the slice of the object (game data): one Interact fragment for each bound. A level object
     // has no place state, no BuildableController state, and no Ownership state (slot 0): the client has them from its level data.
-    static constexpr std::array<StateCodec, 7> codecs{{
+    static constexpr std::array<StateCodec, 8> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
+        // The variant of a start object of an encounter (stage QG5c2): the slot of its VariationData component (0: none).
+        {world::ComponentKey::variation, 0, kTypeVariationState, encode_variation_state, nullptr, false, object_variation_slot},
         {world::ComponentKey::buildable, 0, kTypeBuildableState, encode_buildable_state, nullptr, false, object_buildable_slot},
         // The node state of a gathering node (stage 3.6a): Healthy or Depleted at the slot of its GatherableController (0: none).
         {world::ComponentKey::gatherable, 0, kTypeGatherableState, encode_gatherable_state, nullptr, false, object_node_slot},
@@ -183,6 +189,8 @@ std::span<const StateCodec> codecs_of(const world::Entity& entity) {
         return probe_codecs();
     case world::EntityKind::spell:
         return spell_codecs();
+    case world::EntityKind::encounter:
+        return encounter_codecs();
     case world::EntityKind::player:
         break;
     }

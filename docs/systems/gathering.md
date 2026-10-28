@@ -211,6 +211,13 @@ The source of each rule is in brackets: game data, client code, live check (the 
     bounds of the row on the world clock (`Gathering::quest_object_due`); no node row and no node state [the rule of the destructible
     objects, stage 1.8e]. Live I4 of stage QG5a: the trapped boar and its marker go; a glyph tablet (no instanced slice) keeps its prompt.
 
+
+- Stage QG5c2 ([Encounters](encounters.md)): a start object of an encounter is a node of the kind `NodeKind::encounter`. Its row and its
+  template come from the member `encounterObjects` of `gathering-data.json` (`[TEMPLATE, ROW, TAG, ONLY_ON_QUEST]`), its entity is a server
+  child of the encounter system, and `encounter_object_made` gives it the node state Healthy [agent]. The gather has the rules of its row
+  (the time, the end at damage); at the completion the gatherer gets the game event of the row, the object goes, and the encounter counts
+  it (`Encounters::object_gathered`); the node has no respawn of its own (the next instance makes a new object) [agent; live L4].
+
 ## Commands
 
 ```sh

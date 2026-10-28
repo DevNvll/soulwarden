@@ -559,6 +559,17 @@ void QuestSupport::build() {
                 placed[point.kind] = true;
             }
         }
+        // Stage QG5c2: the creature members of the encounter recipes that the runner takes (world/encounters.h) are sources too.
+        for (const EncounterPlacement& placement : m_world.encounters().loaded_placements()) {
+            if (!placement.refused.empty()) {
+                continue;
+            }
+            for (const gamedata::CreatureKind* kind : placement.kinds) {
+                if (kind != nullptr) {
+                    placed[static_cast<std::size_t>(kind - creatures->kinds().data())] = true;
+                }
+            }
+        }
         for (std::uint32_t at = 0; at < creatures->kinds().size(); ++at) {
             if (!placed[at]) {
                 continue;
@@ -608,6 +619,10 @@ void QuestSupport::build() {
                     // gates: 1625_0701_AncientCodePillar needs the rank 5 of AzothStaff and one 1625_0601_EyeOfHorus).
                     if (gatherable.restriction == gamedata::kRestrictionItemRequired && !gatherable.item.empty() && gatherable.itemCount > 0) {
                         index.gatherEventItems.emplace(lower_text(gatherable.event), lower_text(gatherable.item));
+                    } else {
+                        // Code review of stage QG5c1, finding QG5C1R-R3: a ranked row with no item is a free alternative of the event
+                        // (the item of a different ranked row of the same event does not gate it).
+                        index.gatherEventsFree.insert(lower_text(gatherable.event));
                     }
                 }
                 return;
@@ -672,6 +687,33 @@ void QuestSupport::build() {
         }
         for (const auto& [slice, link] : gathering->creature_links()) {
             add_row(link.row, "the skinning of a creature");
+        }
+    }
+    // Stage QG5c2: the encounter recipes that the runner takes (world/encounters.h): the success event of each one (its participants get it)
+    // and the game event of its start object (its gatherer gets it). A refused recipe gives its cause to the events that only it gives.
+    if (const gamedata::EncounterData* encounters = m_world.encounters().data(); encounters != nullptr) {
+        for (const EncounterPlacement& placement : m_world.encounters().loaded_placements()) {
+            const gamedata::EncounterRecipe& recipe = *placement.recipe;
+            std::vector<std::pair<std::string, std::string>> events;
+            if (!recipe.successEvent.empty()) {
+                events.emplace_back(lower_text(recipe.successEvent), "the success of the encounter " + recipe.rootName);
+            }
+            for (const gamedata::EncounterStage& stage : recipe.stages) {
+                for (const gamedata::EncounterSpawn& spawn : stage.spawns) {
+                    const gamedata::EncounterMember* member = encounters->member(spawn.member);
+                    if (member != nullptr && member->kind == gamedata::EncounterMemberKind::object && !member->event.empty()) {
+                        events.emplace_back(lower_text(member->event), "the start object of the encounter " + recipe.rootName);
+                    }
+                }
+            }
+            for (const auto& [event, source] : events) {
+                if (placement.refused.empty()) {
+                    index.gatherEvents.emplace(event, source);
+                    index.gatherEventsFree.insert(event);
+                } else {
+                    index.refusedEvents.emplace(event, "the encounter " + recipe.rootName + " is refused: " + placement.refused.front());
+                }
+            }
         }
     }
     // Stage 1.8e: the destructible quest objects (game data quest-objects.json): their game events, their tags, and their rows (a quest drop

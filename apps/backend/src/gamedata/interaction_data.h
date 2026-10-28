@@ -283,6 +283,22 @@ struct LootContainer {
     std::uint32_t rarityParticles{0};
 };
 
+/**
+ * The start object of an encounter recipe (stage QG5c2, docs/systems/encounters.md; the member encounterObjects of interactions.py): the
+ * template of its slice and its variation.
+ */
+struct EncounterObject {
+    /** The template of the slice (the record, the bounds, and the ids of a server child). */
+    std::uint32_t templateIndex{0};
+    /**
+     * The slot of the VariationData component of the slice (0: no variation state) and the row index of its selected variant in its
+     * variation table (the file row order). The client applies the variant of a server child only from its VariationData state (static
+     * read C of stage QG5c2: the activation 0x42D0300 clears m_selectedVariant; live check L3: the prompt shows only with the state).
+     */
+    std::uint32_t variationSlot{0};
+    std::uint16_t variant{0};
+};
+
 /** A server child of a placement (stage 2.5b): a station of a settlement, a camp of a permanent camp. */
 struct SpawnedPlacement {
     /** The durable key: the placement UUID and the entity id of the spawner ("UUID/ENTITY"). */
@@ -386,6 +402,16 @@ public:
      * @return False (no change) when one is not correct.
      */
     [[nodiscard]] bool set_loot_containers(std::map<std::string, LootContainer> containers);
+    /**
+     * Stage QG5c2 (docs/systems/encounters.md): @return The start object of an encounter recipe (a server child of the encounter system; the
+     *         member encounterObjects of the tool) by its slice path, or null.
+     */
+    [[nodiscard]] const EncounterObject* encounter_object(std::string_view slice) const;
+    /**
+     * Sets the start objects (the member encounterObjects; tests). @return False (no change) for an index that is not a template, or a
+     * variation slot that is above 4095 or is a slot of an other state of the template.
+     */
+    bool set_encounter_objects(std::map<std::string, EncounterObject, std::less<>> objects);
     /** @return The loot container of a name ("personal"), or null (a file of format 1 or 2: no loot bag). */
     [[nodiscard]] const LootContainer* loot_container(std::string_view name) const;
     [[nodiscard]] const std::map<std::string, LootContainer>& loot_containers() const {
@@ -446,6 +472,8 @@ private:
     std::vector<SpawnedPlacement> m_spawned;
     std::map<std::string, std::uint32_t> m_fixtures;
     std::map<std::string, LootContainer> m_lootContainers;
+    /** Stage QG5c2: the template of each start object of the encounter recipes (the lower-case slice path). */
+    std::map<std::string, EncounterObject, std::less<>> m_encounterObjects;
     /** Stage QG4: the persons apart, and the lower-case NPC id to their positions. */
     std::vector<PersonApart> m_personsApart;
     std::unordered_map<std::string, std::vector<std::size_t>> m_apartByNpc;

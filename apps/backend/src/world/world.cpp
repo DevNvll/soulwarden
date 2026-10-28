@@ -48,6 +48,9 @@ constexpr ComponentKey kSpellComponents[] = {ComponentKey::metadata, ComponentKe
                                              ComponentKey::delayedEvents};
 /** The component states of a creature. */
 // Stage QG5c1: the place of a stationary target (a creature with no movement component; slot 0 for a creature that has one).
+// Stage QG5c2: the states of an encounter root.
+constexpr ComponentKey kEncounterComponents[] = {ComponentKey::metadata, ComponentKey::encounterPlace, ComponentKey::encounterManager,
+                                                 ComponentKey::encounterObjectives, ComponentKey::encounterStages};
 constexpr ComponentKey kCreatureComponents[] = {ComponentKey::metadata, ComponentKey::movement, ComponentKey::targetPlace,
                                                 ComponentKey::vitals,   ComponentKey::marker,   ComponentKey::status};
 
@@ -88,6 +91,7 @@ World::World(const WorldClock& clock,
       m_crafting(*this, options.craftingData),
       m_quests(*this, store, options.questData),
       m_questObjects(*this, options.questObjectData),
+      m_encounters(*this, options.encounterData),
       m_persons(*this, options.conversationData),
       m_presets(*this, project_presets()) {
     m_random = options.randomSeed;
@@ -165,6 +169,8 @@ void World::tick() {
         m_quests.tick();
         // Stage QG5a: the characters that moved: their proximity quest objects (one look each, the cells near them).
         m_questObjects.tick();
+        // Stage QG5c2: the encounters: the queued deaths and gathers, the due list, the placements near the characters, the participants.
+        m_encounters.tick();
         // The characters with a person conversation whose bits changed: the presence of the person (stage 2.5c; one look each).
         m_persons.tick();
     } catch (const std::exception& error) {
@@ -322,7 +328,11 @@ void World::remove_entity(EntityId id) {
         m_crafting.left(entity);
         // The task index of the character goes (stage 1.8c: its quests stay in the store; its timers end themselves).
         m_quests.left(entity);
+        // Stage QG5c2: the character is no participant of an encounter (its link goes with its entity).
+        m_encounters.character_left(entity);
     }
+    // Stage QG5c2: a member or a start object of an encounter that a different path removed is done for its instance.
+    m_encounters.entity_removed(entity);
     // The auras that follow the entity end with it (stage 3.3b-S2b: no aura stays with no attachment).
     if (entity.kind == EntityKind::creature || entity.kind == EntityKind::player) {
         m_spells.target_left(id);
@@ -348,6 +358,8 @@ void World::remove_entity(EntityId id) {
         // A server child (stage 2.5b): the interaction system ended its uses and its grants before the call.
     } else if (entity.kind == EntityKind::spell) {
         m_spells.entity_removed(entity);
+    } else if (entity.kind == EntityKind::encounter) {
+        // The root of an encounter (stage QG5c2): the encounter system ended its instance before the call.
     } else {
         // The spells of the character end (a cancel: stage 3.3b-S2a). Their entities go away before the entity of the caster.
         m_spells.caster_left(entity.id);
@@ -789,6 +801,34 @@ void World::remove_object(EntityId id) {
     }
 }
 
+Entity* World::make_encounter(const EncounterBody& body, const state::WorldPosition& position) {
+    if (!valid_position(position)) {
+        return nullptr;
+    }
+    const ActorId actor = m_ids.next(ActorKind::otherEntity);
+    Entity& entity = m_entities[entity_group_id(actor)];
+    entity.id = entity_group_id(actor);
+    entity.actor = actor;
+    entity.kind = EntityKind::encounter;
+    entity.encounter = body;
+    entity.name = "encounter";
+    entity.position = position;
+    const Revision revision = ++m_revision;
+    entity.positionRevision = revision;
+    for (const ComponentKey key : kEncounterComponents) {
+        entity.changed[key] = revision;
+    }
+    m_index.insert(entity.id, entity.position);
+    return &entity;
+}
+
+void World::remove_encounter(EntityId id) {
+    const Entity* entity = find(id);
+    if (entity != nullptr && entity->kind == EntityKind::encounter) {
+        remove_entity(id);
+    }
+}
+
 bool World::remove_probe(EntityId id) {
     const Entity* entity = find(id);
     if (entity == nullptr || entity->kind != EntityKind::probe) {
@@ -978,6 +1018,7 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     m_persons.traveled(*entity);
     // The creatures of the new place: the spawn point rule runs in this tick, not at its interval.
     m_creatures.scan_soon();
+    m_encounters.scan_soon();
     // No creature of the new place takes the character at once, and the creatures of the old place lose it.
     m_creatures.behavior().shelter(*entity, entity->owner != 0);
     if (sink != m_sinks.end() && sink->second != nullptr) {
@@ -1119,6 +1160,12 @@ void World::touch_all(EntityId id) {
         entity->changed[ComponentKey::metadata] = revision;
         for (RawFragment& fragment : entity->rawFragments) {
             fragment.changed = revision;
+        }
+        return;
+    }
+    if (entity->kind == EntityKind::encounter) {
+        for (const ComponentKey key : kEncounterComponents) {
+            entity->changed[key] = revision;
         }
         return;
     }

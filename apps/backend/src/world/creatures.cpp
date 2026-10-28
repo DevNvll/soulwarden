@@ -266,6 +266,31 @@ CreatureResult Creatures::spawn(const std::string& kindId,
     return result;
 }
 
+Entity* Creatures::spawn_member(const gamedata::CreatureKind& kind, const state::WorldPosition& position, float yaw, std::uint32_t placement,
+                                std::uint64_t generation) {
+    if (!has_data() || !valid_position(position) || !std::isfinite(yaw) || !m_data->has_level(kind.level)) {
+        return nullptr;
+    }
+    load_points();
+    Entity* entity = make(kind, kind.level, position, yaw, std::nullopt, m_commandSpawns++);
+    if (entity == nullptr) {
+        return nullptr;
+    }
+    entity->creature.encounter = std::pair{placement, generation};
+    ++m_counts.spawnedByEncounter;
+    return entity;
+}
+
+bool Creatures::remove_member(EntityId id) {
+    Entity* entity = find(id);
+    if (entity == nullptr || !entity->creature.encounter) {
+        return false;
+    }
+    ++m_counts.removedByEncounter;
+    m_world.remove_creature(id);
+    return true;
+}
+
 CreatureResult Creatures::remove(EntityId id) {
     CreatureResult result;
     Entity* entity = find(id);
@@ -339,6 +364,9 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         m_world.spells().caster_died(entity->id);
         // A body with a skinning row can be skinned (stage 3.6a: the GatherableController state of its slice, Healthy).
         m_world.gathering().creature_died(*entity);
+        // Stage QG5c2: the death of a member of an encounter counts for its stage (a queued event: the encounter system removes no
+        // entity in a hit).
+        m_world.encounters().member_died(*entity);
         // The death action of the slice: the body falls and stays on the ground. The client
         // starts this action only when the server starts it.
         const gamedata::CreatureSlice& body = *entity->creature.body;
@@ -474,19 +502,22 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, Ent
             m_world.rewards().killed(*entity);
         }
     }
-    if (result.error == CreatureError::none && !entity->creature.dead && !entity->creature.body->stationary()) {
-        // A stationary target (stage QG5c1: a totem, a nest) takes the damage only: no reaction, no push, and no target.
-        // A stun that ends at the next hit (the stun of Shockwave) ends now (stage 3.3a).
+    if (result.error == CreatureError::none && !entity->creature.dead) {
+        // A stun that ends at the next hit (the stun of Shockwave) ends now (stage 3.3a), also on a stationary target (code review of stage
+        // QG5c1, finding QG5C1R-R1: the status is a part of the target too).
         const auto breaks = std::find_if(entity->creature.effects.begin(), entity->creature.effects.end(),
                                          [](const CreatureEffect& effect) { return effect.stun && effect.endsOnHit; });
         if (breaks != entity->creature.effects.end()) {
             breaks->ends = m_world.clock().now();
             sweep(*entity);
         }
-        react(*entity, reaction, pushed);
-        // The creature takes the attacker as its target, or the threat of the hit (stage 3.3b-S2b: the Pylon that shot it).
-        if (threat != 0 || attacker != 0) {
-            m_behavior.hurt_by(*entity, threat != 0 ? threat : attacker);
+        // A stationary target (stage QG5c1: a totem, a nest) takes the damage only: no reaction, no push, and no target.
+        if (!entity->creature.body->stationary()) {
+            react(*entity, reaction, pushed);
+            // The creature takes the attacker as its target, or the threat of the hit (stage 3.3b-S2b: the Pylon that shot it).
+            if (threat != 0 || attacker != 0) {
+                m_behavior.hurt_by(*entity, threat != 0 ? threat : attacker);
+            }
         }
     }
     if (push != nullptr) {

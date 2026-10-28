@@ -184,6 +184,9 @@ struct CreatureCounts {
     /** Creatures that the spawn points made, and that a command made. */
     std::uint64_t spawnedByPoint{0};
     std::uint64_t spawnedByCommand{0};
+    /** Stage QG5c2: the members of the encounters that the creature system made and removed. */
+    std::uint64_t spawnedByEncounter{0};
+    std::uint64_t removedByEncounter{0};
     /** Creatures that left the world: no player was near, or a command removed them. */
     std::uint64_t removedByDistance{0};
     std::uint64_t removedByCommand{0};
@@ -292,6 +295,17 @@ public:
      * the distance rule does not make the creature again.
      */
     CreatureResult remove(EntityId id);
+
+    /**
+     * Stage QG5c2 (world/encounters.h): makes a member of an encounter: a creature of a kind of the creature data (a member kind: no spawn
+     * point) at the level of the kind, bound to the placement and the generation of its instance (Creature::encounter). Only the encounter
+     * system calls it. The distance rule does not remove it, and no spawn point waits for it; its death goes to the encounter system.
+     * @return The entity, or null (a position that is not of the world, no level row).
+     */
+    Entity* spawn_member(const gamedata::CreatureKind& kind, const state::WorldPosition& position, float yaw, std::uint32_t placement,
+                         std::uint64_t generation);
+    /** Stage QG5c2: removes a member (the end of its encounter, KillSpawnsAction): no reward, no spawn point. @return False: no member. */
+    bool remove_member(EntityId id);
 
     /**
      * Sets the health of a creature. The health 0 is the death of the creature: it gets the

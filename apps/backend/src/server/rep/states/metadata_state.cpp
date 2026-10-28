@@ -60,6 +60,14 @@ hub::Bytes encode_metadata_state(const world::Entity& entity, View view, const w
         state.field(0, kGdeRef).raw(entity.actor.bytes);
         return state.finish();
     }
+    if (entity.kind == world::EntityKind::encounter) {
+        // Stage QG5c2: the slice of the recipe of an encounter root (sub 2) and the actor of the root (an actor of the allocator; live I1
+        // of stage QG5c1: the probe record of the root).
+        state.field(0, kAssetId).raw(entity.encounter.asset);
+        state.field(0, kAssetId).u32(entity.encounter.subId);
+        state.field(0, kGdeRef).raw(entity.actor.bytes);
+        return state.finish();
+    }
     if (entity.kind == world::EntityKind::object) {
         // An object of the level data (stage 2.5a): the slice of its placement and its managed actor id (live check L2: the
         // client applies the record to the object that it made from the level data, with no second body).

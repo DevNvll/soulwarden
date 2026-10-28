@@ -366,6 +366,13 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   with an item. The sheathe bits and the active bits of the paperdoll state do not follow
   the keys yet (roadmap 3.1).
 
+
+- Code review of stage QG5c1, finding QG5C1R-R2: a melee contact does not damage a target behind a wall. After the immune check the hit
+  of a character is refused with the verdict `blocked` ("a wall between the character and the creature") when the navigation data has no
+  sight line from the attacker to the target (`Navigation::sees`); this is for each creature, not only for the stationary targets [agent;
+  test case QGR5C1B]. The navigation data has false walls (the top of the Perseus ruin): there a hit can be refused [live L2 of stage
+  QG5c2].
+
 ## Commands
 
 ```sh

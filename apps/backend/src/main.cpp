@@ -32,6 +32,7 @@
 #include "gamedata/progression_tables.h"
 #include "gamedata/poi_data.h"
 #include "gamedata/quest_object_data.h"
+#include "gamedata/encounter_data.h"
 #include "gamedata/trigger_data.h"
 #include "gamedata/conversation_data.h"
 #include "gamedata/quest_data.h"
@@ -699,6 +700,16 @@ int main(int argc, char** argv) {
                    "tools/gamedata/quest-objects.sh",
                    questObjectDataPath.c_str(), questObjectData.error().c_str());
     }
+    // The encounter recipes of the quests (stage QG5c2, docs/systems/encounters.md). Without the file the world has no encounter.
+    const std::string encounterDataPath = (gameDataDirectory / gamedata::kEncounterDataFile).string();
+    gamedata::EncounterData encounterData;
+    if (encounterData.load(encounterDataPath)) {
+        log::write("backend: encounter data %s: %zu quest encounter recipes, %zu members", encounterDataPath.c_str(),
+                   encounterData.recipes().size(), encounterData.members().size());
+    } else {
+        log::write("backend: no encounter data at %s (%s): the world has no encounter. Make the file with tools/gamedata/encounters.sh",
+                   encounterDataPath.c_str(), encounterData.error().c_str());
+    }
     // The trigger volumes of the quests (stage 1.8b): the volumes of the tags of TaskTriggerArea. Without the file a task of a trigger area
     // waits.
     const std::string triggerDataPath = (gameDataDirectory / gamedata::kTriggerDataFile).string();
@@ -796,6 +807,7 @@ int main(int argc, char** argv) {
     worldOptions.questData = &questData;
     worldOptions.poiData = &poiData;
     worldOptions.questObjectData = &questObjectData;
+    worldOptions.encounterData = &encounterData;
     worldOptions.triggerData = &triggerData;
     worldOptions.conversationData = &conversationData;
     worldOptions.chestData = &chestData;

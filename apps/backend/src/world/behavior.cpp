@@ -371,6 +371,17 @@ void Behavior::hurt_by(Entity& creature, EntityId attacker) {
     take_target(creature, *target, "it did hurt the creature", distance(creature.position, target->position));
 }
 
+void Behavior::provoke(Entity& creature, EntityId character) {
+    if (!m_world.options().creatureBehavior || creature.creature.dead || !creature.creature.body->fights() || creature.creature.immune()) {
+        return;
+    }
+    const Entity* target = fightable(character);
+    if (target == nullptr || fightable(creature.creature.mind.target) != nullptr) {
+        return;
+    }
+    take_target(creature, *target, "a participant of its encounter", distance(creature.position, target->position));
+}
+
 void Behavior::tick() {
     if (!m_world.options().creatureBehavior || !m_creatures.has_data()) {
         return;

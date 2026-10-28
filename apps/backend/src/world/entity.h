@@ -66,6 +66,12 @@ enum class EntityKind {
      * state, type 16), and it goes away at the end of the flight. It has no character, no account, and no session.
      */
     projectile,
+    /**
+     * The root of an encounter of the quests (stage QG5c2, world/encounters.h): the slice of the recipe with its manager state (6786), its
+     * place (type 13), its Objectives state (3857), and the state 2133 of each stage. Only the encounter system makes and removes it; each
+     * session near it gets its record. It has no character, no account, and no session.
+     */
+    encounter,
 };
 
 /** The component states of an entity that the replication layer sends. Each system adds its keys. */
@@ -205,6 +211,19 @@ enum class ComponentKey {
      * its rotation. It has no movement state; each observer gets the place in its first record.
      */
     targetPlace,
+    /** The manager state of an encounter root (stage QG5c2, type 6786, the manager slot of its slice): its status. */
+    encounterManager,
+    /** The stage states of an encounter root (stage QG5c2, type 2133, the slot of each stage): the history of the status of each stage. */
+    encounterStages,
+    /** The Objectives state of an encounter root (stage QG5c2, type 3857, the objectives slot of its slice): its objective and task states. */
+    encounterObjectives,
+    /** The PositionInTheWorld state of an encounter root (stage QG5c2, type 13, the place slot of its slice): its place and rotation. */
+    encounterPlace,
+    /**
+     * The VariationData state of a start object of an encounter (stage QG5c2, type 14, the slot of its VariationData component): the row
+     * index of its variant. Each observer gets it in its first record; the client then applies the variant (the prompt and the gather row).
+     */
+    variation,
 };
 
 /**
@@ -1101,6 +1120,11 @@ struct Creature {
     /** The spawn point of the creature: an index into the spawn points of the creature data. No value: a command made it. */
     std::optional<std::uint32_t> spawnPoint;
     /**
+     * Stage QG5c2 (world/encounters.h): the encounter placement and the generation of the instance of a member. No value: not a member. The
+     * encounter system makes and removes a member; the distance rule of the spawn points does not.
+     */
+    std::optional<std::pair<std::uint32_t, std::uint64_t>> encounter;
+    /**
      * The characters that hurt the creature in its life, one entry for each character (the credit
      * of a kill, world/rewards.h). The entries go away when the creature has its full health again
      * at its anchor (the reset).
@@ -1725,6 +1749,49 @@ struct ObjectBody {
      */
     std::uint32_t nodeSlot{0};
     std::uint8_t nodeState{0};
+    /**
+     * The VariationData state of a start object of an encounter (stage QG5c2): the slot of its VariationData component (0: no state) and
+     * the row index of its variant in its variation table (game data).
+     */
+    std::uint32_t variationSlot{0};
+    std::uint16_t variant{0};
+};
+
+/** One task element of the Objectives state of an encounter root (stage QG5c2): the generated task index, the progress, the state. */
+struct EncounterTaskState {
+    std::uint8_t index{0};
+    std::uint32_t progress{0};
+    std::uint8_t state{0};
+};
+
+/** One stage of an encounter root (stage QG5c2): the slot of its state 2133 and its status history (sequence, status), 10 entries at most. */
+struct EncounterStageState {
+    std::uint32_t slot{0};
+    std::uint32_t sequence{0};
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> history;
+};
+
+/**
+ * The body of an encounter root (stage QG5c2, EntityKind::encounter): what its states have. Only the encounter system changes it, and marks
+ * the state (World::touch); the encoders read it (server/rep/states/encounter_states.cpp).
+ */
+struct EncounterBody {
+    /** The slice of the recipe (game data) and its sub id: the metadata state. */
+    std::array<std::uint8_t, 16> asset{};
+    std::uint32_t subId{2};
+    std::uint32_t managerSlot{0};
+    std::uint32_t placeSlot{0};
+    std::uint32_t objectivesSlot{0};
+    std::array<float, 4> rotation{0.0F, 0.0F, 0.0F, 1.0F};
+    /** The placement of the recipe and the generation of the instance (the encounter system). */
+    std::uint32_t placement{0};
+    std::uint64_t generation{0};
+    std::uint32_t managerStatus{1};
+    std::vector<EncounterStageState> stages;
+    /** The objective of the root: its instance id (0: none), its CRC, and the task elements in their index order. */
+    std::uint64_t objectiveInstance{0};
+    std::uint32_t objectiveCrc{0};
+    std::vector<EncounterTaskState> tasks;
 };
 
 /** Development aid: the slice of a probe entity (EntityKind::probe) and its interest distance. */
@@ -1872,6 +1939,8 @@ struct Entity {
     ObjectBody object;
     /** Projectiles of a creature (stage 3.4f-A): the launch and the end of the flight. */
     ProjectileBody shot;
+    /** The encounter root (EntityKind::encounter, stage QG5c2). */
+    EncounterBody encounter;
     /** The session of the client that plays this character. 0: no session. */
     SessionId owner{0};
 
@@ -1995,6 +2064,13 @@ struct Entity {
     /** Stage QG5a: the gathered quest objects of the character by their node key (world/gathering.h), and their LootTracker entries. */
     std::map<std::string, QuestGatherState> questGathers;
     std::vector<LootTrackerEntry> questGatherTracker;
+    /**
+     * Stage QG5c2 (world/encounters.h): the encounter roots whose participant the character is (field 5 of its Objectives state: the client
+     * shows the objective of each root on its HUD), and true after the first link of the world entry (the encoder then writes the field, also
+     * empty: an empty list takes the objective off). Only the encounter system changes them.
+     */
+    std::vector<EntityId> encounterLinks;
+    bool encounterLinked{false};
     /** The items of the loot bag that the character opened (stage 3.5b.2, slot 76): the loot bag system sets them. */
     Bag selectedContainer;
     /** The items of each loot bag of the character (stage 3.5b.2, slot 77): the loot bag system sets them. */

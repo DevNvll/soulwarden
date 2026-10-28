@@ -168,6 +168,16 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   message "kicked" and ends. A route that removes a character removes its entity first, in
   one task of the world.
 
+
+- Stage QG5c2 ([Encounters](encounters.md)): `EntityKind::encounter` is the root of an encounter instance; only the encounter system makes
+  it (`World::make_encounter`) and removes it (`remove_encounter`). Its component states are `encounterManager` (6786), `encounterStages`
+  (2133, one slot for each stage), `encounterObjectives` (3857), and `encounterPlace` (13), with the slots of the recipe slice
+  (`encounter_codecs`); each session near it observes it, and the views are the same [agent]. The object codecs have one more state:
+  `variation` (type 14, the slot `ObjectBody::variationSlot`; 0 for each object that is not a start object) [agent]. The links of a
+  character (`Entity::encounterLinks`) are in its entity, not in its session (MP-1); the field 5 of its Objectives state lists them.
+  A removal of an entity tells the encounter system (`entity_removed`; a player also `character_left`); no removal happens inside a hit or
+  a gather: the events of the deaths and the gathers wait in a queue for the next tick [agent].
+
 ## Commands
 
 ```sh

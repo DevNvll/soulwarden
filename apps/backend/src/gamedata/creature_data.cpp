@@ -711,6 +711,10 @@ bool read_kind(const json& entry, CreatureKind& kind) {
     if (entry.contains("points") && !read_number(entry["points"], kind.points)) {
         return false;
     }
+    // Stage QG5c2: the member slice of an encounter kind (a member of a newer tool).
+    if (entry.contains("member") && !read_text(entry, "member", kind.member)) {
+        return false;
+    }
     // The damage of the kind as a part of the base damage of its level (format 2).
     if (entry.contains("damage") && !read_real(entry["damage"], kind.damageFactor)) {
         return false;
@@ -853,6 +857,7 @@ void CreatureData::clear() {
     m_byId.clear();
     m_searchTexts.clear();
     m_keptOut.clear();
+    m_members.clear();
 }
 
 const std::string* CreatureData::kept_out(std::string_view name) const {
@@ -990,12 +995,47 @@ bool CreatureData::load(const std::string& path) {
             keptOut.emplace(lower_ascii(name), cause.get<std::string>());
         }
     }
+    // Stage QG5c2: the creature members of the encounter recipes: [member slice, kind index or -1, cause] (a member of a newer tool).
+    std::unordered_map<std::string, std::pair<std::int64_t, std::string>> members;
+    if (document.contains("members")) {
+        if (!document["members"].is_array()) {
+            m_error = "the member members is not a list";
+            return false;
+        }
+        for (const json& row : document["members"]) {
+            if (!row.is_array() || row.size() != 3 || !row[0].is_string() || !row[1].is_number_integer() || !row[2].is_string()
+                || row[1].get<std::int64_t>() < -1 || row[1].get<std::int64_t>() >= static_cast<std::int64_t>(kinds.size())
+                || (row[1].get<std::int64_t>() >= 0 && kinds[row[1].get<std::size_t>()].member != row[0].get<std::string>())) {
+                m_error = "a member of the list members is not [slice, kind index of that member or -1, cause]";
+                return false;
+            }
+            members.emplace(lower_ascii(row[0].get<std::string>()), std::pair{row[1].get<std::int64_t>(), row[2].get<std::string>()});
+        }
+    }
     if (!set_full(std::move(slices), std::move(kinds), std::move(points), std::move(levels), std::move(routes), std::move(projectiles),
                   playerCapsule)) {
         return false;
     }
     m_keptOut = std::move(keptOut);
+    m_members = std::move(members);
     return true;
+}
+
+std::optional<std::uint32_t> CreatureData::member_kind(std::string_view slice, std::string* cause) const {
+    const auto found = m_members.find(lower_ascii(slice));
+    if (found == m_members.end()) {
+        if (cause != nullptr) {
+            *cause = "the creature data has no kind of this member (creatures.json of a tool of before stage QG5c2)";
+        }
+        return std::nullopt;
+    }
+    if (found->second.first < 0) {
+        if (cause != nullptr) {
+            *cause = found->second.second;
+        }
+        return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(found->second.first);
 }
 
 bool CreatureData::set(std::vector<CreatureSlice> slices,

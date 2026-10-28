@@ -69,6 +69,9 @@ inline constexpr std::uint32_t kTypeLootDropState = 2027;       // MB::LootDropR
 inline constexpr std::uint32_t kTypeGatherableState = 12;       // MB::GatherableControllerReplicatedState (stage 3.6a)
 inline constexpr std::uint32_t kTypeObjectivesState = 3857;     // MB::ObjectivesComponentReplicatedState (stage 1.8a)
 inline constexpr std::uint32_t kTypeSeasonsTrackedStatState = 5606; // MB::SeasonsRewardsTrackedStatComponentReplicatedState (stage 1.8a)
+inline constexpr std::uint32_t kTypeEncounterManagerState = 6786; // the EncounterManager component state (stage QG5c2; constructor 0x26E6700)
+inline constexpr std::uint32_t kTypeEncounterStageState = 2133;   // the Encounter component state (stage QG5c2; constructor 0x26E58D0)
+inline constexpr std::uint32_t kTypeVariationState = 14;          // MB::VariationComponentReplicatedState (stage QG5c2; constructor 0x42C5E80)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -229,6 +232,8 @@ struct StateCodec {
  *         state at the slot of the Projectile component of the slice (game data). Only the observer view.
  */
 [[nodiscard]] std::span<const StateCodec> projectile_codecs();
+/** Stage QG5c2: the states of an encounter root (server/rep/states/encounter_states.cpp). */
+[[nodiscard]] std::span<const StateCodec> encounter_codecs();
 /** @return The codecs of an entity of each kind. */
 [[nodiscard]] std::span<const StateCodec> codecs_of(const world::Entity& entity);
 /** @return The slot of the state of a codec for an entity. 0 for a state that is not the metadata state: no fragment. */
@@ -378,6 +383,12 @@ void write_place_rotation(hub::Writer& writer, std::array<float, 4> rotation);
 [[nodiscard]] hub::Bytes encode_objectives_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The seasons readiness state (stage 1.8a, slot 73, type 5606): `initialized` 1 (`01 01 01`). Owner only. */
 [[nodiscard]] hub::Bytes encode_seasons_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] hub::Bytes encode_encounter_objectives_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] hub::Bytes encode_encounter_place_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/** The VariationData state of a start object of an encounter (stage QG5c2, type 14): the u16 index of its variant (field 1). */
+[[nodiscard]] hub::Bytes encode_variation_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] hub::Bytes encode_encounter_manager_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] std::vector<SlotState> encode_encounter_stage_states(const world::Entity& entity, View view, const PartsRequest& request);
 /** @return The coin of the character for the owner. No byte for the observer view. */
 [[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /**

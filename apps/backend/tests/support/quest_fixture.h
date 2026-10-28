@@ -203,6 +203,9 @@ struct ObjectivesState {
     /** Stage 1.8b: field 2, the completed notice; `hasCompleted` when the fragment has the field. */
     std::vector<std::uint64_t> completed;
     bool hasCompleted{false};
+    /** Stage QG5c2: field 5, the encounter roots of the character; `hasPoi` when the fragment has the field. */
+    std::vector<std::uint64_t> poi;
+    bool hasPoi{false};
 };
 
 inline ObjectivesState decode_objectives(const Fragment& fragment) {
@@ -233,6 +236,13 @@ inline ObjectivesState decode_objectives(const Fragment& fragment) {
         server::hub::Reader reader(fragment.fields.at({1, 2}));
         for (std::uint32_t count = open(2, reader), index = 0; index < count; ++index) {
             state.completed.push_back(reader.u64());
+        }
+    }
+    if (fragment.fields.contains({1, 5})) {
+        state.hasPoi = true;
+        server::hub::Reader reader(fragment.fields.at({1, 5}));
+        for (std::uint32_t count = open(5, reader), index = 0; index < count; ++index) {
+            state.poi.push_back(reader.u64());
         }
     }
     if (fragment.fields.contains({1, 3})) {

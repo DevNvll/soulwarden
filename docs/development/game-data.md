@@ -457,6 +457,27 @@ backend. The tool of each system is also in the document of that system.
   loot table Empty is not a refusal for it), and its game event with no row of the event tables (the event of the quests). The format stays
   1: a file of before has no quest object (each one is refused, as before). The build: 1,634 quest capitals, 707 quest rows (341 with a
   different refusal).
+- `encounter-data.json` (stage QG5c2, `tools/gamedata/encounters.sh`, [Encounters](../systems/encounters.md)): format 1. The encounter
+  recipes of the quests (`encounters.py`; the reader `encounter_recipes.py`, which `creature_data.py`, `interactions.py`, and `gathering.py`
+  also use: each one scans the game copy again, and no tool reads the output of an other tool for the recipes). A recipe is an encounter
+  slice of a placement of the main world (the area, point, and prefab spawners of the capital layers; only the slices whose path has
+  `worldevent`, `spawngroup`, or `enc_`) whose success event or start object event a quest task names: its key `PLACEMENT_UUID/SPAWNER_ENTITY`,
+  the slice, the asset, the sub id, the root entity and its name, the layer, the world place and rotation, the slots of the manager, the
+  place, and the objectives, the manager (`autoActivate`, its delay, the reset event, the aggro delay), the tracker (its component, the grace,
+  the added event), the detector (the radius, the filter, the sphere), the success event, the quest events, the parent spawner (its kind, its
+  respawn range, the population rules), the stage order of the manager, the stages (the entity, the component, the name, the slot, the
+  user wave, the objective, the start and end actions, the spawns with their delays, counts, and world places), the unreachable stages, the
+  pattern, and the causes of a refusal (`refused`); `members` has each member slice one time: a creature (its vitals row, category, level,
+  body slice or alias with its slices), a start object (its variant, table, row, game event, tag, InteractOnlyOnQuest, proximity), or an
+  unknown slice with its cause. The build: 403 encounters, 67 recipes of a quest (336 not), 16 with no cause of the tool; members 272
+  creatures, 70 objects, 122 unknown; 16 s. The tool stops when a source is not there or not complete. Without the file the world has no
+  encounter. The loader refuses a file of an other format, a stage order with an index that is not a stage, a spawn count above 32, a time
+  above 3,600 s, and a recipe with no members entry; the runner refuses a recipe with a member that `creatures.json`,
+  `interaction-data.json`, or `gathering-data.json` does not have (with its cause). The same stage adds to `creatures.json` the member kinds
+  (133 kinds with no spawn point, each with `member`: its slice, and `points` 0; the list `members`: `[SLICE, KIND or -1, CAUSE]`, 22 left
+  out), to `interaction-data.json` the member `encounterObjects` (`{SLICE: {"template", "variationSlot", "variant"}}`: 48 templates, 42 with
+  a variation), and to `gathering-data.json` the member `encounterObjects` (`{SLICE: [TEMPLATE, ROW, TAG, ONLY_ON_QUEST]}`: 37). The formats
+  stay; the counts of the other entries do not change.
 - `quest-objects.json` (stage 1.8e, `tools/gamedata/quest-objects.sh`, [Quests](../systems/quests.md)): format 1. The destructible quest
   objects: each placement of the layers (the capital placements of `gathering.py`) whose slice has a variation of the table
   `Gatherable_Quest_Damageable`, with its key (the placement UUID), its managed actor (the UUID rule of a capital node), its asset, its
@@ -551,6 +572,7 @@ tools/gamedata/quests.sh             # one time: the quest data for the backend 
 tools/gamedata/pois.sh               # one time, after quests.sh: the shapes of the points of interest and of the areas (the quest tasks of a place; 0.7 MB, 20 s); needs an Oodle source
 tools/gamedata/triggers.sh           # one time, after quests.sh: the trigger volumes of the quests (the chunks, the capitals, the instances apart; 0.35 MB, 74 s with the pak index of navigation.sh); needs an Oodle source
 tools/gamedata/quest-objects.sh      # one time: the destructible quest objects (0.1 MB); needs an Oodle source
+tools/gamedata/encounters.sh         # one time: the encounter recipes of the quests (0.9 MB, 20 s); needs an Oodle source; with creatures.sh, interactions.sh, and gathering.sh of stage QG5c2
 tools/gamedata/conversations.sh      # one time: the conversation data of the persons (NPC rows, states, topics; 1.5 MB, 10 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
@@ -559,6 +581,16 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 ```
 
 ## Traps
+
+- Stage QG5c2 adds `encounter-data.json` and changes `creatures.json` (still format 4: the member kinds and the list `members`; the kinds
+  and the 33,023 spawn points of before keep their values), `interaction-data.json` (still format 4: the member `encounterObjects` and the
+  templates of its 48 start objects), and `gathering-data.json` (still format 1: the member `encounterObjects`; its folder
+  `gathering/` has the same bytes). Write the four again (`tools/gamedata/creatures.sh`, `interactions.sh`, `gathering.sh`,
+  `encounters.sh`) from one game copy: the recipes name the member slices, and the backend refuses a recipe whose member is not in the other
+  files. A backend of before stage QG5c2 reads the three changed files and does not use the new members (live check of stage QG5c2: the
+  backend of `dist` loads them). The variant index of a start object is the file row order of its variation table: a new build of the game
+  moves it, and the old file gives the client a wrong variant (a wrong prompt or none). `tools/release.sh` takes the four files with the
+  game data folder.
 
 - Stage BT2 changes `creatures.json` (still format 4, `tools/gamedata/creatures.sh`): each slice that names a server tree has the member
   `serverTrees` (the asset paths of `m_behaviorTreeAssets` of its `BehaviorTreeComponent`, the entity "AI Functionality"; lower case, with

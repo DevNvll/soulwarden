@@ -704,6 +704,11 @@ struct CreatureKind {
      */
     bool promotedElite{false};
     bool noReactions{false};
+    /**
+     * Stage QG5c2 (docs/systems/encounters.md): the member slice of an encounter recipe whose kind this is (a kind with no spawn point:
+     * the encounter system makes its creatures). Empty: a kind of the spawn points.
+     */
+    std::string member;
 };
 
 /** One place of the world where the game has a creature. */
@@ -852,6 +857,15 @@ public:
      * world, or a file of an older tool). The support manifest names it in the reason of a kill task.
      */
     [[nodiscard]] const std::string* kept_out(std::string_view name) const;
+    /**
+     * Stage QG5c2: @return The kind of a creature member slice of an encounter recipe (the member "members" of the tool), or no value; the
+     *         cause of a member that the file does not have goes to `cause` when not null.
+     */
+    [[nodiscard]] std::optional<std::uint32_t> member_kind(std::string_view slice, std::string* cause = nullptr) const;
+    /** Sets the member kinds with no file (tests): the lower-case member slice to its kind index (or -1) and its cause. */
+    void set_members(std::unordered_map<std::string, std::pair<std::int64_t, std::string>> members) {
+        m_members = std::move(members);
+    }
     /** Sets the kept-out causes with no file (tests): lower-case names. */
     void set_kept_out(std::unordered_map<std::string, std::string> causes) {
         m_keptOut = std::move(causes);
@@ -957,6 +971,8 @@ private:
     std::optional<CreatureCapsule> m_playerCapsule;
     /** Stage QG5c1: the kept-out names of the file (lower case) to their cause. */
     std::unordered_map<std::string, std::string> m_keptOut;
+    /** Stage QG5c2: the creature member slices of the encounter recipes: the kind index (-1: none) and the cause. */
+    std::unordered_map<std::string, std::pair<std::int64_t, std::string>> m_members;
     std::size_t m_shootingSlices{0};
     std::size_t m_areaSlices{0};
     std::size_t m_statusActionSlices{0};

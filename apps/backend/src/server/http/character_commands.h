@@ -540,6 +540,16 @@ inline constexpr float kAdminGatheringRange = 30.0F;
  *         from it (depleted, the seconds to the respawn), and the counts of the system.
  */
 [[nodiscard]] nlohmann::json gathering_view(world::World& world, const std::string& character, float radius);
+/** Stage QG5c2: the encounters of the admin state of a character: the instances this near to it (meters; the scan range of the runner). */
+inline constexpr float kAdminEncounterRange = 200.0F;
+/** Stage QG5c2 (world/encounters.h): the encounter instances near a character (radius in meters), its links, and the counts of the runner. */
+[[nodiscard]] nlohmann::json encounters_view(world::World& world, const std::string& character, float radius);
+/** Stage QG5c2: each encounter recipe of the data with its pattern, its quest events, and its refusal causes (empty: the runner takes it). */
+[[nodiscard]] nlohmann::json encounter_recipes(world::World& world);
+/** Stage QG5c2, a development aid (the development routes only): `key` of a recipe: its instance ends, and its placement is free at once. */
+[[nodiscard]] WorldCommand reset_encounter(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/** Stage QG5c2, a development aid (the development routes only): the start object near the character counts as gathered by it (no gather). */
+[[nodiscard]] WorldCommand use_start_object(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /**
  * set_node_respawn (a development aid; the development routes only): `node` (a placement UUID, a key REGION#RECORD, or a G) and `seconds`
  * (1 to 604800). A depleted node respawns after that time, not at its time of the data.

@@ -133,7 +133,10 @@ Output (one line of JSON):
                    "requires": {...}}, ...],
                 "person" (format 4, a person only): {"npc", "variant", "table", "row", "presence": {"mode", "condition"},
                             "clientChild", "spawner", "unresolved", "template"} or {"npc", "direct"}}, ...],
-   "personsApart" (stage QG4): [{"npc", "cause", "world", "slice", "via": [SLICE, ...], "placement", "unresolved"}, ...]}
+   "personsApart" (stage QG4): [{"npc", "cause", "world", "slice", "via": [SLICE, ...], "placement", "unresolved"}, ...],
+   "encounterObjects" (stage QG5c2): {SLICE PATH: {"template", "variationSlot", "variant"}, ...}: the start object of each encounter
+   recipe of the quests (encounter_recipes.py), a server child of the encounter system, with the slot of its VariationData component and
+   the row index of its variant (variationSlot 0: no variation state). A backend of before does not read it.}
   `key` is the placement UUID (the durable key of the object), `actor` the 32 hexadecimal digits of the actor id,
   `target` and `component` and an option entity 16 hexadecimal digits, `asset` the 32 hexadecimal digits of the slice
   asset id and `sub` its sub id (the metadata state of the record of the object). "options" of a bound are indexes into
@@ -838,6 +841,9 @@ class Template:
         self.variation_columns: list[str] = []
         # Stage QG5a: m_selectedVariant of the variation, and its actions on an Interact component: (entity, action, column).
         self.selected_variant = ""
+        # Stage QG5c2: the slot (m_replicationIndex) of the VariationData component of the slice (0: none). A server child needs its
+        # VariationData state to apply its variant (static read C of stage QG5c2: the activation 0x42D0300 clears m_selectedVariant).
+        self.variation_slot = 0
         # Stage QG5a: the m_gatherableEntryId of each GatherableController of the slice.
         self.controller_entries: list[str] = []
         self.bound_actions: list[tuple[int, str, str]] = []
@@ -949,6 +955,7 @@ class Template:
             self.variation_columns = [text_of(node) for node in walk(component) if node.name == VARIATION_COLUMN and text_of(node)]
             # Stage QG5a: the selected variant of the slice and the actions of its variation that set a part of an Interact component.
             self.selected_variant = text_of(find_field(component, SELECTED_VARIANT)).strip()
+            self.variation_slot = self._slot(component, what)
             data = find_field(component, VARIANT_DATA)
             for entry in data.children if data is not None else []:
                 action = text_of(child_of(entry, VARIANT_ACTION))
@@ -1196,7 +1203,7 @@ def kind_of(bounds: list[dict]) -> str:
 
 
 def build_document(sources: Sources, regions: list[str] | None = None, center: tuple[float, float] | None = None,
-                   radius: float | None = None) -> dict:
+                   radius: float | None = None, encounters: bool = True) -> dict:
     options = read_options(sources)
     lore_rows, achievement_rows = read_lore_tables(sources)
     catalog_data = sources.read(CATALOG_PATH)
@@ -1846,6 +1853,29 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
         if template_list[index]["kind"] != "lootDrop" or not {"TakeAllOption", "OpenStorageOption"} <= options_of:
             raise Failure(f"the loot container {name} ({container_path}) has no bound with TakeAllOption and OpenStorageOption")
         loot_containers[name] = {"template": index, **load_template(container_path, child=True).loot_container()}
+    # Stage QG5c2 (docs/systems/encounters.md): the template of each start object of the encounter recipes (encounter_recipes.py): a server
+    # child that the encounter system of the backend makes, with its GatherOption bound. A slice with no PositionInTheWorld component or no
+    # Interact bound is not written (the backend refuses its recipe). The variation: the slot of its VariationData component and the row
+    # index of its selected variant in its variation table (the file row order; static read C: 733 for 04A_Side02_02_EncounterStart_01 of
+    # Gatherable_Quest). Without the VariationData state the client shows the mesh of the object but no prompt (live check L3).
+    encounter_objects: dict[str, dict] = {}
+    if encounters:
+        import encounter_recipes  # noqa: E402 (encounter_recipes imports this module)
+        reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog)
+        for member in reader.start_objects(recipes):
+            template = load_template(member["slice"], child=True)
+            if template.root is None or template.slots["position"] == 0 or not template.bounds:
+                exclude("a start object of an encounter with no root, no PositionInTheWorld component, or no Interact bound")
+                continue
+            entry = {"template": template_entry(member["slice"], None), "variationSlot": 0, "variant": 0}
+            row = variation_tables.get(template.variation_table, {}).get(template.selected_variant) \
+                if template.selected_variant else None
+            if template.variation_slot != 0 and row is not None and row["row"] <= 0xFFFF:
+                entry["variationSlot"], entry["variant"] = template.variation_slot, row["row"]
+                counts["encounterVariants"] = counts.get("encounterVariants", 0) + 1
+            elif template.selected_variant:
+                exclude("a variant of a start object with no VariationData slot or no row of its variation table (no variation state)")
+            encounter_objects[member["slice"]] = entry
     sources.check_complete()
     exclude(CAUSE_DISTRIBUTION, 0)
     # One journal bit for two achievements: the journal cannot tell the pages apart (finding INT-R4).
@@ -1864,6 +1894,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     counts["spawned"] = len(spawned)
     counts["fixtures"] = len(fixtures)
     counts["lootContainers"] = len(loot_containers)
+    counts["encounterObjects"] = len(encounter_objects)
     counts["byKind"] = dict(sorted(counts["byKind"].items()))
     counts["byOption"] = dict(sorted(counts["byOption"].items()))
     counts["spawnedByKey"] = {}
@@ -1878,7 +1909,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     return {"format": FORMAT, "world": WORLD, "counts": counts, "excluded": dict(sorted(excluded.items())),
             "unresolved": dict(sorted(unresolved.items())), "options": option_list, "achievements": achievement_list,
             "templates": template_list, "spawned": spawned, "fixtures": fixtures, "lootContainers": loot_containers, "objects": objects,
-            "personsApart": apart}
+            "personsApart": apart, "encounterObjects": encounter_objects}
 
 
 def main() -> int:

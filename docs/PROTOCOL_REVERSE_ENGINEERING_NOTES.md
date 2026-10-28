@@ -7519,7 +7519,7 @@ InteractTeleportComponentClientFacet (vtable 0x82FBDA0) compares the action 0x52
 is the ordinary interaction block (writer 0x35E67E0); the teleport answer of the server and a gather of the row at action 82: not found].
 The shrine of `99D_MSQ_07_PortalFight` and the lift of `Quest_16008` stay out (a teleport handler of a later stage).
 
-### 4.62 The encounter states: the root record, the manager state, the stage state and 1278, the link of a nearby event, the participant message (live proof of stage QG5c1 with probes; static proof for the client code; the backend has no encounter runner yet: stage QG5c2)
+### 4.62 The encounter states: the root record, the manager state, the stage state and 1278, the link of a nearby event, the participant message, the kill counter, the VariationData state of a start object (live proof of stages QG5c1 and QG5c2; static proof for the client code; the backend runner of stage QG5c2: docs/systems/encounters.md)
 
 Research: `~/Games/soulwarden/work/research/quest-encounters.md` section 2; the static read A of stage QG5c1
 (`~/Games/soulwarden/work/evidence/quests/qg5c1/implement/static/A/ANSWERS.md`); the live probes of the same folder (`shots/steps/`,
@@ -7557,13 +7557,18 @@ when signed(sequence) is above the last sequence of the facet (+0x2C), then call
                                                                  XOR K, plus its component id; Kill: 137998612247151, 5006536641863069946)
 ```
 
+A new status that is equal to the status of the facet returns before each action (0x26F64AC to 0x26F64AE) [static]. The handler compares
+the statuses as signed 32-bit values (0x26F64B7 to 0x26F64CD) [static; code review of stage QG5c1, finding QG5C1R-R5]. For a different
+status:
+
 | New status | Status before was 0 | Status before was not 0 |
 | --- | --- | --- |
 | 0 | no action | store only |
 | 1 | store only | the reset (0x26F56E0: the end actions, then the start actions, backwards) |
 | 2 | the start actions (0x26F72A0) | the start actions |
 | 3, 4 | the start actions, then the end actions (0x26F7170) | the end actions |
-| 5 and above | the start actions, then the end actions | store only |
+| 5 to 0x7FFFFFFF | the start actions, then the end actions | store only |
+| 0x80000000 to 0xFFFFFFFF (negative) | store only | store only |
 
 The handler does not read `m_objectives`, `m_timeLimit`, or `m_userWave`, and it does not change the root Objectives or the manager
 [static]. [live: the statuses 2 and 3 of the interaction stage (2133, sequences 1 and 2), the status 3 of the cleanup stage, and 1278 with
@@ -7591,11 +7596,61 @@ Defeat the enforcers", `@Enc_04A_Side02_02_KillAI`; 2 is the m_requiredCount of 
 indices are the stages with m_userWave in the stage order [static: 0x26F1FD0]. The objectiveId of the element does not select the text (the
 quest id and an unrelated id gave the same title); a new instance id gives a new banner.
 
-**The partial progress** (the N of "N / 2"): not found. N stayed 0 for the progress 0, 1, 2, and 5 of the task element of index 1 and for
-new instances; the stage statuses, 1278, and the manager status do not set it [live]. One earlier sequence showed 1 (after the status 3 of
-the interaction and the cleanup stages, with a progress 4) and is not explained. Not tested: the count of the destroyed members of the stage
-in the client (SliceDestroyedObjective, 0x272FCF0) and the message `ObjectivesComponentClientFacet_OnMilestoneCorrection` (string
-0x8250FA8).
+**The partial progress** (the N of "N / 2") [static read B of stage QG5c2, `~/Games/soulwarden/work/evidence/quests/qg5c2/implement/static/B/ANSWERS.md`;
+live: check L2 of stage QG5c2, "1 / 2 - Defeat the enforcers", `shots/I5-*` of that folder]: N is the progress of a generated
+`ObjectiveTask` (+0x36C, the getter of the vtable 0x8265710). The client makes a task tree for the encounter objective (0x44650F0, from the
+POI branch of the apply 0x3A43B9A when the element has `isPoiObjective` 1): its counter starts at 1 (0x4465159), each leaf takes one index
+(0x272E52C), and each stage wrapper one more. For n stages with `m_userWave` in the stage order (k from 0): the leaf of stage k has the index
+2k+1, its wrapper 2k+2, the outer container 2n+1. This is a different index space than the user-wave indices (0x26F1FD0: 0, 1), and the
+earlier probes of QG5c1 set the interaction leaf (index 1), not the kill leaf (index 3). The task element of field 4 of the root
+Objectives (reader 0x3ADDB50, 18 bytes, big-endian):
+
+```text
+task := instance:u64 index:u8 taskCRC:u32 progress:u32 state:u8
+```
+
+The apply 0x3A43EF8 to 0x3A43FC6 finds the task by the instance and the index and sets the progress and the state; taskCRC is used only
+after that for a task-data lookup (0x3A43FD7), and its generated value is not found: the backend sends 0 [static; live: the counter
+shows]. A separate destroyed-count of the SliceDestroyedObjective (+0x1D4, 0x272FCE0) is not the HUD number [static]. The message 5407
+(`ObjectivesComponentClientFacet_OnMilestoneCorrection`) is not needed [static; not tested].
+
+**The backend contract** (stage QG5c2, `server/rep/states/encounter_states.cpp`, `objectives_state.cpp`; live checks L2 and L4 of stage
+QG5c2): for each instance the backend sends one root record to each session near it: the metadata (the asset and the sub id of the recipe
+slice, an actor of the allocator), PositionInTheWorld at the place slot, 6786 with the manager status (1 at the make, 2 at the start of the
+first stage, 3 at the success, 4 at a failure), the root Objectives at the objectives slot, and one 2133 for each stage with a status (the
+history of the stage, sequences 1, 2, ... ; 10 entries at most). The root Objectives:
+
+```text
+field 3 := 00 01 sequence:size64 01 objectiveCRC:u32 instance:u64 0:u32 0*16 0:u64 0:u16 01 00 01 00 0:u64 00 00
+           (one active element: the instance id is G of the root, available 1, isPoiObjective 1)
+field 4 := 00 01 sequence:size64 count:size task*count   (the generated indices, a child before its container; the progress of a kill
+           leaf: the destroyed members of its stage; the state 1 Active, 2 Complete)
+```
+
+The backend does not send 1278 (2133 carries the same status) or 2363 (its meaning is not found). The stop of the root (at the end of the
+instance) takes the objective off the HUD [live: L4 of stage QG5c2]. The player Objectives field 5 of each participant has G of each root
+that links it; the end of the instance or the end of the participation sends the list without it.
+
+**The VariationData state of a start object** (stage QG5c2) [static read C of stage QG5c2, `.../qg5c2/implement/static/C/ANSWERS.md`; live:
+checks L3 and L4 of stage QG5c2]: MB::VariationComponentReplicatedState is type **14** (constructor 0x42C5E80, readers 0x279E210 and
+0x2A42E10), at the slot of the VariationData component of the slice (1 for the start objects of the Obelisk and of the Blighted Ranger).
+One group: field 0 `index:u8`, field 1 `index:u16`. The apply 0x42CF180 uses field 0 when its version is not -1, else field 1; 0x42D0720
+maps the index to the row name of the variation table of the slice (0x42CEEB0; the index is the zero-based file row order of the table:
+0x42DCCD0, 0x42C6650), refuses an index out of range or an empty name, skips an unchanged row, stores it, and applies its actions. The
+activation 0x42D0300 clears `m_selectedVariant` and applies only an entity-specific entry: a server child gets its variant only from this
+state (or from message 3631 with the same u16).
+
+```text
+14 := 01 02 index:u16          (field 1 only; the Obelisk device 04A_Side02_02_EncounterStart_01 of Gatherable_Quest: 02 dd, 733;
+                                the blight offering 1434_0104_EncStart_BlightRanger: 00 cd, 205)
+```
+
+[live: without it the client shows the mesh of the start object and no prompt (L1 and L2 of stage QG5c2); with it the prompt shows ("E OFFER
+BLIGHT", "E ANCIENT DEVICE"), E sends the interaction request of GatherOption (action 14), and after the gather the device shows a red
+rune (L3 with a probe fragment, L4 with the state of the backend). The source of the rune is not proved: the variant actions or the end
+actions of the interaction stage.] The client sometimes ends that gather at once (2473 about 110
+ms after the accepted request, then a second request that it ends too), and a later press completes it [live: L4 and L5 of stage QG5c2,
+with the quest task complete and with it active; the cause is not known, the tag query near 0x35D77C0 is not read].
 
 **The participant message 2363** (`ParticipantTrackerComponentClientFacet_SyncParticipantData`) [static: reader 0x27245B0, collection
 reader 0x27265C0; the invoke 0x2724420 copies the first list to facet +0x28 and the second to +0xB8, with no test of the local player and no

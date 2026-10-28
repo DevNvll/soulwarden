@@ -45,6 +45,7 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage QG4: the quest givers (the artifact grant at the equip, the item level, the causes of an NPC with no slot, the rows with no source; the corrections of the review of QG3) | `Quests::item_equipped`, `Quests::equip_grant` (`world/quests.h`), `ProgressionTables::item_level`, `InteractionData::persons_apart`, the grant `equip` and `apart_cause` of `world/quest_support.cpp`; cases QG4A to QG4D, QGR3A1 to QGR3A4 |
 | Stage QG5b: the ObjectiveFlow of an NPA, the restriction ItemRequired of a gather, the categorical progression reward (the AzothStaff rank), the quest gimmicks; the corrections of the review of QG5a | `gamedata::parse_objective_flow`, `QuestNpa::flowClauses` (`gamedata/quest_data.h`), `flow_passes` (`world/quests.cpp`); `Gathering::check_gates`, `GatherRefusal::missingItem`, `Inventory::bag_count`; `QuestGameEvent::progression` (`gamedata/game_event.h`), `RewardJoin::progression`, `Skills::add_experience(Plan&)`; `tools/gamedata/gathering.py` (`task_event_form`, `Tables.task_events`), `quest_objects.py` (`destructible_form`), `interactions.py` (the slice conditional); `QuestSupport` (`rankEvents`, `gatherEventItems`, the running trees of a history); `tests/quest_flow_gap_tests.cpp` (QG5BA to QG5BD), `tests/quest_object_gap_tests.cpp` (QGR5A1, QGR5A2); the second computation `~/Games/soulwarden/work/evidence/quests/qg5b/implement/scripts/support_check.py` |
 | Stage QG5c1: the stationary targets and the named creatures of the kill tasks, the kept-out cause of a kill target in the manifest, the encounter states (the wire proof for QG5c2); the corrections of the review of QG5b | [Creatures](creatures.md) (the stationary targets), protocol notes 4.62 (the encounter states), `QuestSupport` (the kill branch: `CreatureData::kept_out`; the ranked producer with an item), `Quests::refresh` (the settle of the waits), `gamedata/gathering_data.cpp` (itemCount); `tests/target_tests.cpp` (QG5C1A to QG5C1C), `tests/review_qg5b_tests.cpp` (QGR5B1 to QGR5B3); the second computation `~/Games/soulwarden/work/evidence/quests/qg5c1/implement/scripts/support_check.py` |
+| Stage QG5c2: the encounters of the quests (the success event of each participant, the start object event of its gatherer), the event outcome, the pins of a linked root, the encounter rules of the manifest; the corrections of the review of QG5c1 | [Encounters](encounters.md), `Quests::event` (`QuestEventOutcome`, `QuestEvent::callerRetries`), `Quests::client_tracked`, `encounter_unlinked`, `QuestSupport` (the member kinds and the events of the taken recipes); `tests/encounter_tests.cpp` (QG5C2A to QG5C2I), `tests/review_qg5c1_tests.cpp` (QGR5C1A to QGR5C1C) |
 | Stage QG5a: the quest chest drops, the proximity objects, the per-character state of a gathered quest object, the glyph locks, the new quest objects of the data tools; the corrections of the review of QG4 | `Quests::plan_chest_drops`, `roll_drop` (`world/quests.h`), `Chests::complete`; `QuestObjects::moved`, `tick`, `look` (`world/quest_objects.h`), `QuestObjectData` (member `proximity`); `Gathering::quest_object_due`, `GatherRefusal::gatheredQuestObject`, `GatheringType::azothStaff`; `tools/gamedata/gathering.py` (`QUEST_TABLES`, `quest_form`, `children`), `quest_objects.py` (`proximity`), `interactions.py` (`varied_bounds`, `quest_children`, `read_flow_npas`); `QuestSupport` (the chest source, `refusedEvents`); `tests/quest_object_gap_tests.cpp` (QG5A to QG5E), `tests/quest_event_tests.cpp` (QG5F), `tests/review_qg4_tests.cpp` (QGR4A1 to QGR4A3); the second computation `~/Games/soulwarden/work/evidence/quests/qg5a/implement/scripts/support_check.py` |
 | The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`; stage QG2a: `research/quest-gaps.md`, `research/quest-gaps-qg2b.md`, the static read of the category rule `evidence/quests/qg2a/implement/static/category/CATEGORY.md` |
 
@@ -747,6 +748,26 @@ The static reads are `~/Games/soulwarden/work/evidence/quests/qg5b/implement/sta
   a flow NPA), the fogwall of `99E_MSQ_10_ToCaerDun` (a pressure plate in the game mode QuestYonas), the crown of `12A_MSQ_24_DefeatGawain`
   and the heartgems of `99B_MSQ_10_cleansefort` (spawners with m_spawnOnInitialize false of the game modes QuestGawain and QuestCaerDun: an
   encounter runner, QG5c).
+
+
+### The encounters of stage QG5c2
+
+The source of each rule is in brackets ([Encounters](encounters.md); [live] here: the live checks of stage QG5c2).
+
+- `Quests::event` returns a `QuestEventOutcome`: the result (`notApplied`, `repeated`, `noMatch`, `credited`, `failed`, `storeFailed`) and
+  the matched tasks (the instance and the index of each) [agent]. A caller that keeps the event and tries again itself
+  (`QuestEvent::callerRetries`: the ledger of an encounter credit) gets `storeFailed` with the matched tasks, and the quest system plans no
+  retry of its own; the retry has `restricted` with these tasks, so that it credits only them [agent].
+- The pinned list of the client (message 1458) can have the root instance of a linked encounter: the quest system takes it and does not
+  store it; at the end of the link (`encounter_unlinked`) it goes from the list [live L2: with no such rule a quest grant took the
+  encounter off the HUD].
+- The support manifest: the success event and the start object events of each recipe that the runner takes are producers with no item
+  (`gatherEvents`, `gatherEventsFree`), and the member kinds of these recipes are kill sources; an event that only a refused recipe gives
+  names the cause of the recipe (`refusedEvents`) [agent; test case QG5C2H]. The build: 527 supported rows before, 535 after (2,147 rows);
+  the second computation of the stage (`~/Games/soulwarden/work/evidence/quests/qg5c2/implement/scripts/support_check.py`) has the same
+  counts.
+- Code review of stage QG5c1, finding QG5C1R-R3: a ranked producer with no item gate stays a free alternative (`gatherEventsFree`) [agent;
+  test case QGR5C1C].
 
 ### The support manifest (stage 1.8e)
 

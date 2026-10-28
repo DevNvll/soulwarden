@@ -397,6 +397,23 @@ The evidence is in `~/Games/soulwarden/work/evidence/quests/qg5c1/implement/` (`
   override entry, an entry that the level data does not spawn). The support manifest names the cause in the reason of a kill task. 736
   names in the supported build.
 
+
+### The members of the encounters (stage QG5c2)
+
+The source of each rule is in brackets, as above ([live] here: the live checks of stage QG5c2; [Encounters](encounters.md)).
+
+- A member of an encounter recipe is a kind of `creatures.json` with no spawn point: `member` names its member slice, and the list
+  `members` of the file gives each member slice its kind (or -1 and the cause of a member that the tool leaves out: 22) [data].
+  `CreatureData::member_kind` finds it; a loop over the spawn points does not [agent]. Its level is `m_vitalsLevel` of the member slice,
+  else the level of its variant, else the most common level of the IsEncounter entries of its vitals row [data].
+- Only the encounter system makes and removes a member (`Creatures::spawn_member`, `remove_member`); the creature keeps the placement and
+  the generation of its instance (`Creature::encounter`), and its death calls `Encounters::member_died` [agent]. A member has no spawn
+  point: it never respawns by itself, and the reset of the spawn points does not touch it [agent].
+- `Behavior::provoke` gives a member the nearest participant that lives as its target at its spawn, after the aggro delay of the manager
+  [data: `m_overrideAggroDelay`, `m_aggroDelayOverride`; live L2: with no provoke a member 3 m from the character did not see it].
+- Code review of stage QG5c1, finding QG5C1R-R1: a hit ends the next-hit stun of a stationary target too; only the reaction and the
+  target of the hurt stay behind `!stationary()` [agent; test case QGR5C1A].
+
 ## Open points
 
 - Stage QG5c1: a stationary target has no server part of its slice: the area status of a corruption barb on the players near it

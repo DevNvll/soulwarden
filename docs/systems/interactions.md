@@ -261,6 +261,13 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   client 0x6160B60: the rule of the person children), and the member `questChild` (the spawner, the variant). 81 children; 452 with
   m_spawnOnInitialize false are in `excluded`.
 
+
+- Stage QG5c2 ([Encounters](encounters.md)): the start object of an encounter is a server child of the template of its slice (the member
+  `encounterObjects` of `interaction-data.json`: the template, the slot of the VariationData component, the variant index), made by
+  `Interactions::spawn_container` with the key `RECIPE KEY/GENERATION/STAGE/SPAWN/NUMBER` [agent]. Its record also has the VariationData
+  state (type 14): without it the client shows no prompt [client 0x42D0300; live L3, L4]. The loader refuses a variation slot above 4095
+  or one that is the slot of an other state of the template [agent].
+
 ## Commands
 
 ```sh

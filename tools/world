@@ -71,6 +71,14 @@ Usage:
   tools/world gathering respawn CHARACTER NODE SECONDS
                                                 DEVELOPMENT AID: the depleted node NODE (a placement UUID, a key
                                                 REGION#RECORD, or a G) respawns after SECONDS (not the rule of the data)
+  tools/world encounter CHARACTER [METERS]      the encounters near a character (stage QG5c2; default 200 m): each instance with
+                                                its key, its stage, its destroyed spawns, its participants and members; the links
+                                                of the character (its HUD), and the counts of the runner
+  tools/world encounter recipes                 each encounter recipe of the data: taken by the runner, or refused with its causes
+  tools/world encounter use CHARACTER           DEVELOPMENT AID: the start object 10 m or less from the character counts as gathered
+                                                by it (the game event of its row, then its stage), with no gather
+  tools/world encounter reset CHARACTER KEY     DEVELOPMENT AID: the instance of the placement KEY ends; the placement is free
+                                                again at once (not the respawn of the data)
   tools/world crafting CHARACTER                the crafting of a character (stage 3.7a): the station of its use (the Assembly
                                                 key, its row, the fee flag), its craft batch, and the counts
   tools/world craft preview CHARACTER RECIPE [COUNT] [--seed N] [--perks ITEM,ITEM] [--upgrade G] [--materials ITEM,ITEM]
@@ -542,6 +550,13 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         show_chests(document)
     elif isinstance(document, dict) and "nodes" in document and "skills" in document and "work" in document:
         show_gathering(document)
+    elif isinstance(document, dict) and "instances" in document and "links" in document and "counts" in document:
+        show_encounters(document)
+    elif isinstance(document, dict) and "recipes" in document and "taken" in document and "refused" in document:
+        for entry in document["recipes"]:
+            state = "taken" if entry["taken"] else "refused: " + "; ".join(entry["refused"])
+            print(f"  {entry['key']}  {entry['slice'].rsplit('/', 1)[-1]}  ({entry['pattern']}): {state}")
+        print(f"{document['taken']} taken, {document['refused']} refused")
     elif isinstance(document, dict) and "batch" in document and "counts" in document and "station" in document:
         show_crafting(document)
     elif isinstance(document, dict) and "verdict" in document and "costs" in document and "output" in document:
@@ -1043,6 +1058,24 @@ def show_chests(document: dict) -> None:
           f"LootTracker entries; opens {counts.get('begins', 0)}, completions {counts.get('completions', 0)}, cancels "
           f"{counts.get('cancels', 0)}, kept rolls {counts.get('kept', 0)}, resets {counts.get('resets', 0)}, refusals "
           f"{counts.get('refusals', {})}")
+
+
+def show_encounters(document: dict) -> None:
+    """Prints the encounters near a character (stage QG5c2): each instance, the links of the character, and the counts."""
+    if not document.get("data"):
+        print("the backend has no encounter data: make the file with tools/gamedata/encounters.sh")
+    if not document.get("inWorld"):
+        print("the character is not in the world")
+    print(f"links (the HUD of the character): {', '.join(document.get('links', [])) or 'none'}")
+    for entry in document.get("instances", []):
+        print(f"  {entry['key']}  {entry['slice'].rsplit('/', 1)[-1]}  root {entry['root']}  generation {entry['generation']}  "
+              f"{entry['phase']}  {entry['distance']:.1f} m")
+        print(f"      stage: {entry['stage'] or '-'} ({entry['destroyed']} of {entry['required']}); participants: "
+              f"{len(entry['participants'])}; members: {', '.join(entry['members']) or 'none'}")
+    if not document.get("instances"):
+        print(f"no encounter instance in {document.get('radius', 0):g} m")
+    counts = document.get("counts", {})
+    print("counts: " + ", ".join(f"{key} {value}" for key, value in counts.items()))
 
 
 def show_gathering(document: dict) -> None:
@@ -1833,6 +1866,18 @@ def main() -> None:
             fail("NODE is a placement UUID, a key REGION#RECORD, or a G in 16 hexadecimal digits")
         request(data_dir, "POST", f"/v1/dev/gathering/respawn?character={character_id(data_dir, arguments[2])}"
                                   f"&node={node.replace('#', '%23').replace('+', '%2B')}&seconds={whole(arguments[4], 'the seconds')}")
+    elif command == "encounter" and len(arguments) == 2 and arguments[1] == "recipes":
+        request(data_dir, "GET", "/v1/dev/encounters/recipes")
+    elif command == "encounter" and len(arguments) == 3 and arguments[1] == "use":
+        request(data_dir, "POST", f"/v1/dev/encounters/use?character={character_id(data_dir, arguments[2])}")
+    elif command == "encounter" and len(arguments) == 4 and arguments[1] == "reset":
+        key = arguments[3]
+        if not re.fullmatch(r"[0-9A-Fa-f-]{36}/[0-9]+", key):
+            fail("KEY is the key PLACEMENT_UUID/SPAWNER_ENTITY of a recipe (tools/world encounter CHARACTER)")
+        request(data_dir, "POST", f"/v1/dev/encounters/reset?character={character_id(data_dir, arguments[2])}&key={key}")
+    elif command == "encounter" and len(arguments) in (2, 3):
+        radius = f"&radius={arguments[2]}" if len(arguments) == 3 else ""
+        request(data_dir, "GET", f"/v1/dev/encounters?character={character_id(data_dir, arguments[1])}{radius}")
     elif command == "gathering" and len(arguments) in (2, 3):
         radius = f"&radius={arguments[2]}" if len(arguments) == 3 else ""
         request(data_dir, "GET", f"/v1/dev/gathering?character={character_id(data_dir, arguments[1])}{radius}")

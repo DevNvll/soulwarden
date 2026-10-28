@@ -257,6 +257,11 @@ public:
 
     /** @return The node of a placement UUID (any case), or no value. */
     [[nodiscard]] std::optional<GatheringLink> capital(std::string_view key) const;
+    /**
+     * Stage QG5c2 (docs/systems/encounters.md): @return The link of a start object of an encounter recipe (its gatherable row, its tag, and
+     *         InteractOnlyOnQuest; the member encounterObjects of the tool) by its slice path, or no value.
+     */
+    [[nodiscard]] std::optional<GatheringLink> encounter_object(std::string_view slice) const;
     /** @return The skinning of a creature slice (its asset id and sub id), or no value. */
     [[nodiscard]] std::optional<GatheringLink> creature(const std::array<std::uint8_t, 16>& asset, std::uint32_t sub) const;
     /** @return The natural node of a G (reads the file of its region at its first use), or no value (not a record of a gathering type). */
@@ -316,6 +321,8 @@ private:
     std::unordered_map<std::string, GatheringTool> m_tools;
     std::vector<GatheringTemplate> m_templates;
     std::unordered_map<std::string, GatheringLink> m_capitals;
+    /** Stage QG5c2: the start objects of the encounter recipes (the lower-case slice path to its link). */
+    std::unordered_map<std::string, GatheringLink> m_encounterObjects;
     std::map<std::pair<std::array<std::uint8_t, 16>, std::uint32_t>, GatheringLink> m_creatures;
     std::vector<GatheringRegion> m_regions;
     std::map<std::pair<std::int32_t, std::int32_t>, std::uint32_t> m_regionByPlace;

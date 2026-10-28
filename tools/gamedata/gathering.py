@@ -74,6 +74,8 @@ Output:
    "capitals": {PLACEMENT_UUID: [TEMPLATE, ROW] or [TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST] (a quest object), ...},
    "children" (stage QG5a): {PLACEMENT_UUID/SPAWNER_ENTITY: [TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST], ...} (a quest object child of a
               spawner of a placement: the key of its object in interaction-data.json),
+   "encounterObjects" (stage QG5c2): {SLICE PATH: [TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST], ...} (the start object of an encounter
+              recipe of the quests, a server child of the encounter system; a backend of before does not read it),
    "regions": [{"name", "x", "y", "file", "records", "tails", "version", "digest", "types": [[TEMPLATE, ROW, VARIANT], ...]}, ...],
    "creatures": {ASSET:SUB: {"slice", "template", "row"}, ...},
    "counts": {...}}
@@ -680,7 +682,7 @@ def slice_path_of(name: str, sources: Sources) -> str | None:
 
 
 def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folder: Path | None,
-          near: tuple[float, float, float] | None = None) -> dict:
+          near: tuple[float, float, float] | None = None, encounters: bool = True) -> dict:
     tables = Tables(sources)
     options = read_options(sources)
     if GATHER_OPTION not in options:
@@ -689,7 +691,8 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
     catalog_data = sources.read(CATALOG_PATH)
     if catalog_data is None:
         sources.check_complete()
-    slices = Slices(sources, Catalog(catalog_data), option["id"])
+    catalog = Catalog(catalog_data)
+    slices = Slices(sources, catalog, option["id"])
     counts = {"regions": 0, "records": 0, "tails": 0, "gatheringRecords": 0, "capitals": 0, "capitalPlacements": 0,
               "recordsByTable": {}, "capitalsByTable": {}, "unknownVariants": 0, "notGatheringSlices": 0, "creatures": 0}
     row_index: dict[str, int] = {}
@@ -893,6 +896,22 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
                     counts["capitalsByTable"][child_table] = counts["capitalsByTable"].get(child_table, 0) + 1
     counts["capitals"] = len(capitals)
 
+    # Stage QG5c2 (docs/systems/encounters.md): the start object of each encounter recipe of the quests (encounter_recipes.py): a quest
+    # object (quest_capital: its variant of the variation table, its gatherable row, its tag, InteractOnlyOnQuest) of a server child of the
+    # encounter system. A slice that is not a quest object is not written (the backend refuses its recipe).
+    encounter_objects: dict[str, list] = {}
+    if encounters and catalog is not None:
+        import encounter_recipes  # noqa: E402 (encounter_recipes imports the modules of this folder)
+        reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog)
+        for member in reader.start_objects(recipes):
+            template = slices.template_of(member["slice"], False)
+            entry = quest_capital(template, member["variant"], f"the start object {member['slice']}") if template is not None else None
+            if entry is None:
+                counts["encounterObjectsLeftOut"] = counts.get("encounterObjectsLeftOut", 0) + 1
+                continue
+            encounter_objects[member["slice"]] = entry
+    counts["encounterObjects"] = len(encounter_objects)
+
     # The skinning of a creature: the creature slices of the creature data with a GatherableController and a GatherOption bound.
     creatures: dict[str, dict] = {}
     creature_file = gamedata / "creatures.json"
@@ -937,12 +956,13 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
     # Only the slices that a node or a creature names (a quest slice of a capital placement is read and not used).
     used = sorted({template for region in region_list for template, _, _ in region["types"] if template >= 0}
                   | {entry[0] for entry in capitals.values()} | {entry[0] for entry in children.values()}
-                  | {entry["template"] for entry in creatures.values()})
+                  | {entry["template"] for entry in creatures.values()} | {entry[0] for entry in encounter_objects.values()})
     renumber = {old: new for new, old in enumerate(used)}
     for region in region_list:
         region["types"] = [[renumber[template] if template >= 0 else -1, row, variant] for template, row, variant in region["types"]]
     capitals = {key: [renumber[entry[0]]] + entry[1:] for key, entry in capitals.items()}
     children = {key: [renumber[entry[0]]] + entry[1:] for key, entry in children.items()}
+    encounter_objects = {key: [renumber[entry[0]]] + entry[1:] for key, entry in encounter_objects.items()}
     for entry in creatures.values():
         entry["template"] = renumber[entry["template"]]
     templates = [slices.templates[old] for old in used]
@@ -953,7 +973,7 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
                 "option": {"name": GATHER_OPTION, "id": option["id"], "action": option["action"]},
                 "rows": rows, "events": events, "ranks": tables.ranks, "tools": dict(sorted(tools.items())),
                 "templates": templates, "capitals": dict(sorted(capitals.items())), "children": dict(sorted(children.items())),
-                "regions": region_list,
+                "encounterObjects": dict(sorted(encounter_objects.items())), "regions": region_list,
                 "creatures": dict(sorted(creatures.items())), "counts": counts}
     if near is not None:
         document["near"] = sorted(found_near)

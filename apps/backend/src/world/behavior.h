@@ -321,6 +321,11 @@ public:
     void made(Entity& creature);
     /** A character did hurt a creature that lives: the creature gets that character as its target. */
     void hurt_by(Entity& creature, EntityId attacker);
+    /**
+     * Stage QG5c2 (world/encounters.h): a member of an encounter gets a participant as its target (the AITargetCollector of the root of the
+     * recipe; the aggro delay of the manager). The rule of hurt_by: a creature with a target keeps it.
+     */
+    void provoke(Entity& creature, EntityId character);
     /** A creature died: it has no target and no attack. */
     void died(Entity& creature);
     /** The world removed an entity. */

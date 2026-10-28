@@ -1478,8 +1478,10 @@ def yaw_of(rotation: dict) -> float:
 
 def build_document(sources: Sources, center: tuple[float, float] | None = None, radius: float | None = None,
                    all_slices: bool = False, details: list[dict] | None = None, spawn_all: bool = False,
-                   no_attack: list[dict] | None = None, ground: bool = True) -> dict:
+                   no_attack: list[dict] | None = None, ground: bool = True, members: bool = True) -> dict:
     """@param center, radius The area of the file: a circle. No radius: the whole world.
+    @param members True: the kinds of the creature members of the encounter recipes (stage QG5c2, encounter_recipes.py) are in the file
+           with no spawn point ("member" names the member slice; the list "members" of the document).
     @param all_slices True: the file also has the spawn points of the slices of the list "notShown" (a file for a
            picture tour of the slices, not for a start of the user).
     @param details When not null: gets one entry for each spawn entry that is left out (the cause, the layer,
@@ -1690,6 +1692,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
             aliases[spawner["alias"]] = alternatives
         return aliases[spawner["alias"]]
 
+    # Stage QG5c2: the levels of the IsEncounter entries of each vitals row (the level of a creature member with no level of its own).
+    encounter_levels: dict[int, dict[int, int]] = {}
     for region in regions:
         for metadata_path in sources.paths(f"{REGIONS_FOLDER}{region}/capitals/", ".metadata"):
             roots = sources.stream(metadata_path)
@@ -1707,6 +1711,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 if not entry["coatlicue"] or entry["override"] or entry["encounter"]:
                     if entry["encounter"]:
                         keep_out(entry, 1, KEPT_ENCOUNTER)
+                        encounter_levels.setdefault(entry["vitals"], {}).setdefault(entry["level"], 0)
+                        encounter_levels[entry["vitals"]][entry["level"]] += 1
                     elif entry["override"]:
                         keep_out(entry, 2, KEPT_OVERRIDE)
                     else:
@@ -1845,6 +1851,73 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 point_phases.append((spawner["phases"], spawner["leavesAtPhaseEnd"], spawner["phaseCooldowns"]))
                 if route is not None:
                     routes.append(route)
+    # Stage QG5c2 (docs/systems/encounters.md): a kind for each creature member of the encounter recipes of the quests, with no spawn
+    # point. Its vitals row is m_vitalsTableRowId of the AIVariantProviderComponent of the member slice, its category m_vitalsCategoryTableRowId
+    # (none: the client shows the name of the vitals row), its level m_vitalsLevel, else the Level of its level variant row, else the level
+    # of the most IsEncounter entries of its vitals row; its bodies are the slice or the alias of the spawner of the member slice, with the
+    # rules of a spawn point (a movement and a vitals component, the list notShown).
+    member_kinds: list[dict] = []
+    member_list: list[list] = []
+    incomplete: set[int] = set()
+    if members:
+        import encounter_recipes  # noqa: E402 (encounter_recipes imports this module)
+        reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog)
+        for member in reader.creature_members(recipes):
+            path = member["slice"]
+            vitals_crc = name_crc(member["vitals"])
+            variant = tables["variants"].get(vitals_crc)
+            base = tables["bases"].get(name_crc(variant["base"])) if variant else tables["bases"].get(vitals_crc)
+            category = tables["categories"].get(name_crc(member["category"])) if member["category"] else None
+            cause = ""
+            if base is None or not base["family"]:
+                cause = "its vitals row has no base row with a family"
+            spawner = {"alias": member["_asset"], "slice": None} if member["bodyField"] == "alias" \
+                else {"alias": None, "slice": member["_asset"]}
+            bodies = []
+            if not cause:
+                before = len(slices)
+                try:
+                    candidates = bodies_of(spawner)
+                    if any(body in incomplete for body, _ in candidates):
+                        raise Failure("an earlier member found the data of its slice not complete")
+                    bodies = [(body, percent) for body, percent in candidates
+                              if slices[body]["movement"] != 0 and slices[body]["vitals"] != 0]
+                except Failure as error:
+                    # A member does not stop the tool: the encounter runner refuses its recipe (the rules of a spawn point stay strict).
+                    # The slices that the read added are not complete: no member uses them.
+                    incomplete.update(range(before, len(slices)))
+                    cause = f"the data of its slice is not complete: {error}"
+            if not cause and not bodies:
+                cause = "no slice of its spawner has a movement component and a vitals component"
+            shown = [(body, percent) for body, percent in bodies if all_slices or slices[body]["path"] not in not_shown]
+            if not cause and not shown:
+                cause = ("the client does not show its slice " + slices[bodies[0][0]]["path"].rsplit("/", 1)[-1]
+                         + " (the list notShown of the picture tours)")
+            modifier = None
+            if not cause:
+                modifier = tables["modifiers"].get(base["creatureType"]) if base["creatureType"] else (1.0, 1.0)
+                if modifier is None:
+                    cause = "no modifier row of the creature type"
+            levels = encounter_levels.get(vitals_crc, {})
+            level = member["level"] or (variant["level"] if variant else 0) \
+                or (max(levels.items(), key=lambda item: (item[1], -item[0]))[0] if levels else 0)
+            if not cause and level not in tables["levels"]:
+                cause = f"no row of the level table for its level {level}"
+            if cause:
+                member_list.append([path, -1, cause])
+                continue
+            vitals_name = names.get((variant or base)["name"].lstrip("@").lower(), "")
+            member_kinds.append({
+                "id": path.rsplit("/", 1)[-1].removesuffix(".dynamicslice"), "vitals": variant["id"] if variant else base["id"],
+                "category": category["id"] if category else "", "vitalsId": vitals_crc,
+                "categoryId": name_crc(member["category"]) if member["category"] else 0,
+                "name": names.get(category["name"].lstrip("@").lower(), "") if category else vitals_name, "vitalsName": vitals_name,
+                "family": base["family"], "creatureType": base["creatureType"], "marks": kind_marks(base, buckets),
+                "health": round(base["healthMod"] * modifier[0], 6), "damage": round(base["damageMod"] * modifier[1], 6),
+                "level": level, "bodies": [list(body) for body in shown], "member": path})
+            member_list.append([path, len(member_kinds) - 1, ""])
+        counts["memberKinds"] = len(member_kinds)
+        counts["membersLeftOut"] = sum(1 for _, index, _ in member_list if index < 0)
     sources.check_complete()
     if not points:
         area = "the world" if whole_world else f"the area (center {center[0]:g} {center[1]:g}, radius {radius:g} m)"
@@ -1864,7 +1937,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
         group.sort(key=lambda kind: (-sum(kind["levels"].values()), kind["index"]))
         for position, kind in enumerate(group):
             kind["id"] = row if position == 0 else f"{row}:{position + 1}"
-    used = sorted({body for kind in kind_list for body, _ in kind["bodies"]})
+    used = sorted({body for kind in kind_list for body, _ in kind["bodies"]} | {body for kind in member_kinds for body, _ in kind["bodies"]})
     renumber = {old: new for new, old in enumerate(used)}
     document_kinds = []
     for kind in kind_list:
@@ -1880,6 +1953,15 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
         # Stage U3 (research Q5): the marks of the buff buckets of the base vitals row, only when they hold.
         for mark in kind["marks"]:
             document_kinds[-1][mark] = True
+    point_kinds = len(document_kinds)
+    for kind in member_kinds:
+        document_kinds.append({key: value for key, value in kind.items() if key != "marks"} | {
+            "bodies": [[renumber[body], percent] for body, percent in kind["bodies"]], "points": 0})
+        for mark in kind["marks"]:
+            document_kinds[-1][mark] = True
+    for entry in member_list:
+        if entry[1] >= 0:
+            entry[1] += point_kinds
     # The spawn action of the game data goes into the file only for a slice of the list: the
     # backend starts it for these, and it starts no action for a slice that shows without it.
     for body in used:
@@ -1981,7 +2063,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     counts.update(phase_counts(point_phases))
     counts.update(patrol_counts(routes, point_routes, points, kind_list, document_kinds, slices, used))
     counts["routesLeftOut"] = dict(sorted(route_left_out.items()))
-    counts.update({"spawnPoints": len(points), "kinds": len(document_kinds), "slices": len(used),
+    counts.update({"spawnPoints": len(points), "kinds": len(document_kinds), "pointKinds": point_kinds, "slices": len(used),
                    "leftOut": dict(sorted(left_out.items()))})
     counts.update(ranged_counts([slices[body] for body in used], points, document_kinds, behavior.ranged_left_out,
                                 projectile_list))
@@ -2013,8 +2095,12 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 "routes": routes, "projectiles": projectile_list}
     if player_capsule is not None:
         document["playerCapsule"] = player_capsule
+    if members:
+        # Stage QG5c2: each creature member slice of the encounter recipes: its kind (an index into "kinds"; -1: left out) and the cause.
+        document["members"] = member_list
     # Stage QG5c1: the names of the entries that are not in the file, with their cause (a name of a kind of the file is not kept out).
-    exported = {kind["vitals"].lower() for kind in document_kinds} | {kind["category"].lower() for kind in document_kinds if kind["category"]}
+    exported = {kind["vitals"].lower() for kind in document_kinds if kind["points"]} \
+        | {kind["category"].lower() for kind in document_kinds if kind["category"] and kind["points"]}
     document["keptOut"] = {name: cause for name, (_, cause) in sorted(kept_out.items()) if name not in exported}
     counts["keptOutNames"] = len(document["keptOut"])
     return document

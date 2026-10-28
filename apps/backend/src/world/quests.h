@@ -347,6 +347,35 @@ struct QuestEvent {
      * of a cutscene completes only the tasks that its grant was for).
      */
     bool restricted{false};
+    /**
+     * Stage QG5c2: true when the caller keeps the event and tries again itself (the ledger of an encounter credit): a store failure gives
+     * the outcome storeFailed with the matched tasks, and the quest system plans no retry of its own.
+     */
+    bool callerRetries{false};
+};
+
+/** Stage QG5c2: what an event of a different system did (Quests::event). */
+enum class QuestEventResult : std::uint8_t {
+    /** No quest data, quests that are not loaded, or not a character. */
+    notApplied,
+    /** The result id of the event counted before: no change. */
+    repeated,
+    /** No active task of the character takes the event. */
+    noMatch,
+    /** The tasks of the event are in the store. */
+    credited,
+    /** The plan did not commit for a cause that is not the store (no change). */
+    failed,
+    /** The store did not take the plan: nothing changed (a retry of the same matched tasks can credit it). */
+    storeFailed,
+};
+
+[[nodiscard]] const char* quest_event_result_text(QuestEventResult result);
+
+struct QuestEventOutcome {
+    QuestEventResult result{QuestEventResult::notApplied};
+    /** The tasks (instance and index) that the event matched. */
+    std::vector<std::pair<std::uint64_t, std::uint8_t>> matched;
 };
 
 /** One finished topic of a person (stage 1.8b; code review of stage 1.8b, finding QR8B-R5: the topics of one 5397 are one plan). */
@@ -435,6 +464,8 @@ public:
      * @return False when the list has an instance that the character does not have, or when the database did not take it.
      */
     bool client_tracked(Entity& entity, const std::vector<std::uint64_t>& instances);
+    /** Stage QG5c2: the link of an encounter root of the character ended (world/encounters.h): its pin leaves the tracked list. */
+    void encounter_unlinked(Entity& entity, std::uint64_t root);
 
     /**
      * Decision D2 option C (decision of the orchestrator, 2026-10-18): gives a character the achievements and the start objectives of one
@@ -470,7 +501,7 @@ public:
      * An event of a different system for one character (a kill of its credit list, a game event, a gather, a craft, a screen, an
      * interaction). Only the tasks of the index of its key are visited; a task that the event changes gets one plan.
      */
-    void event(Entity& entity, const QuestEvent& event);
+    QuestEventOutcome event(Entity& entity, const QuestEvent& event);
     /**
      * A creature died by the hits of the characters of its credit list (Rewards::killed): each of them gets the kill (its vitals
      * categories) and the kill event of its vitals row. A character that is not in the list gets nothing.

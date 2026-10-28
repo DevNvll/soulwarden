@@ -306,7 +306,7 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
     }
     case 3857: { // Objectives (stage 1.8a): group 1, field 0 the timer map (17-byte entries), 1 tracked (8), 2 completed (8, stage 1.8b),
                  // 3 active (56), 4 tasks (18).
-        if (group != 1 || field > 4) {
+        if (group != 1 || field > 5) {
             return -1;
         }
         server::hub::Reader reader(rest);
@@ -320,11 +320,27 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         if (!reader.ok()) {
             return -1;
         }
-        const std::uint32_t element = field == 0 ? 17U : field == 1 || field == 2 ? 8U : field == 3 ? 56U : 18U;
+        // Stage QG5c2: field 5, the encounter roots of the character (8-byte G).
+        const std::uint32_t element = field == 0 ? 17U : field == 1 || field == 2 || field == 5 ? 8U : field == 3 ? 56U : 18U;
         return static_cast<int>(reader.position() + element * count);
     }
     case 5606: // SeasonsRewardsTrackedStat (stage 1.8a): group 0 field 0, initialized (one byte).
         return group == 0 && field == 0 ? 1 : -1;
+    case 6786: // The manager state of an encounter root (stage QG5c2): group 0 field 0, the status (u32).
+        return group == 0 && field == 0 ? 4 : -1;
+    case 14: // VariationData (stage QG5c2): group 0 field 0, the variant index (u8); field 1, the variant index (u16).
+        return group == 0 && field == 0 ? 1 : group == 0 && field == 1 ? 2 : -1;
+    case 2133: { // The stage state of an encounter root (stage QG5c2): group 0 field 0, count:size then (sequence:u32 status:u32) each.
+        if (group != 0 || field != 0) {
+            return -1;
+        }
+        server::hub::Reader reader(rest);
+        const std::uint32_t count = reader.size();
+        if (!reader.ok()) {
+            return -1;
+        }
+        return static_cast<int>(reader.position() + 8U * count);
+    }
     case 205: { // Crafting (stage 3.7b): field 0, the cooldown map (13-byte entries); field 1, the gear score bonus map (3-byte entries).
         if (group != 0 || field > 1) {
             return -1;
@@ -466,6 +482,9 @@ inline unsigned group_count(std::uint32_t type) {
     case 2027:
     case 205:
     case 5606:
+    case 6786:
+    case 2133:
+    case 14:
         return 1;
     case 3752:
     case 81:

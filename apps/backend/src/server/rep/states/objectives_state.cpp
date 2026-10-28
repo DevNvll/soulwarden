@@ -18,8 +18,18 @@
 //              acceptTime:u64 originTerritory:u16 available:u8 (1) isCommunityGoal:u8 isPoiObjective:u8 isDynamicPoiObjective:u8
 //              parentObjectiveId:u64 isResetObjective:u8 selectedIngredients:size (0)
 //   field 4  taskStates          full vector of 18-byte elements: instance:u64 index:u8 taskCRC:u32 progress:u32 state:u8 (reader 0x3ADDB50)
-// Fields 5 and 6 are not written (no POI objective). A full container is `00 01 sequence:size64 count:size element*` (reader 0x279DC70); the sequence is the world revision of
-// the last change of the state.
+//   field 5  objectivePoiEntityIds full vector of u64 (stage QG5c2, readers 0x396BB40, 0x37799A0; live I2 of stage QG5c1): the G of each
+//            encounter root whose participant the character is (Entity::encounterLinks): the client shows the objective of the root on its HUD
+//            (the banner "Objective Started"); an empty list takes it off. Written from the first link of the world entry on (a character
+//            with no link has the bytes of before).
+// Field 6 is not written (no dynamic POI). A full container is `00 01 sequence:size64 count:size element*` (reader 0x279DC70); the sequence is
+// the world revision of the last change of the state.
+//
+// The root of an encounter (stage QG5c2, encode_encounter_objectives_state) has its own ObjectivesComponent (the objectives slot of the slice,
+// m_isPoiObjectivesComponent 1): group 1 field 3 with one active element of its objective (isPoiObjective 1: the POI branch of the apply
+// 0x3A43B9A, which makes the objective of the encounter stages, 0x3A2E590 and 0x44650F0) and field 4 with the task elements of the generated
+// task tree (static read B of stage QG5c2: from 1, the leaf of each user-wave stage and its wrapper, then the outer container; the progress
+// of a leaf is the N of "N / M"). Each session near the root gets it.
 //
 // The order of the task elements is the index order of the tree: a child before its container (live check L1 of stage 1.8a: with the
 // parent-first order of the research fixture the client shows the objective with no task line; with the index order it shows the line
@@ -43,6 +53,7 @@ constexpr unsigned kTrackedField = 1;
 constexpr unsigned kCompletedField = 2;
 constexpr unsigned kActiveField = 3;
 constexpr unsigned kTaskStatesField = 4;
+constexpr unsigned kPoiEntitiesField = 5;
 
 std::uint64_t sequence_of(const world::Entity& entity, world::ComponentKey key) {
     const auto found = entity.changed.find(key);
@@ -141,6 +152,52 @@ hub::Bytes encode_objectives_state(const world::Entity& entity, View view, const
             tasks.u32(quest.tasks[index].progress);
             tasks.u8(quest.tasks[index].state);
         }
+    }
+    // Field 5 (stage QG5c2): the encounter roots of the character, after its first link of this world entry.
+    if (entity.encounterLinked) {
+        hub::Writer& poi = state.field(kQuestGroup, kPoiEntitiesField);
+        full_header(poi, sequence, entity.encounterLinks.size());
+        for (const world::EntityId root : entity.encounterLinks) {
+            poi.u64(root);
+        }
+    }
+    return state.finish();
+}
+
+hub::Bytes encode_encounter_objectives_state(const world::Entity& entity, View view, const world::WorldClock& clock) {
+    (void)view;
+    (void)clock;
+    if (entity.kind != world::EntityKind::encounter || entity.encounter.objectivesSlot == 0 || entity.encounter.objectiveInstance == 0) {
+        return {};
+    }
+    const world::EncounterBody& body = entity.encounter;
+    const std::uint64_t sequence = sequence_of(entity, world::ComponentKey::encounterObjectives);
+    StateWriter state(kObjectiveGroups);
+    hub::Writer& active = state.field(kQuestGroup, kActiveField);
+    full_header(active, sequence, 1);
+    active.u32(body.objectiveCrc);
+    active.u64(body.objectiveInstance);
+    active.u32(0); // missionId
+    for (int part = 0; part < 16; ++part) {
+        active.u8(0); // destinationOverride
+    }
+    active.u64(0);  // acceptTime
+    active.u16(0);  // originTerritory
+    active.boolean(true);  // available
+    active.boolean(false); // isCommunityGoal
+    active.boolean(true);  // isPoiObjective (live I2 of stage QG5c1)
+    active.boolean(false); // isDynamicPoiObjective
+    active.u64(0);         // parentObjectiveId
+    active.boolean(false); // isResetObjective
+    active.size(0);        // selectedIngredientVector
+    hub::Writer& tasks = state.field(kQuestGroup, kTaskStatesField);
+    full_header(tasks, sequence, body.tasks.size());
+    for (const world::EncounterTaskState& task : body.tasks) {
+        tasks.u64(body.objectiveInstance);
+        tasks.u8(task.index);
+        tasks.u32(0); // taskCRC: not found (static read B: no compare of the CRC gates the progress).
+        tasks.u32(task.progress);
+        tasks.u8(task.state);
     }
     return state.finish();
 }

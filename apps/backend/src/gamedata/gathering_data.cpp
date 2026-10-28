@@ -506,6 +506,19 @@ bool GatheringData::parse(const std::string& text) {
             }
         }
     }
+    // Stage QG5c2: the start objects of the encounter recipes (a slice path to [template, row, tag, onlyOnQuest]). A file of before has none.
+    if (document.contains("encounterObjects")) {
+        if (!document["encounterObjects"].is_object()) {
+            return fail("the member encounterObjects is not an object");
+        }
+        for (const auto& [slice, entry] : document["encounterObjects"].items()) {
+            GatheringLink link;
+            if (slice.empty() || !link_of(entry, link) || entry.size() < 4) {
+                return fail("the start object " + slice + " has no template, row, tag, and onlyOnQuest");
+            }
+            m_encounterObjects.emplace(lower_ascii(slice), link);
+        }
+    }
     if (!document["creatures"].is_object()) {
         return fail("the member creatures is not an object");
     }
@@ -598,6 +611,11 @@ GatheringRank GatheringData::rank(std::string_view tradeskill, std::uint32_t ran
 const GatheringTool* GatheringData::tool(std::string_view itemId) const {
     const auto found = m_tools.find(lower_ascii(itemId));
     return found == m_tools.end() ? nullptr : &found->second;
+}
+
+std::optional<GatheringLink> GatheringData::encounter_object(std::string_view slice) const {
+    const auto found = m_encounterObjects.find(lower_ascii(slice));
+    return found != m_encounterObjects.end() ? std::optional<GatheringLink>(found->second) : std::nullopt;
 }
 
 std::optional<GatheringLink> GatheringData::capital(std::string_view key) const {

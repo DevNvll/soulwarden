@@ -2161,9 +2161,14 @@ bool Quests::client_tracked(Entity& entity, const std::vector<std::uint64_t>& in
         return false;
     }
     std::vector<std::uint64_t> tracked;
+    std::vector<std::uint64_t> stored;
     for (const std::uint64_t instance : instances) {
-        const bool known = std::any_of(entity.quests.active.begin(), entity.quests.active.end(),
-                                       [&](const QuestInstance& quest) { return quest.instance == instance; });
+        const bool quest = std::any_of(entity.quests.active.begin(), entity.quests.active.end(),
+                                       [&](const QuestInstance& active) { return active.instance == instance; });
+        // Stage QG5c2 (live check L1): the client pins the objective of a linked encounter root too (its instance is the G of the root,
+        // field 5 of the Objectives state). It is a pin of the list (field 1 echoes it), not a row of the store: no quest has it.
+        const bool linked = std::find(entity.encounterLinks.begin(), entity.encounterLinks.end(), instance) != entity.encounterLinks.end();
+        const bool known = quest || linked;
         if (!known || std::find(tracked.begin(), tracked.end(), instance) != tracked.end() || tracked.size() >= kMaxTracked) {
             log::write("quests: the pinned list of the client of character %s has the instance %016llx, which is not an active quest of the "
                        "character (or is there two times): no change",
@@ -2171,17 +2176,29 @@ bool Quests::client_tracked(Entity& entity, const std::vector<std::uint64_t>& in
             return false;
         }
         tracked.push_back(instance);
+        if (quest) {
+            stored.push_back(instance);
+        }
     }
     if (tracked == entity.quests.tracked) {
         return true;
     }
     ++m_counts.trackedUpdates;
-    if (!m_store.write_quest_pins(entity.characterId, tracked)) {
+    if (!m_store.write_quest_pins(entity.characterId, stored)) {
         return false;
     }
     // The list of the client is the truth: no new state goes back to it (research quests.md 6.2).
     entity.quests.tracked = std::move(tracked);
     return true;
+}
+
+void Quests::encounter_unlinked(Entity& entity, std::uint64_t root) {
+    std::vector<std::uint64_t>& tracked = entity.quests.tracked;
+    const auto found = std::find(tracked.begin(), tracked.end(), root);
+    if (found != tracked.end()) {
+        tracked.erase(found);
+        m_world.touch(entity.id, ComponentKey::objectives);
+    }
 }
 
 TemplateResult Quests::apply_template(const std::string& characterId, const std::string& templateId) {
@@ -2318,27 +2335,51 @@ state::NewCharacterRows Quests::new_character_rows(const gamedata::QuestData* da
 
 // ----- Stage 1.8c: the events of the other systems -----
 
-void Quests::event(Entity& entity, const QuestEvent& event) {
+const char* quest_event_result_text(QuestEventResult result) {
+    switch (result) {
+    case QuestEventResult::notApplied:
+        return "not applied";
+    case QuestEventResult::repeated:
+        return "a repeated result";
+    case QuestEventResult::noMatch:
+        return "no active task takes it";
+    case QuestEventResult::credited:
+        return "credited";
+    case QuestEventResult::failed:
+        return "no change";
+    case QuestEventResult::storeFailed:
+        return "the store did not take it";
+    }
+    return "unknown";
+}
+
+QuestEventOutcome Quests::event(Entity& entity, const QuestEvent& event) {
+    QuestEventOutcome outcome;
     if (data() == nullptr || !entity.quests.loaded || entity.kind != EntityKind::player) {
-        return;
+        return outcome;
     }
     ++m_counts.worldEvents;
     const std::uint64_t result = event.result != 0 ? result_key(event.result, entity.id, event.kind) : 0;
     if (result != 0 && repeated(result)) {
         ++m_counts.repeatedResults;
-        return;
+        outcome.result = QuestEventResult::repeated;
+        return outcome;
     }
     const auto found = m_subscriptions.find(entity.id);
     const Subscriptions* subscriptions = found != m_subscriptions.end() ? found->second.get() : nullptr;
+    outcome.result = QuestEventResult::noMatch;
     if (subscriptions == nullptr) {
-        return;
+        return outcome;
     }
     const std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> matched = matched_tasks(entity, event, *subscriptions);
     if (matched.empty()) {
         if (result != 0) {
             remember(result);
         }
-        return;
+        return outcome;
+    }
+    for (const auto& [instance, index, amount] : matched) {
+        outcome.matched.emplace_back(instance, index);
     }
     Plan plan(*this, entity, now_ns());
     for (const auto& [instance, index, amount] : matched) {
@@ -2352,10 +2393,12 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
         if (result != 0) {
             remember(result); // Code review of stage 1.8c, finding QR8C-R1: a result counts as handled only after its commit.
         }
-        return;
+        outcome.result = QuestEventResult::credited;
+        return outcome;
     }
     log::write("quests: an event of character %s did not change its quests: %s", entity.characterId.c_str(), quest_error_text(error));
-    if (error == QuestError::storeFailed && event.attempt < kEventRetries) {
+    outcome.result = error == QuestError::storeFailed ? QuestEventResult::storeFailed : QuestEventResult::failed;
+    if (error == QuestError::storeFailed && event.attempt < kEventRetries && !event.callerRetries) {
         // The source action committed: its quest event tries again after 2 s on the world clock (the rule of a refused timer write,
         // finding QR8A-R5). A delivery of the same result before the retry counts one time.
         ++m_counts.eventRetries;
@@ -2368,10 +2411,11 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
         }
         m_world.after(kEventRetry, [characterId = entity.characterId, again](World& world) {
             if (Entity* character = world.find_character(characterId)) {
-                world.quests().event(*character, again);
+                (void)world.quests().event(*character, again);
             }
         });
     }
+    return outcome;
 }
 
 std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> Quests::matched_tasks(const Entity& entity, const QuestEvent& event,

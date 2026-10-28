@@ -145,6 +145,11 @@
 //                                                        the nodes with a state of the server near it, the counts
 //   POST /v1/dev/gathering/respawn?character=ID&node=KEY&seconds=N
 //                                                        DEVELOPMENT AID: a depleted node respawns after N seconds
+//   GET  /v1/dev/encounters?character=ID[&radius=N]      the encounters near a character (stage QG5c2; default 200 m): each instance with its
+//                                                        stage, its destroyed spawns, its participants and members; the links; the counts
+//   POST /v1/dev/encounters/reset?character=ID&key=KEY   DEVELOPMENT AID: the instance of a placement ends; the placement is free at once
+//   GET  /v1/dev/encounters/recipes                     each encounter recipe with its pattern, its events, and the causes of a refusal
+//   POST /v1/dev/encounters/use?character=ID             DEVELOPMENT AID: the start object near a character counts as gathered (no gather)
 //   GET  /v1/dev/crafting?character=ID                  the crafting of a character (stage 3.7a): the station of its use, its batch,
 //                                                        the counts
 //   POST /v1/dev/crafting/preview?character=ID&recipe=ID[&quantity=N][&seed=N][&perks=A,B][&upgrade=G][&materials=A,B]   the plan of
@@ -206,6 +211,8 @@ const char* kind_text(world::EntityKind kind) {
         return "object";
     case world::EntityKind::projectile:
         return "projectile";
+    case world::EntityKind::encounter:
+        return "encounter";
     case world::EntityKind::player:
         break;
     }
@@ -1069,6 +1076,27 @@ void register_dev_routes(Router& router, const Services& services) {
         });
     });
     router.add("POST", "", "/v1/dev/gathering/respawn", "dev.gathering_respawn", command_route(services, commands::set_node_respawn));
+    // The encounters (stage QG5c2): the instances near a character, and the end of the instance of a placement (a development aid).
+    router.add("GET", "", "/v1/dev/encounters", "dev.encounters", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        const auto radius = commands::QueryArguments(context.request).number("radius", 0.0F, 20000.0F);
+        if (commands::QueryArguments(context.request).has("radius") && !radius) {
+            return message(400, "radius must be 0 to 20000 m");
+        }
+        return in_world(services, [character = *character, radius = radius.value_or(200.0F)](world::World& target) {
+            return json_reply(200, commands::encounters_view(target, character, radius).dump());
+        });
+    });
+    router.add("POST", "", "/v1/dev/encounters/reset", "dev.encounters_reset", command_route(services, commands::reset_encounter));
+    router.add("POST", "", "/v1/dev/encounters/use", "dev.encounters_use", command_route(services, commands::use_start_object));
+    router.add("GET", "", "/v1/dev/encounters/recipes", "dev.encounters_recipes", [&services](const RouteContext& context) {
+        (void)context;
+        return in_world(services, [](world::World& target) { return json_reply(200, commands::encounter_recipes(target).dump()); });
+    });
     // The crafting (stage 3.7a): the crafting of a character, the plan of a recipe (a diagnostic with no change), the stop of a batch.
     router.add("GET", "", "/v1/dev/crafting", "dev.crafting", [&services](const RouteContext& context) {
         service::HttpResponse refusal;

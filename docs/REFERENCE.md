@@ -438,7 +438,9 @@ button on "Confirm").
   `targets`: 100 spawn points; they take hits, die, and come back, and they never move or attack) and the member `keptOut` (the
   vitals rows and the categories of the entries that the file does not have, with the cause: the support manifest names it); with a
   file from before there are no totems. A backend from before stage QG5c1 refuses the file of stage QG5c1 (no creature at all): put
-  the backend and the file together. The pak entries that it reads have Oodle data: set
+  the backend and the file together. From stage QG5c2 the file also has the member kinds of the encounter recipes (133 kinds with no
+  spawn point, each with its member slice; the list `members`: 22 members are left out with their cause); a backend of stage QG5c1
+  loads the file and does not use them. The pak entries that it reads have Oodle data: set
   `SOULWARDEN_OODLE_LIB` to an Oodle library of your computer (a `liboo2core.so`), or
   `SOULWARDEN_OODLE_DLL` to an Oodle library for Windows (the helper of
   `tools/research/oodle_loader.c`). The tool needs about 1 minute.
@@ -497,7 +499,9 @@ button on "Confirm").
   3.4f-A the tool stops (and keeps the file that is there) for a placement of a named object with
   no complete position, for a station or a forge child whose slice asset the catalog does not
   have, and for one placement id in two spellings; the loader of the backend refuses a template
-  with two components at one slot (code review of stage 2.5b).
+  with two components at one slot (code review of stage 2.5b). From stage QG5c2 the file has the member
+  `encounterObjects`: the template of each start object of the encounter recipes (48), with the slot of its VariationData
+  component and the row index of its variant (42 have one; [Encounters](systems/encounters.md)). A backend of before does not read it.
 - `tools/gamedata/gathering.sh` makes the gathering data (stage 3.6a; `~/.local/share/soulwarden/gamedata/gathering-data.json` and
   the folder `gathering/` with one file for each region): the gatherable rows, the trade skill ranks, the events, the tools, the
   gathering slices, the capital nodes, the skinning of the creature slices (from `creatures.json`), and the natural nodes of each
@@ -507,7 +511,15 @@ button on "Confirm").
   An export keeps the region files of each earlier export (a backend that runs can read them); `--prune` removes the files that the
   current file does not name, only when no backend runs (code review of user test 2).
   Without the files the backend starts and refuses each gather ([Gathering](systems/gathering.md)). The loot tables of `loot.sh`
-  from stage 3.6a have the gathering roots: with an older `loot-tables.json` each gather is refused.
+  from stage 3.6a have the gathering roots: with an older `loot-tables.json` each gather is refused. From stage QG5c2 the file has the
+  member `encounterObjects`: the gatherable row, the tag, and the template of each start object of the encounter recipes (37).
+- `tools/gamedata/encounters.sh` makes the encounter recipes of the quests (stage QG5c2; `~/.local/share/soulwarden/gamedata/encounter-data.json`,
+  format 1, about 0.9 MB, 20 s; [Encounters](systems/encounters.md)): each encounter of a placement of the main world whose events a quest
+  task names (67 of 403), with its manager, its participant tracker and detector, its stages in the order of the manager, the spawns of each
+  stage with the world places of their spawn locations, the success event, the parent spawner (the respawn of a new instance), the member
+  slices, and the causes of a recipe that the backend does not run (53; 14 run). It needs an Oodle library. The encounters also need
+  `creatures.json` (the member kinds), `interaction-data.json`, and `gathering-data.json` (the start objects) of stage QG5c2 or later; a
+  recipe whose member is not in them is refused with its cause. Without the file the world has no encounter, and the rest of the backend works.
 - `tools/gamedata/crafting.sh` makes the crafting data (stage 3.7a; `~/.local/share/soulwarden/gamedata/crafting-data.json`): the
   recipes of the CraftingRecipeData tables (their stations, ingredients, outputs, fees, options, and the causes of a recipe that the
   backend does not craft yet), the rows of the crafting station database, the ingredient categories of the items, the events of the
@@ -942,6 +954,22 @@ button on "Confirm").
   `GET /v1/dev/quests/support`, admin route `GET /admin/v1/catalog/quest-support` (about 6 MB). In a development run (no audio) the
   client plays no cinematic video: `tools/world quest cinematic NAME ID start|end` (route `POST /v1/dev/quests/cinematic`) gives the quest
   system the notice of the messages 6606 and 6542.
+- Encounters of the quests (stage QG5c2, [Encounters](systems/encounters.md), protocol notes 4.62). The world runs the encounter recipes
+  of `encounter-data.json` that the runner takes (14 in the supported build: the kill waves after an interaction). An instance comes at
+  its placement when a character is 150 m or less from it (the cells near the characters; no scan of the world), with its root entity
+  (the metadata, the place, the manager status, the stage states, and the objective of the root). A character in the detector sphere of
+  the recipe (for example 30 m) is a participant: its HUD shows the encounter (the player Objectives field 5) with the step of the stage
+  and the kill counter. The timed stages run on the world clock; the start object (a server child with its VariationData state) takes the
+  GatherOption of each character; the members of a kill stage come at their delays and attack the nearest participant; at the end each
+  participant gets the success event once (a store failure retries; an old generation changes nothing). A participant out of the sphere
+  leaves after the grace of the data; with no participant the instance fails, and with no character near it ends. A new generation comes
+  after the respawn time of the parent spawner. The ambushes, the summoned opponents, the interaction sequences, the defenses (stage
+  QG5c3), the phase bosses, and the scheduled and seasonal events are refused with their causes. In a development run
+  `tools/world encounter NAME [METERS]` (route `GET /v1/dev/encounters`) prints the instances near a character with their stage, their
+  participants, their members, and the counts; `tools/world encounter recipes` (route `GET /v1/dev/encounters/recipes`) prints each recipe:
+  taken or refused with its causes; `tools/world encounter reset NAME KEY` (route `POST /v1/dev/encounters/reset`) ends the instance of a
+  placement; `tools/world encounter use NAME` (route `POST /v1/dev/encounters/use`) is a development aid: the start object 10 m or less
+  from the character counts as gathered. The admin routes have the same commands (`server/http/character_commands.h`).
 - Persons (stage 2.5c, [Persons](systems/persons.md), protocol notes 4.55). Each person of the game data is in the interaction data: the
   persons that the client makes for the PrefabSpawners of the level (Aelstrom, Urda, and Grace on the beach, the persons of the quests and of
   the settlements) with the client id of their place, yaw, and slice, and the direct persons. A person of a quest is there for a character

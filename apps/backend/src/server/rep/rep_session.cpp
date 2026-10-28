@@ -543,9 +543,9 @@ void RepSession::check_route(std::span<const std::uint8_t> route,
         return;
     }
     if (entity->kind == world::EntityKind::probe || entity->kind == world::EntityKind::spell
-        || entity->kind == world::EntityKind::projectile) {
+        || entity->kind == world::EntityKind::projectile || entity->kind == world::EntityKind::encounter) {
         ++m_counts.unknownTargets;
-        fault("the target is a component of a spell, a probe, or a projectile entity (no message of the client for it is known)");
+        fault("the target is a component of a spell, a probe, a projectile, or an encounter root (no message of the client for it is known)");
         return;
     }
     if (entity->kind == world::EntityKind::creature) {
@@ -756,7 +756,8 @@ void RepSession::replicate(carrier::Clock::time_point now) {
         if (entity->kind == world::EntityKind::creature) {
             add_creature_record(*entity, *m_observer.find(id), batch);
         } else if (entity->kind == world::EntityKind::spell || entity->kind == world::EntityKind::probe
-                   || entity->kind == world::EntityKind::object || entity->kind == world::EntityKind::projectile) {
+                   || entity->kind == world::EntityKind::object || entity->kind == world::EntityKind::projectile
+                   || entity->kind == world::EntityKind::encounter) {
             add_observer_record(*entity, *m_observer.find(id), batch);
         } else {
             send_record(*entity, *m_observer.find(id), now);
@@ -1094,6 +1095,18 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
                                static_cast<double>(distance),
                                static_cast<long long>(
                                    std::chrono::duration_cast<std::chrono::milliseconds>(m_clock.now() - entity.shot.launched).count()));
+                }
+            }
+            return;
+        }
+        if (entity.kind == world::EntityKind::encounter) {
+            // An encounter root (stage QG5c2): at the distance of a character. A character that does not take part observes it too (it
+            // sees the stage of the fight); only a participant has its link (the HUD).
+            if (distance <= m_world.interest_enter(entity)) {
+                const std::uint32_t interest = m_observer.add(entity.id);
+                if (interest != 0) {
+                    log::write("rep: encounter root %016llx comes into the interest table (interest %u, %.1f m)",
+                               static_cast<unsigned long long>(entity.id), interest, static_cast<double>(distance));
                 }
             }
             return;

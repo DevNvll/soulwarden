@@ -109,12 +109,16 @@
 //   GET  /admin/v1/catalog/quest-support
 //        The support manifest of the quests (stage 1.8e): each objective with its grants, gates, tasks, world content, rewards, and
 //        the reasons of a block, the mission templates apart, and the counts of each history (docs/systems/quests.md).
+//   GET  /admin/v1/catalog/encounters
+//        The encounter recipes of the game data (stage QG5c2, docs/systems/encounters.md): each recipe with its key, its root, its
+//        pattern, its quest events, and the causes of a refused recipe (empty: the runner takes it).
 // The state of a character that is in the world also has the creatures near it (the member
 // "creatures": each creature that is 150 m or less from the character, the nearest one first),
 // and its interactions (the member "interactions", stage 2.5a: its committed interaction and the
 // objects of the interaction data 30 m or less from it, with their state), and its chests (the member
 // "chests", stage 3.5b.1: its loot claims and the chests 30 m or less from it), its gathering (the member "gathering", stage 3.6a), and its loot bags (the member "lootBags", stage 3.5b.2:
-// its open bag and the items of its own part of each bag), and the world time (the member "worldTime", stage 2.2: the time, the phase,
+// its open bag and the items of its own part of each bag), its encounters (the member "encounters", stage QG5c2: the instances 200 m or
+// less from it, its links, and the counts of the runner), and the world time (the member "worldTime", stage 2.2: the time, the phase,
 // and the cycle of the world).
 //
 // Rules of each route:
@@ -324,6 +328,8 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 // The chests of the character (stage 3.5b.1): its claims and the chests near it.
                 reply["chests"] = commands::chests_view(target, selected, commands::kAdminChestRange);
                 reply["gathering"] = commands::gathering_view(target, selected, commands::kAdminGatheringRange);
+                // The encounters near the character (stage QG5c2): each instance with its stage, its participants, and its members.
+                reply["encounters"] = commands::encounters_view(target, selected, commands::kAdminEncounterRange);
                 reply["crafting"] = commands::crafting_view(target, selected);
                 // The quests of the character (stage 1.8a): each quest with its tasks, its pin, and the one-time grants.
                 if (const auto quests = commands::quests_view(target, selected)) {
@@ -499,6 +505,15 @@ service::HttpResponse list_quest_support(const Services& services, const AdminAc
     return in_world(services, [](world::World& target) { return json_reply(200, commands::quest_support_json(target).dump()); });
 }
 
+service::HttpResponse list_encounters(const Services& services, const AdminAccess& access, const RouteContext& context) {
+    service::HttpResponse refusal;
+    if (!caller(access, context, refusal)) {
+        return refusal;
+    }
+    // Stage QG5c2: the encounter recipes, taken or refused with their causes (a reader).
+    return in_world(services, [](world::World& target) { return json_reply(200, commands::encounter_recipes(target).dump()); });
+}
+
 } // namespace
 
 void register_admin_routes(Router& router, const Services& services, const AdminAccess& access) {
@@ -513,6 +528,7 @@ void register_admin_routes(Router& router, const Services& services, const Admin
     router.add("GET", "", "/admin/v1/catalog/presets", kAdminPresetCatalogRoute, bind(list_presets));
     router.add("GET", "", "/admin/v1/catalog/backstories", "admin.catalog_backstories", bind(list_backstories));
     router.add("GET", "", "/admin/v1/catalog/quest-support", "admin.catalog_quest_support", bind(list_quest_support));
+    router.add("GET", "", "/admin/v1/catalog/encounters", "admin.catalog_encounters", bind(list_encounters));
 }
 
 } // namespace soulwarden::backend::server::http
