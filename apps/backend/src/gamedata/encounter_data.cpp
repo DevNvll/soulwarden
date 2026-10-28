@@ -1,5 +1,6 @@
 #include "gamedata/encounter_data.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <set>
@@ -17,6 +18,9 @@ using nlohmann::json;
 constexpr std::uint64_t kFormat = 1;
 // The coordinates of the world (the rule of the other loaders of places).
 constexpr double kMaxCoordinate = 100000.0;
+// Stage QG5c3: the largest radius of a proximity object and the largest size of a detector shape (meters; the data has 35 m and 50 m).
+constexpr float kMaxRadius = 200.0F;
+constexpr double kMaxShape = 1000.0;
 
 bool finite_number(const json& value) {
     return value.is_number() && std::isfinite(value.get<double>());
@@ -175,6 +179,17 @@ bool EncounterData::load_text(const std::string& text) {
         member.onlyOnQuest = flag_of(entry, "onlyOnQuest");
         member.proximity = flag_of(entry, "proximity");
         member.cause = text_of(entry, "cause");
+        member.interact = !entry.contains("interact") || flag_of(entry, "interact");
+        member.direct = flag_of(entry, "direct");
+        if (entry.contains("radius") && (!seconds(entry, "radius", member.radius) || member.radius > kMaxRadius)) {
+            return fail("the member " + slice + " has a radius that is not a number of 0 to " + std::to_string(static_cast<int>(kMaxRadius)));
+        }
+        if (entry.contains("lifetime") && !seconds(entry, "lifetime", member.lifetime)) {
+            return fail("the member " + slice + " has a lifetime that is not a number of 0 to an hour");
+        }
+        if (member.kind == EncounterMemberKind::object && member.proximity && !(member.radius > 0.0F)) {
+            return fail("the proximity object " + slice + " has no radius");
+        }
         if (member.kind == EncounterMemberKind::creature && (member.vitals.empty() || member.body.empty())) {
             return fail("the creature member " + slice + " has no vitals row or no body");
         }
@@ -246,6 +261,66 @@ bool EncounterData::load_text(const std::string& text) {
             }
             recipe.detectorRadius = detector["radius"].get<float>();
             recipe.detectorFilter = text_of(detector, "filter");
+            // Stage QG5c3: the shapes of the detector (a sphere, a cylinder, an axis box); a file of before: one sphere of the radius.
+            if (detector.contains("shapes") && detector["shapes"].is_array()) {
+                for (const json& item : detector["shapes"]) {
+                    EncounterShape shape;
+                    const std::string kind = text_of(item, "shape");
+                    const auto size = [&](const char* name, float& out) {
+                        return item.contains(name) && finite_number(item[name]) && item[name].get<double>() > 0.0
+                               && item[name].get<double>() <= kMaxShape && ((out = item[name].get<float>()), true);
+                    };
+                    const auto triple = [&](const char* name, std::array<float, 3>& out, bool positive) {
+                        if (!item.contains(name)) {
+                            return !positive;
+                        }
+                        const json& value = item[name];
+                        if (!value.is_array() || value.size() != 3) {
+                            return false;
+                        }
+                        for (std::size_t axis = 0; axis < 3; ++axis) {
+                            if (!finite_number(value[axis]) || std::fabs(value[axis].get<double>()) > kMaxShape
+                                || (positive && !(value[axis].get<double>() > 0.0))) {
+                                return false;
+                            }
+                            out[axis] = value[axis].get<float>();
+                        }
+                        return true;
+                    };
+                    bool good = triple("center", shape.center, false);
+                    if (kind == "sphere") {
+                        shape.kind = EncounterShape::Kind::sphere;
+                        good = good && size("radius", shape.radius);
+                    } else if (kind == "cylinder") {
+                        shape.kind = EncounterShape::Kind::cylinder;
+                        good = good && size("radius", shape.radius) && size("height", shape.height);
+                    } else if (kind == "aabb") {
+                        shape.kind = EncounterShape::Kind::aabb;
+                        good = good && triple("extents", shape.extents, true);
+                    } else {
+                        // A shape that the runner does not test (the tool refused the recipe): the detector stays empty for it.
+                        continue;
+                    }
+                    if (!good) {
+                        return fail(what + " has a detector shape " + kind + " with no size, or a size that is not a number of 0 to 1000");
+                    }
+                    recipe.detectorShapes.push_back(shape);
+                }
+            } else if (recipe.detectorRadius > 0.0F) {
+                EncounterShape sphere;
+                sphere.radius = recipe.detectorRadius;
+                recipe.detectorShapes.push_back(sphere);
+            }
+            for (const EncounterShape& shape : recipe.detectorShapes) {
+                const float offset = std::sqrt(shape.center[0] * shape.center[0] + shape.center[1] * shape.center[1]
+                                               + shape.center[2] * shape.center[2]);
+                const float size = shape.kind == EncounterShape::Kind::sphere ? shape.radius
+                                   : shape.kind == EncounterShape::Kind::cylinder
+                                       ? std::sqrt(shape.radius * shape.radius + shape.height * shape.height * 0.25F)
+                                       : std::sqrt(shape.extents[0] * shape.extents[0] + shape.extents[1] * shape.extents[1]
+                                                   + shape.extents[2] * shape.extents[2]);
+                recipe.detectorReach = std::max(recipe.detectorReach, offset + size);
+            }
         }
         recipe.successEvent = text_of(entry, "successEvent");
         if (entry.contains("questEvents") && entry["questEvents"].is_array()) {
@@ -284,9 +359,19 @@ bool EncounterData::load_text(const std::string& text) {
             stage.userWave = flag_of(item, "userWave");
             const json& objective = item.value("objective", json::object());
             stage.objective.type = text_of(objective, "type");
-            stage.objective.kind = stage.objective.type == "InvasionWaveObjective" ? EncounterObjectiveKind::timed
+            stage.objective.kind = stage.objective.type == "InvasionWaveObjective"     ? EncounterObjectiveKind::timed
                                    : stage.objective.type == "SliceDestroyedObjective" ? EncounterObjectiveKind::destroyed
-                                                                                        : EncounterObjectiveKind::other;
+                                   : stage.objective.type == "SliceSpawnedObjective"   ? EncounterObjectiveKind::spawned
+                                                                                       : EncounterObjectiveKind::other;
+            stage.childrenOptional = flag_of(item, "childrenOptional");
+            if (item.contains("children") && item["children"].is_array()) {
+                for (const json& child : item["children"]) {
+                    if (!child.is_number_unsigned() || child.get<std::uint64_t>() >= entry["stages"].size()) {
+                        return fail(what + ": the stage " + stage.name + " names a child stage that is not a stage");
+                    }
+                    stage.children.push_back(child.get<std::uint32_t>());
+                }
+            }
             if (stage.objective.kind != EncounterObjectiveKind::other) {
                 if (!seconds(objective, "timeLimit", stage.objective.timeLimit)) {
                     return fail(what + ": the stage " + stage.name + " has a time limit that is not a number of 0 to an hour");
@@ -351,6 +436,26 @@ bool EncounterData::load_text(const std::string& text) {
                     return fail(what + " has a stage order with an index that is not a stage");
                 }
                 recipe.stageOrder.push_back(index.get<std::uint32_t>());
+            }
+        }
+        // Stage QG5c3: the parent of each child stage. A stage that two lists name, a stage of the manager in a child list, or a cycle
+        // stops the load (the tool reads each stage one time, in a breadth walk from the manager).
+        for (std::uint32_t index = 0; index < recipe.stages.size(); ++index) {
+            for (const std::uint32_t child : recipe.stages[index].children) {
+                EncounterStage& stage = recipe.stages[child];
+                if (child == index || stage.parent >= 0
+                    || std::find(recipe.stageOrder.begin(), recipe.stageOrder.end(), child) != recipe.stageOrder.end()) {
+                    return fail(what + ": the stage " + stage.name + " is in two stage lists");
+                }
+                stage.parent = static_cast<std::int32_t>(index);
+            }
+        }
+        for (EncounterStage& stage : recipe.stages) {
+            std::size_t depth = 0;
+            for (std::int32_t at = stage.parent; at >= 0; at = recipe.stages[static_cast<std::size_t>(at)].parent) {
+                if (++depth > recipe.stages.size()) {
+                    return fail(what + ": the child stages of the stage " + stage.name + " make a cycle");
+                }
             }
         }
         // The collection of the client (0x26F1FD0): the user-wave stages in the stage order, from 0.

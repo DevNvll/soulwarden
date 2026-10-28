@@ -709,16 +709,16 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
         rows.append(row_entry(cells.get("GatherableID", identifier).strip(), table, cells))
         return row_index[key]
 
-    def variant_row(template: int, variant: str, what: str) -> int:
+    def variant_row(template: int, variant: str, what: str, proximity: bool = False) -> int:
         table = slices.templates[template]["table"]
-        if table not in ORDINARY_TABLES and table not in QUEST_TABLES:
+        if table not in ORDINARY_TABLES and table not in QUEST_TABLES and not (proximity and table in PROXIMITY_TABLES):
             return -1
         entry = tables.variations.get(table, {}).get(variant.lower())
         if entry is None or not entry["gatherable"]:
             counts["unknownVariants"] += 1
             return -1
         row = row_of(entry["gatherable"], f"{what}: the variation row {table}/{variant}")
-        if table in QUEST_TABLES:
+        if table in QUEST_TABLES or table in PROXIMITY_TABLES:
             # A quest object (stage 1.8c): its loot is the quest drops; a loot container with the loot table Empty is not a refusal.
             rows[row]["quest"] = True
             rows[row]["unsupported"] = [cause for cause in rows[row]["unsupported"]
@@ -785,14 +785,15 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
             (out_folder / file_name).write_bytes(region_data)
         print(f"gathering: {name}: {len(indexes)} records, {gathering} gathering nodes", file=sys.stderr)
 
-    def quest_capital(template: int, variant: str, what: str) -> list | None:
+    def quest_capital(template: int, variant: str, what: str, proximity: bool = False) -> list | None:
         """@return The capital entry of a quest object (stage 1.8c; stage QG5a: any slice path, the variant of the placement or of the
-        spawner, else the m_selectedVariant of the slice, and the direct bindings), or no value for a slice that is not one."""
+        spawner, else the m_selectedVariant of the slice, and the direct bindings), or no value for a slice that is not one. Stage QG5c3:
+        `proximity` also takes a slice of Gatherable_Quest_Proximity (the start object of an ambush: its node state and its row)."""
         table = slices.templates[template]["table"]
         extra = slices.extra[template]
-        if table in QUEST_TABLES:
+        if table in QUEST_TABLES or (proximity and table in PROXIMITY_TABLES):
             name = variant.strip() or extra["selected"]
-            row = variant_row(template, name, what)
+            row = variant_row(template, name, what, proximity)
             if row < 0:
                 return None
             entry = tables.variations[table][name.lower()]
@@ -905,7 +906,8 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
         reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog)
         for member in reader.start_objects(recipes):
             template = slices.template_of(member["slice"], False)
-            entry = quest_capital(template, member["variant"], f"the start object {member['slice']}") if template is not None else None
+            entry = quest_capital(template, member["variant"], f"the start object {member['slice']}", bool(member.get("proximity"))) \
+                if template is not None else None
             if entry is None:
                 counts["encounterObjectsLeftOut"] = counts.get("encounterObjectsLeftOut", 0) + 1
                 continue

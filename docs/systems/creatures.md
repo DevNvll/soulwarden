@@ -413,6 +413,17 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
   [data: `m_overrideAggroDelay`, `m_aggroDelayOverride`; live L2: with no provoke a member 3 m from the character did not see it].
 - Code review of stage QG5c1, finding QG5C1R-R1: a hit ends the next-hit stun of a stationary target too; only the reaction and the
   target of the hurt stay behind `!stationary()` [agent; test case QGR5C1A].
+- Stage QG5c3: a direct member (a creature slice itself in a spawn timeline: a CharacterComponent and a Vitals component with
+  `m_rowReference`, no AIVariantProvider) has its vitals row from `m_rowReference` and its body from the slice; the creature tool makes
+  its kind with the rules of a spawn point [data; [Encounters](encounters.md)]. In the supported build: the inquisitor cleric and the
+  markswoman of the corrupted tree (the flamekeeper stays out: the client does not show its slice), the named anubian brute of the tomb of
+  1650, the tendrils of Overseer Zane, and members of seasonal events. The build has 141 member kinds (133 before), and 18 members stay out
+  with their cause.
+- Stage QG5c3: the starved ghost of Torment (`ghost_starved_22.dynamicslice`) and the boss ghost of the siphon fight of 09A_S18
+  (`worldevent_ai_09a_s18_ghost_shade_boss.dynamicslice`) are in `AREA_EXCEPTIONS` of `creature_behavior.py`: they have the shared action
+  list of the ghosts (74 actions, the same as `ghost_charred`) with the plague nova, and their damage table has no row of the spell, as
+  for the 14 ghost slices of the list [data]. Their behavior data is complete now, and their members have kinds (the four ghosts of
+  Torment, the boss ghost "Scourge of the Storm": live QG5c3 L1, its name plate and its health bar).
 
 ## Open points
 

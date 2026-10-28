@@ -789,6 +789,13 @@ public:
     [[nodiscard]] ActorId next_session_actor() {
         return m_ids.next(ActorKind::session);
     }
+    /**
+     * Stage QG5c3: an id of the allocator that no entity has (a member of an encounter with no entity: an area trigger, a member that ends
+     * itself). Only the encounter system calls it.
+     */
+    [[nodiscard]] EntityId reserve_id() {
+        return entity_group_id(m_ids.next(ActorKind::otherEntity));
+    }
 
     /** @return The account of a persona id, from the store. */
     [[nodiscard]] std::optional<state::Account> account_of(const std::string& personaId) {

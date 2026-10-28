@@ -41,13 +41,25 @@
 // Quests::event (gameEvent) for each of them; a store failure keeps the recipient in the ledger and tries again after kPayoutRetry. A fight
 // stage with no participant fails the encounter (a reset, a rule of this project).
 //
+// Stage QG5c3 (the summoned opponents, the ambushes, the kill waves with a cause of the data): the child stages of a stage run one after
+// the other (the first one at the start of the stage), and a stage counts the spawns of its child stages; a stage whose child stages are
+// not optional ends when it has its count and its last child stage ended. A SliceSpawnedObjective ends at the spawns of its tracked slice;
+// a destroyed stage with no tracked slice and no spawn below it counts each death of a member of its instance. A proximity object (the
+// start of an ambush; an area trigger with no Interact has no entity) is found at a scan by each character in its sphere with an accepted
+// position (InteractOnlyOnQuest: an Active task with its tag): the game event and the tag of its row, then its stage counts it. A member
+// that ends itself (its lifetime: the smoke burst, the powder keg) has no entity and counts at its end; a member that no stage needs and
+// that the runner cannot make (a visual, a creature member that the client does not show) is not made. The detector is a sphere, a
+// cylinder, or an axis box (the capsule of a character in one of its shapes). Code review of stage QG5c2: the participants are refreshed
+// at the success (R1), and a count above the members that the runner makes refuses the recipe (R3).
+//
 // The cost depends on the characters, the instances, and the due entries, not on the size of the world (MP-8): the placements are in a grid
 // of cells (a scan looks at the cells near each character), the participants of an instance are the characters near its root (the position
-// index), and the timers are one due list.
+// index), the proximity objects are the ones of the running instances (the characters near each one), and the timers are one due list.
 
 namespace soulwarden::backend::world {
 
 class World;
+struct WorldCapsule;
 
 namespace encounter_rules {
 /** The interval of the placement rule and of the participant rule on the world clock. */
@@ -104,6 +116,12 @@ struct EncounterMemberRun {
     std::uint32_t spawn{0};
     bool object{false};
     bool done{false};
+    /**
+     * Stage QG5c3: a proximity object (a character in its sphere finds it: the ambush starts), and a member with no entity (an area trigger
+     * with no Interact component, a member that ends itself): its id is an id of the allocator that no entity has.
+     */
+    bool proximity{false};
+    bool noEntity{false};
 };
 
 /** The run of one stage of an instance. */
@@ -112,6 +130,14 @@ struct EncounterStageRun {
     bool ended{false};
     std::uint32_t destroyed{0};
     std::uint32_t spawned{0};
+    /**
+     * Stage QG5c3: the spawns of the tracked slice (a spawned objective), the next child stage to start, the end of the last child stage,
+     * and the count of the objective (a stage whose child stages are not optional ends when both came).
+     */
+    std::uint32_t spawnedTracked{0};
+    std::uint32_t nextChild{0};
+    bool childrenDone{false};
+    bool objectiveMet{false};
 };
 
 struct EncounterParticipant {
@@ -144,6 +170,11 @@ struct EncounterPlacement {
      */
     std::vector<const gamedata::CreatureKind*> kinds;
     std::vector<const gamedata::EncounterObject*> templates;
+    /**
+     * Stage QG5c3: the stages that count each death of a member of their instance (a destroyed stage with no tracked slice and no spawn of
+     * its own or of its child stages: Kill Helvan Boss), by the stage index.
+     */
+    std::vector<bool> anyMember;
     /** The instance that runs (0: none), the last generation, the respawn of a new instance (no value: at once). */
     bool live{false};
     std::uint64_t generation{0};
@@ -173,6 +204,12 @@ struct EncounterCounts {
     std::uint64_t memberDeaths{0};
     std::uint64_t objectsMade{0};
     std::uint64_t objectsGathered{0};
+    /** Stage QG5c3: the finds of the proximity objects, the looks of their spheres, the members that ended themselves, the spawns that the
+     *  runner did not make (a visual of its stage, a creature member that the client does not show in a stage that does not need it). */
+    std::uint64_t objectsFound{0};
+    std::uint64_t proximityLooks{0};
+    std::uint64_t timedEnds{0};
+    std::uint64_t spawnsSkipped{0};
     /** Events of an old generation (a late death, an old timer, an old gather): no change. */
     std::uint64_t oldGeneration{0};
     std::uint64_t participantsAdded{0};
@@ -280,6 +317,15 @@ private:
         payout,
         /** The aggro delay of a member (its entity in `payout`). */
         aggro,
+        /** Stage QG5c3: the end of a member that ends itself (its id in `payout`). */
+        memberEnd,
+    };
+    /** Stage QG5c3: a proximity object of a running stage (with an entity or not): its place and its member data. */
+    struct Proximity {
+        std::uint32_t placement{0};
+        std::uint64_t generation{0};
+        state::WorldPosition place;
+        const gamedata::EncounterMember* member{nullptr};
     };
     struct Due {
         DueKind kind{DueKind::activate};
@@ -308,6 +354,13 @@ private:
     void start_stage(EncounterInstance& instance, std::uint32_t stage);
     void spawn(EncounterInstance& instance, std::uint32_t stage, std::uint32_t spawn);
     void count_destroyed(EncounterInstance& instance, EntityId member);
+    /** Stage QG5c3: the count of one stage reached its required count (or a spawned objective its spawns): it ends, or it waits for its child
+     *  stages that are not optional. */
+    void objective_met(EncounterInstance& instance, std::uint32_t stage);
+    /** Stage QG5c3: the characters in the spheres of the proximity objects find them (an accepted position; InteractOnlyOnQuest). */
+    void look_proximity();
+    /** Stage QG5c3: a character is in the detector of a recipe (one of its shapes). */
+    [[nodiscard]] static bool in_detector(const gamedata::EncounterRecipe& recipe, const state::WorldPosition& root, const WorldCapsule& body);
     /** A new member takes the nearest participant that lives as its target (the aggro of the encounter). */
     void provoke(EncounterInstance& instance, Entity& member);
     void end_stage(EncounterInstance& instance, std::uint32_t stage, bool success);
@@ -321,6 +374,8 @@ private:
     void link(Entity& character, EntityId root, bool on);
     [[nodiscard]] bool counts_toward(const gamedata::EncounterRecipe& recipe, const gamedata::EncounterStage& stage,
                                      const gamedata::EncounterSpawn& spawn) const;
+    /** Stage QG5c3: the stage of a spawn or a stage above it counts the spawn (a destroyed or a spawned objective that tracks it or nothing). */
+    [[nodiscard]] bool spawn_needed(const gamedata::EncounterRecipe& recipe, std::uint32_t stage, const gamedata::EncounterSpawn& spawn) const;
     [[nodiscard]] EncounterInstance* instance_of(std::uint32_t placement, std::uint64_t generation);
     [[nodiscard]] static std::int64_t cell_of(float value);
     void schedule(WorldClock::time_point at, const Due& due);
@@ -337,6 +392,8 @@ private:
     std::unordered_map<EntityId, std::pair<std::uint32_t, std::uint64_t>> m_memberOf;
     /** The start objects of the running stages: entity to its member slice. */
     std::unordered_map<EntityId, std::string> m_objects;
+    /** Stage QG5c3: the proximity objects of the running stages (an entity id, or an id with no entity). */
+    std::map<EntityId, Proximity> m_proximity;
     std::multimap<WorldClock::time_point, Due> m_due;
     std::vector<Event> m_events;
     std::vector<EncounterPayout> m_payouts;

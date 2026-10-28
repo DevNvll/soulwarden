@@ -10,20 +10,31 @@ spawn locations, their objectives and actions, and its parent spawner (the respa
 time ("members"): a creature member (its vitals row, its category row, its level, its body slice; creature_data.py makes its kind) or a
 start object (its variant, its gatherable row, its game event, its tag; interactions.py makes its template and gathering.py its row).
 
-A member slice that is not a creature and not a start object, in a stage whose objective tracks a different slice, is a visual of the
-stage (the smoke burst of the lost pylons): the backend does not make it, and the recipe stays (a rule of this project; a limit of the
-picture). A recipe has "refused": the causes of the data that the runner of stage QG5c2 does not run (the rules below; the backend adds the causes of
-the other game data files: a member kind, a template, or a row that is not there). Empty: the runner takes the recipe.
-  - The scope of stage QG5c2 (a rule of this project; the patterns of research quest-encounters.md, Appendix A): the kill waves after an
-    interaction, and the Blighted Ranger. LATER names the recipes of the other patterns with their stage: the ambushes, the summoned
-    opponents, the interaction sequences, and the defenses (QG5c3), the seasonal events (later).
-  - The manager starts the encounter by itself (m_autoActivate), has no reset event, and the detector is a sphere with a radius.
-  - Each objective is an InvasionWaveObjective with a time limit and succeedOnTimeout (a timed stage), or a SliceDestroyedObjective (with a
-    tracked slice of its own spawns or none: the members of its stage); no failure condition, no background activation.
-  - No child stage, no DestroySliceAction (a later stage); EntityEventAction is a part of the client (the handler of the stage status);
-    KillSpawnsAction removes the members.
-  - Each member is a creature member or a start object of an interaction (not a proximity object: an ambush); the recipe has a creature
-    member (else it is an interaction sequence) and a start object only in a stage that tracks it.
+A member slice that is not a creature and not a start object, in a stage that does not need it (a timed stage, or a stage whose objective
+tracks a different slice), is a visual of the stage (the smoke burst of the lost pylons in their tracked stages, the cannon storm of
+Helvan): the backend does not make it, and the recipe stays (a rule of this project; a limit of the picture). Stage QG5c3: a member that
+ends itself ("lifetime" of encounter_recipes.py: the smoke burst, the powder keg) counts as destroyed at its end in a stage that needs it;
+the backend makes no record of it. A recipe has "refused": the causes of the data that the runner does not run (the rules below; the backend
+adds the causes of the other game data files: a member kind, a template, or a row that is not there). Empty: the runner takes the recipe.
+  - The scope (a rule of this project; the patterns of research quest-encounters.md, Appendix A): stage QG5c2 the kill waves after an
+    interaction and the Blighted Ranger; stage QG5c3 the summoned opponents, the ambushes, and the kill waves with a cause of the data.
+    PATTERNS gives each other recipe its pattern (the label of the counts); LATER names the patterns of a later stage: the interaction
+    sequences and the defenses (QG5c4), the summoned opponent with phases (BT3), the world events and the seasonal events (later).
+  - The manager starts the encounter by itself (m_autoActivate). A reset event of the manager (m_resetEncounterEventId, Reset_Encounter of
+    the stone tablet of Helvan) is no cause: no slice or table of the data sends it, and the fail of the runner (a fight with no
+    participant) is the reset (stage QG5c3, a rule of this project).
+  - The detector of the participants (the DetectionVolumeComponent of the entity of the ParticipantTracker) is a sphere, a cylinder, or an
+    axis box with a size (stage QG5c3: the cylinder of Torment, the box of the Bathory hall).
+  - The parent spawner is an area spawner that spawns at its enable (m_spawnOnEnable; stage QG5c3: a point or a prefab spawner of the data
+    has no spawn at its enable, and each one has a twin spawner of the same encounter: the EncounterCondition spawners of the Bathory hall
+    and of the bookcase, the prefab spawner of Gazsala; the 16 recipes of stage QG5c2 have area parents).
+  - Each objective is an InvasionWaveObjective with a time limit and succeedOnTimeout (a timed stage), a SliceDestroyedObjective (with a
+    tracked slice of its own spawns or of the spawns of its child stages, or none: the members of its stage and of its child stages), or a
+    SliceSpawnedObjective (stage QG5c3: the spawn of its tracked slice); no failure condition, no background activation.
+  - Child stages run (stage QG5c3: one after the other in their order, docs/systems/encounters.md); no DestroySliceAction (a later
+    stage); EntityEventAction is a part of the client (the handler of the stage status); KillSpawnsAction removes the members.
+  - Each member is a creature member or a start object (a gather or a proximity object: stage QG5c3, the ambushes), the recipe has a
+    creature member (else it is an interaction sequence), and a start object is only in a stage that tracks it.
 
 Usage: encounters.py [OUTPUT.json]      (default: GAMEDATA_DIR/encounter-data.json; a test: a path outside the common folder)
 
@@ -60,29 +71,35 @@ from encounter_recipes import read_recipes  # noqa: E402
 
 OUTPUT_NAME = "encounter-data.json"
 FORMAT = 1
-QG5C3 = "stage QG5c3"
-# The recipes of the other patterns (research quest-encounters.md, Appendix A and C) and their stage: the scope of stage QG5c2.
+QG5C4 = "stage QG5c4"
+AMBUSH = "an ambush"
+SUMMONED = "a summoned opponent"
+# The pattern of each recipe that is not a kill wave after an interaction (research quest-encounters.md, Appendix A and C), with no
+# refusal: the label of the counts. Stage QG5c3 runs them (each with the causes of its data).
+PATTERNS = {
+    "slices/worldevents/brimstonesands/enc_worldevent_1625_aeambush.dynamicslice": AMBUSH,
+    "slices/worldevents/brightwood/enc_worldevent_99b_msq_yonasretreat.dynamicslice": AMBUSH,
+    "slices/worldevents/edengrove/enc_worldevent_99e_msq_blightambush.dynamicslice": AMBUSH,
+    "slices/worldevents/edengrove/enc_worldevent_99e_msq_corrstaff.dynamicslice": AMBUSH,
+    "slices/worldevents/firstlight/interact/summongazsala/enc_worldevent_09a_s13_gazsalathiss.dynamicslice": SUMMONED,
+    "slices/worldevents/firstlight/encounters/enc_worldevent_09a_s16_hercyneboarnamed.dynamicslice": SUMMONED,
+    "slices/worldevents/mainstoryquest/thorpe/enc_worldevent_msq_thorpe_01.dynamicslice": SUMMONED,
+    "slices/worldevents/everfall/enc_worldevent_windsward_cq3_templarinvectus.dynamicslice": SUMMONED,
+    "slices/worldevents/dunwood/grivaros/enc_worldevent_grivaros.dynamicslice": SUMMONED,
+    "slices/worldevents/dunwood/bathory/enc_worldevent_bathory_guardian.dynamicslice": SUMMONED,
+}
+# The recipes of the patterns of a later stage and their stage (refused).
 LATER = {
-    "slices/worldevents/brimstonesands/enc_worldevent_1625_aeambush.dynamicslice": ("an ambush", QG5C3),
-    "slices/worldevents/brightwood/enc_worldevent_99b_msq_yonasretreat.dynamicslice": ("an ambush", QG5C3),
-    "slices/worldevents/edengrove/enc_worldevent_99e_msq_blightambush.dynamicslice": ("an ambush", QG5C3),
-    "slices/worldevents/edengrove/enc_worldevent_99e_msq_corrstaff.dynamicslice": ("an ambush", QG5C3),
-    "slices/worldevents/firstlight/interact/summongazsala/enc_worldevent_09a_s13_gazsalathiss.dynamicslice": ("a summoned opponent", QG5C3),
-    "slices/worldevents/firstlight/encounters/enc_worldevent_09a_s16_hercyneboarnamed.dynamicslice": ("a summoned opponent", QG5C3),
-    "slices/worldevents/mainstoryquest/thorpe/enc_worldevent_msq_thorpe_01.dynamicslice": ("a summoned opponent", QG5C3),
-    "slices/worldevents/everfall/enc_worldevent_windsward_cq3_templarinvectus.dynamicslice": ("a summoned opponent", QG5C3),
-    "slices/worldevents/dunwood/grivaros/enc_worldevent_grivaros.dynamicslice": ("a summoned opponent", QG5C3),
     "slices/worldevents/dunwood/enc_worldevent_carmilla_mindthief.dynamicslice": ("a summoned opponent with phases", "a later stage (BT3)"),
-    "slices/worldevents/dunwood/bathory/enc_worldevent_bathory_guardian.dynamicslice": ("a summoned opponent", QG5C3),
-    "slices/worldevents/brimstonesands/interact/enc_worldevent_1656_0401_drusillabanner.dynamicslice": ("an interaction sequence", QG5C3),
-    "slices/worldevents/brimstonesands/interact/enc_worldevent_1624_diskatumwave.dynamicslice": ("an interaction sequence", QG5C3),
-    "slices/pois/ancient/design/brazier/enc_worldevent_master_brazier2.dynamicslice": ("an interaction sequence", QG5C3),
-    "slices/worldevents/cutlasskeys/encounters/enc_worldevent_10a_q4_shipwreck.dynamicslice": ("an interaction sequence", QG5C3),
-    "slices/worldevents/firstlight/encounters/enc_defense_09a_m5_waveevent.dynamicslice": ("a defense", QG5C3),
-    "slices/worldevents/firstlight/encounters/enc_defense_09a_m5_angryearth.dynamicslice": ("a defense", QG5C3),
-    "slices/worldevents/firstlight/encounters/enc_worldevent_09a_s17_wagonattack.dynamicslice": ("a defense", QG5C3),
-    "slices/worldevents/firstlight/interact/cc/enc_worldevent_09a_s9_hacker.dynamicslice": ("a defense", QG5C3),
-    "slices/worldevents/edengrove/wave_events/enc_worldevent_1434_pyre.dynamicslice": ("a defense", QG5C3),
+    "slices/worldevents/brimstonesands/interact/enc_worldevent_1656_0401_drusillabanner.dynamicslice": ("an interaction sequence", QG5C4),
+    "slices/worldevents/brimstonesands/interact/enc_worldevent_1624_diskatumwave.dynamicslice": ("an interaction sequence", QG5C4),
+    "slices/pois/ancient/design/brazier/enc_worldevent_master_brazier2.dynamicslice": ("an interaction sequence", QG5C4),
+    "slices/worldevents/cutlasskeys/encounters/enc_worldevent_10a_q4_shipwreck.dynamicslice": ("an interaction sequence", QG5C4),
+    "slices/worldevents/firstlight/encounters/enc_defense_09a_m5_waveevent.dynamicslice": ("a defense", QG5C4),
+    "slices/worldevents/firstlight/encounters/enc_defense_09a_m5_angryearth.dynamicslice": ("a defense", QG5C4),
+    "slices/worldevents/firstlight/encounters/enc_worldevent_09a_s17_wagonattack.dynamicslice": ("a defense", QG5C4),
+    "slices/worldevents/firstlight/interact/cc/enc_worldevent_09a_s9_hacker.dynamicslice": ("a defense", QG5C4),
+    "slices/worldevents/edengrove/wave_events/enc_worldevent_1434_pyre.dynamicslice": ("a defense", QG5C4),
     # The boat reinforcements of Monarch's Bluffs: a world event of the open world; its only quest event is the game event of the cannon
     # gimmick (IO_Gimmick_BreakingWallsCannon_interact), which the placed cannons give (stage QG5b).
     "slices/worldevents/monarchsbluffs/scallywagshore/enc_worldevent_boatreinforcements_bryseddshore.dynamicslice":
@@ -91,19 +108,70 @@ LATER = {
         ("a world event of the open world", "a later stage (the world events)"),
 }
 LATER_FOLDERS = {
-    "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/": ("an interaction sequence", QG5C3),
+    "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/": ("an interaction sequence", QG5C4),
     "slices/darkness/": ("a seasonal event (the Darkness)", "a later stage (the scheduled and seasonal events)"),
     "slices/worldevents/seasons/": ("a seasonal event", "a later stage (the scheduled and seasonal events)"),
 }
 TIMED = "InvasionWaveObjective"
 DESTROYED = "SliceDestroyedObjective"
+SPAWNED = "SliceSpawnedObjective"
+# The detector shapes that the runner tests (encounter_recipes.detector_shape) and the size that each one needs.
+SHAPES = ("sphere", "cylinder", "aabb")
 
 
 def pattern_of(recipe: dict) -> tuple[str, str] | None:
+    """@return The pattern and the later stage of a recipe of LATER or LATER_FOLDERS, or no value."""
     path = recipe["slice"]
     if path in LATER:
         return LATER[path]
     return next((value for folder, value in LATER_FOLDERS.items() if path.startswith(folder)), None)
+
+
+def pattern_label(recipe: dict) -> str:
+    """@return The label of the pattern of a recipe (the counts; stage QG5c3: the members decide some of them)."""
+    later = pattern_of(recipe)
+    if later is not None:
+        return later[0]
+    return PATTERNS.get(recipe["slice"], "a kill wave")
+
+
+def descendants(recipe: dict, index: int) -> list[int]:
+    """@return The stage and its child stages (each level of m_stages, in their order)."""
+    out, pending = [], [index]
+    while pending:
+        current = pending.pop(0)
+        if current in out or current >= len(recipe["stages"]):
+            continue
+        out.append(current)
+        pending.extend(recipe["stages"][current]["children"])
+    return out
+
+
+def ancestors(recipe: dict, index: int) -> list[int]:
+    """@return The stage and each stage above it (the stage whose m_stages names it, and so on)."""
+    parent = {child: at for at, stage in enumerate(recipe["stages"]) for child in stage["children"]}
+    out = [index]
+    while out[-1] in parent and parent[out[-1]] not in out:
+        out.append(parent[out[-1]])
+    return out
+
+
+def good_shape(shape: dict) -> bool:
+    """@return True for a detector shape that the runner tests: a sphere with a radius, a cylinder with a radius and a height, an axis box
+    with its three extents."""
+    if shape.get("shape") == "sphere":
+        return shape.get("radius", 0.0) > 0.0
+    if shape.get("shape") == "cylinder":
+        return shape.get("radius", 0.0) > 0.0 and shape.get("height", 0.0) > 0.0
+    if shape.get("shape") == "aabb":
+        return len(shape.get("extents", [])) == 3 and all(value > 0.0 for value in shape["extents"])
+    return False
+
+
+def good_detector(detector: dict | None) -> bool:
+    """@return True when the detector of the participants has at least one shape and each of its shapes is one that the runner tests."""
+    shapes = (detector or {}).get("shapes")
+    return bool(shapes) and all(good_shape(shape) for shape in shapes)
 
 
 def tracks(tracked: str, member_path: str, members: dict[str, dict]) -> bool:
@@ -111,6 +179,21 @@ def tracks(tracked: str, member_path: str, members: dict[str, dict]) -> bool:
     creature member, or a slice of that alias (the lost pylons track undead_berserker.dynamicslice, a slice of the alias of the member)."""
     member = members.get(member_path, {})
     return tracked in (member_path, member.get("body")) or tracked in member.get("bodySlices", [])
+
+
+def makes(member: dict | None) -> bool:
+    """@return True for a member that the runner makes or counts: a creature, a start object, or a member that ends itself."""
+    return member is not None and (member["kind"] in ("creature", "object") or member.get("lifetime", 0.0) > 0.0)
+
+
+def needs(stage: dict, member_path: str, members: dict[str, dict]) -> bool:
+    """@return True when the objective of a stage counts a spawn of this member: a destroyed or a spawned stage that tracks it or tracks
+    no slice. A timed stage needs no spawn (it ends at its time)."""
+    objective = stage["objective"]
+    if objective["type"] not in (DESTROYED, SPAWNED):
+        return False
+    tracked = objective.get("trackedSlice") or objective.get("trackedAlias")
+    return not tracked or tracks(tracked, member_path, members)
 
 
 def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
@@ -122,27 +205,37 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
     manager = recipe["manager"]
     if not manager["autoActivate"]:
         causes.append("the manager does not start the encounter by itself (m_autoActivate 0: a start of an event)")
-    if manager["resetEvent"]:
-        causes.append(f"a reset event of the manager ({manager['resetEvent']}): a later stage")
-    detector = recipe.get("detector")
-    if detector is None or not detector["sphere"] or detector["radius"] <= 0.0:
-        causes.append("the detector of the participants is not a sphere with a radius")
+    if not good_detector(recipe.get("detector")):
+        causes.append("the detector of the participants is not a sphere, a cylinder, or an axis box with a size")
+    parent = recipe.get("parent") or {}
+    if parent.get("kind", "area") != "area" or not parent.get("spawnOnEnable", True):
+        causes.append(f"the parent spawner (a {parent.get('kind', '?')} spawner) does not spawn at its enable (m_spawnOnEnable 0): an "
+                      "other spawner or a condition starts it")
     creature = False
-    for stage in recipe["stages"]:
+    for index, stage in enumerate(recipe["stages"]):
         objective = stage["objective"]
         kind = objective["type"]
         name = stage["name"]
-        if stage["children"]:
-            causes.append(f"the stage {name} has child stages: a later stage")
+        tracked = objective.get("trackedSlice") or objective.get("trackedAlias")
+        below = [recipe["stages"][at] for at in descendants(recipe, index)]
         if kind == TIMED:
             if objective["timeLimit"] <= 0 or not objective["succeedOnTimeout"]:
                 causes.append(f"the wave stage {name} has no timed success")
-        elif kind == DESTROYED:
+        elif kind in (DESTROYED, SPAWNED):
             if objective["requiredCount"] <= 0:
-                causes.append(f"the stage {name} needs no destroyed slice")
-            tracked = objective["trackedSlice"] or objective["trackedAlias"]
-            if tracked and not any(tracks(tracked, spawn["member"], members) for spawn in stage["spawns"]):
-                causes.append(f"the stage {name} tracks a slice that it does not spawn")
+                causes.append(f"the stage {name} needs no {'destroyed' if kind == DESTROYED else 'spawned'} slice")
+            if tracked and not any(tracks(tracked, spawn["member"], members) for part in below for spawn in part["spawns"]):
+                causes.append(f"the stage {name} tracks a slice that it and its child stages do not spawn")
+            # Code review of stage QG5c2, finding QG5C2R-R3: the spawns that can count for the stage (its own and those of its child
+            # stages that it tracks, not a visual: a creature, a start object, or a member that ends itself) must reach its count, or a
+            # time limit with succeedOnTimeout ends it. A stage with no spawn below it and no tracked slice counts each death of a member of
+            # its instance (stage QG5c3: Kill Helvan Boss) and needs that time limit.
+            timed_end = objective["timeLimit"] > 0 and objective["succeedOnTimeout"]
+            possible = sum(spawn["count"] for part in below for spawn in part["spawns"]
+                           if (not tracked or tracks(tracked, spawn["member"], members)) and makes(members.get(spawn["member"])))
+            if not timed_end and objective["requiredCount"] > possible:
+                causes.append(f"the stage {name} needs {objective['requiredCount']} {'destroyed' if kind == DESTROYED else 'spawned'} "
+                              f"slices, and its spawns can give only {possible}")
         else:
             causes.append(f"the objective {kind} of the stage {name}: a later stage")
         if objective.get("failureCondition"):
@@ -154,27 +247,29 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
                 causes.append(f"the action {action['type']} of the stage {name}: a later stage")
         for spawn in stage["spawns"]:
             member = members.get(spawn["member"], {"kind": "unknown", "cause": "no slice"})
-            tracked = objective.get("trackedSlice") or objective.get("trackedAlias")
-            if member["kind"] == "unknown" and kind == DESTROYED and tracked and not tracks(tracked, spawn["member"], members):
-                # A visual of the stage (the smoke burst of the lost pylons): the stage does not track it, and the backend does not make it.
-                continue
+            short = spawn["member"].rsplit("/", 1)[-1]
+            # The stages that count this spawn: the stage itself and each parent of it (stage QG5c3: a parent counts the spawns of its
+            # child stages).
+            needed = any(needs(recipe["stages"][at], spawn["member"], members) for at in ancestors(recipe, index))
             if member["kind"] == "unknown":
-                causes.append(f"the member {spawn['member'].rsplit('/', 1)[-1]}: {member['cause']}")
+                if not needed:
+                    # A visual of the stage (the smoke burst of the lost pylons in their tracked stages, the cannon storm of Helvan in a
+                    # timed stage): no stage counts it, and the backend does not make it.
+                    continue
+                if member.get("lifetime", 0.0) > 0.0:
+                    continue  # Stage QG5c3: a member that ends itself counts as destroyed at its end (the smoke burst, the powder keg).
+                causes.append(f"the member {short}: {member['cause']}")
             elif member["kind"] == "object":
-                if member.get("proximity"):
-                    causes.append(f"the start object {spawn['member'].rsplit('/', 1)[-1]} is a proximity object (an ambush: {QG5C3})")
-                elif member.get("cause"):
-                    causes.append(f"the start object {spawn['member'].rsplit('/', 1)[-1]}: {member['cause']}")
-                if kind != DESTROYED or (tracked and tracked != spawn["member"]):
-                    causes.append(f"the start object {spawn['member'].rsplit('/', 1)[-1]} is in a stage that does not track it")
-                if spawn["count"] != 1 or len(spawn["locations"]) > 1:
-                    causes.append(f"the start object {spawn['member'].rsplit('/', 1)[-1]} has more than one place")
+                if member.get("cause"):
+                    causes.append(f"the start object {short}: {member['cause']}")
+                if kind != DESTROYED or (tracked and not tracks(tracked, spawn["member"], members)):
+                    causes.append(f"the start object {short} is in a stage that does not track it")
             else:
                 creature = True
             if spawn["count"] <= 0:
                 causes.append(f"a spawn of the stage {name} has no count")
     if not creature:
-        causes.append(f"no creature member: not a kill wave (an interaction sequence: {QG5C3})")
+        causes.append(f"no creature member: not a kill wave (an interaction sequence: {QG5C4})")
     return list(dict.fromkeys(causes))
 
 
@@ -185,6 +280,9 @@ def hex16(value: int) -> str:
 def build(sources: Sources) -> dict:
     catalog = Catalog(sources.read(CATALOG_PATH))
     reader, recipes, counts = read_recipes(sources, catalog)
+    # Code review of stage QG5c2, finding QG5C2R-R2: a source that the reads needed and that the game copy did not give (an Oodle entry
+    # with no library) stops the tool before a file is written; a smaller document with no message is not a result.
+    sources.check_complete()
     assets = slice_assets(catalog)
     members: dict[str, dict] = {}
     for path, member in sorted(reader.members.items()):
@@ -196,7 +294,6 @@ def build(sources: Sources) -> dict:
         if asset is None:
             raise Failure(f"the asset catalog has no slice asset of the encounter {recipe['slice']}")
         causes = refusals(recipe, members)
-        later = pattern_of(recipe)
         entry = {
             "key": recipe["key"], "slice": recipe["slice"], "asset": asset[0].hex().upper(), "sub": asset[1],
             "root": hex16(recipe["root"]), "rootName": recipe["rootName"], "layer": recipe["layer"], "parentSlice": recipe["parentSlice"],
@@ -209,7 +306,7 @@ def build(sources: Sources) -> dict:
             "parent": recipe["parent"], "stageOrder": recipe["stageOrder"],
             "stages": [{**{key: value for key, value in stage.items() if key not in ("entity", "component")},
                         "entity": hex16(stage["entity"]), "component": hex16(stage["component"])} for stage in recipe["stages"]],
-            "unreachable": recipe["unreachable"], "pattern": later[0] if later is not None else "a kill wave",
+            "unreachable": recipe["unreachable"], "pattern": pattern_label(recipe),
             "refused": causes,
         }
         for cause in causes:

@@ -334,8 +334,19 @@ struct QuestSupport::Index {
     std::unordered_set<std::string> killEvents;
     /** Stage QG2a: the categories of the quest drops of a kill (the rule of the kill with no id of the base row). */
     std::unordered_set<std::string> dropCategories;
-    /** The game events of the gatherable rows with a node in the world: the kind of the node (lower case event id). */
-    std::unordered_map<std::string, std::string> gatherEvents;
+    /**
+     * The producers of the game events of a gather or of an encounter (lower case event id): each with its kind, the rank gate of a trade
+     * skill that only a hand-in gives (stage QG5b: AzothStaff; empty: none), and the item of its restriction ItemRequired (empty: none).
+     * Code review of stage QG5c2, findings QG5C2R-R5 and R6: the gates of one producer stay together; a task takes one producer as a whole
+     * (the start object of an encounter with the gates of its gathering row; no minimum rank of one row with the free item of an other).
+     */
+    struct GatherSource {
+        std::string kind;
+        std::string rankSkill;
+        std::uint32_t rankLevel{0};
+        std::string item;
+    };
+    std::unordered_map<std::string, std::vector<GatherSource>> gatherSources;
     /** The gatherable rows with a node in the world (lower case id). */
     std::unordered_set<std::string> gatherRows;
     /**
@@ -343,17 +354,6 @@ struct QuestSupport::Index {
      * or a rank of a trade skill with no source: AzothStaff), for the block of its task (lower case event id).
      */
     std::unordered_map<std::string, std::string> refusedEvents;
-    /**
-     * Stage QG5b: the game events whose gatherable rows of the world need a rank of a trade skill that only a hand-in gives (AzothStaff: the
-     * categorical progression reward of 10 main story events): the skill and the smallest rank of these rows (lower case event id).
-     */
-    std::unordered_map<std::string, std::pair<std::string, std::uint32_t>> rankEvents;
-    /**
-     * Stage QG5b: the item (lower case) of the restriction ItemRequired of the gatherable rows of a game event (a row with an item and a
-     * count above 0), and the events with a row of no item need (lower case event id).
-     */
-    std::unordered_map<std::string, std::string> gatherEventItems;
-    std::unordered_set<std::string> gatherEventsFree;
     /**
      * Stage QG5a: the tags of the points of interest of the ordinary chests (each tag, and each tag with the territory of its point of interest),
      * for the quest drops of a chest (ChestDropProbability; Quests::plan_chest_drops); `anyChest` with no tag.
@@ -594,80 +594,72 @@ void QuestSupport::build() {
     }
     // The gatherable rows with a node in the world: the records of the regions (natural nodes), the capital nodes and quest objects, the
     // skinning of the creature slices; their game events and their loot items.
-    if (const gamedata::GatheringData* gathering = options.gatheringData; gathering != nullptr) {
-        const auto add_row = [&](std::uint32_t row, const char* kind) {
-            if (row >= gathering->rows().size()) {
-                return;
-            }
-            const gamedata::GatherableRow& gatherable = gathering->rows()[row];
-            // Stage QG5a: only a row that the backend gathers is a source (Gathering::begin): no refusal cause of the row, and a rank gate of
-            // a trade skill whose ranks a history can reach. The gathering trade skills rise with the gathers [agent: the manifest does not
-            // model the ranks of the gathering skills]. Stage QG5b: the ranks of another trade skill (AzothStaff of the glyph locks) come from
-            // the categorical progression reward of a hand-in: the history must have the rank (TaskFact::rankSkill).
-            std::string cause;
-            if (!gatherable.unsupported.empty()) {
-                cause = "its gatherable row " + gatherable.id + " is refused (" + gatherable.unsupported.front() + ")";
-            } else if (gatherable.level > 0 && !gatherable.tradeskill.empty()
-                       && std::find(kGatheringSkills.begin(), kGatheringSkills.end(), gatherable.tradeskill) == kGatheringSkills.end()) {
-                if (!gatherable.event.empty()) {
-                    const auto [entry, made] = index.rankEvents.emplace(lower_text(gatherable.event),
-                                                                        std::make_pair(gatherable.tradeskill, gatherable.level));
-                    if (!made && entry->second.first == gatherable.tradeskill) {
-                        entry->second.second = std::min(entry->second.second, gatherable.level);
-                    }
-                    // Code review of stage QG5b, finding QG5BR-R3: a ranked row keeps its ItemRequired item too (the runtime checks both
-                    // gates: 1625_0701_AncientCodePillar needs the rank 5 of AzothStaff and one 1625_0601_EyeOfHorus).
-                    if (gatherable.restriction == gamedata::kRestrictionItemRequired && !gatherable.item.empty() && gatherable.itemCount > 0) {
-                        index.gatherEventItems.emplace(lower_text(gatherable.event), lower_text(gatherable.item));
-                    } else {
-                        // Code review of stage QG5c1, finding QG5C1R-R3: a ranked row with no item is a free alternative of the event
-                        // (the item of a different ranked row of the same event does not gate it).
-                        index.gatherEventsFree.insert(lower_text(gatherable.event));
-                    }
-                }
-                return;
-            }
-            if (!cause.empty()) {
-                if (!gatherable.event.empty()) {
-                    index.refusedEvents.emplace(lower_text(gatherable.event), cause);
-                }
-                return;
-            }
-            index.gatherRows.insert(lower_text(gatherable.id));
+    const gamedata::GatheringData* gathering = options.gatheringData;
+    // The item of the restriction ItemRequired of a gatherable row (stage QG5b: Gathering::check_gates: the bag needs it; 0 needs nothing).
+    const auto item_of = [](const gamedata::GatherableRow& gatherable) {
+        return gatherable.restriction == gamedata::kRestrictionItemRequired && !gatherable.item.empty() && gatherable.itemCount > 0
+                   ? lower_text(gatherable.item)
+                   : std::string{};
+    };
+    const auto add_row = [&](std::uint32_t row, const std::string& kind) {
+        if (gathering == nullptr || row >= gathering->rows().size()) {
+            return;
+        }
+        const gamedata::GatherableRow& gatherable = gathering->rows()[row];
+        // Stage QG5a: only a row that the backend gathers is a source (Gathering::begin): no refusal cause of the row, and a rank gate of
+        // a trade skill whose ranks a history can reach. The gathering trade skills rise with the gathers [agent: the manifest does not
+        // model the ranks of the gathering skills]. Stage QG5b: the ranks of another trade skill (AzothStaff of the glyph locks) come from
+        // the categorical progression reward of a hand-in: the history must have the rank (TaskFact::rankSkill).
+        std::string cause;
+        if (!gatherable.unsupported.empty()) {
+            cause = "its gatherable row " + gatherable.id + " is refused (" + gatherable.unsupported.front() + ")";
+        } else if (gatherable.level > 0 && !gatherable.tradeskill.empty()
+                   && std::find(kGatheringSkills.begin(), kGatheringSkills.end(), gatherable.tradeskill) == kGatheringSkills.end()) {
             if (!gatherable.event.empty()) {
-                index.gatherEvents.emplace(lower_text(gatherable.event), kind);
-                // Stage QG5b: the item of the restriction ItemRequired (Gathering::check_gates: the bag needs it; 0 needs nothing).
-                if (gatherable.restriction == gamedata::kRestrictionItemRequired && !gatherable.item.empty() && gatherable.itemCount > 0) {
-                    index.gatherEventItems.emplace(lower_text(gatherable.event), lower_text(gatherable.item));
-                } else {
-                    index.gatherEventsFree.insert(lower_text(gatherable.event));
+                // Code review of stage QG5b, finding QG5BR-R3: a ranked row keeps its ItemRequired item too (the runtime checks both
+                // gates: 1625_0701_AncientCodePillar needs the rank 5 of AzothStaff and one 1625_0601_EyeOfHorus). Findings QG5C1R-R3
+                // and QG5C2R-R6: each ranked row is its own alternative with its own rank and item.
+                index.gatherSources[lower_text(gatherable.event)].push_back(
+                    Index::GatherSource{kind, gatherable.tradeskill, gatherable.level, item_of(gatherable)});
+            }
+            return;
+        }
+        if (!cause.empty()) {
+            if (!gatherable.event.empty()) {
+                index.refusedEvents.emplace(lower_text(gatherable.event), cause);
+            }
+            return;
+        }
+        index.gatherRows.insert(lower_text(gatherable.id));
+        if (!gatherable.event.empty()) {
+            index.gatherSources[lower_text(gatherable.event)].push_back(Index::GatherSource{kind, "", 0, item_of(gatherable)});
+        }
+        if (options.lootTables != nullptr && !gatherable.loot.empty()) {
+            roots.emplace_back(gatherable.loot, "the loot of " + kind + " (" + gatherable.id + ")");
+            // The items of the loot root of the row (each table that it reaches).
+            std::vector<std::string> pending{gatherable.loot};
+            std::set<std::string> seen;
+            while (!pending.empty()) {
+                const std::string id = pending.back();
+                pending.pop_back();
+                if (!seen.insert(lower_text(id)).second) {
+                    continue;
+                }
+                const gamedata::LootTable* table = options.lootTables->table(id);
+                if (table == nullptr) {
+                    continue;
+                }
+                for (const gamedata::LootEntry& entry : table->entries) {
+                    if (entry.kind == gamedata::LootEntryKind::table) {
+                        pending.push_back(entry.id);
+                    } else if (entry.kind == gamedata::LootEntryKind::item) {
+                        index.gatherItems.insert(lower_text(entry.id));
+                    }
                 }
             }
-            if (options.lootTables != nullptr && !gatherable.loot.empty()) {
-                roots.emplace_back(gatherable.loot, std::string("the loot of ") + kind + " (" + gatherable.id + ")");
-                // The items of the loot root of the row (each table that it reaches).
-                std::vector<std::string> pending{gatherable.loot};
-                std::set<std::string> seen;
-                while (!pending.empty()) {
-                    const std::string id = pending.back();
-                    pending.pop_back();
-                    if (!seen.insert(lower_text(id)).second) {
-                        continue;
-                    }
-                    const gamedata::LootTable* table = options.lootTables->table(id);
-                    if (table == nullptr) {
-                        continue;
-                    }
-                    for (const gamedata::LootEntry& entry : table->entries) {
-                        if (entry.kind == gamedata::LootEntryKind::table) {
-                            pending.push_back(entry.id);
-                        } else if (entry.kind == gamedata::LootEntryKind::item) {
-                            index.gatherItems.insert(lower_text(entry.id));
-                        }
-                    }
-                }
-            }
-        };
+        }
+    };
+    if (gathering != nullptr) {
         for (const gamedata::GatheringRegion& region : gathering->regions()) {
             if (region.records + region.tails == 0) {
                 continue;
@@ -691,28 +683,45 @@ void QuestSupport::build() {
     }
     // Stage QG5c2: the encounter recipes that the runner takes (world/encounters.h): the success event of each one (its participants get it)
     // and the game event of its start object (its gatherer gets it). A refused recipe gives its cause to the events that only it gives.
+    // Stage QG5c3: the event of a new participant (m_participantAddedGameEventId) and the event of a proximity object (each character that
+    // finds it: no gate but its quest tag) are free; finding QG5C2R-R5: the event of a gather start object has the gates of its gathering row.
     if (const gamedata::EncounterData* encounters = m_world.encounters().data(); encounters != nullptr) {
         for (const EncounterPlacement& placement : m_world.encounters().loaded_placements()) {
             const gamedata::EncounterRecipe& recipe = *placement.recipe;
             std::vector<std::pair<std::string, std::string>> events;
+            std::vector<std::pair<std::uint32_t, std::string>> rows;
             if (!recipe.successEvent.empty()) {
                 events.emplace_back(lower_text(recipe.successEvent), "the success of the encounter " + recipe.rootName);
+            }
+            if (!recipe.participantEvent.empty()) {
+                events.emplace_back(lower_text(recipe.participantEvent), "a participant of the encounter " + recipe.rootName);
             }
             for (const gamedata::EncounterStage& stage : recipe.stages) {
                 for (const gamedata::EncounterSpawn& spawn : stage.spawns) {
                     const gamedata::EncounterMember* member = encounters->member(spawn.member);
-                    if (member != nullptr && member->kind == gamedata::EncounterMemberKind::object && !member->event.empty()) {
+                    if (member == nullptr || member->kind != gamedata::EncounterMemberKind::object || member->event.empty()) {
+                        continue;
+                    }
+                    const std::optional<gamedata::GatheringLink> link =
+                        gathering != nullptr ? gathering->encounter_object(member->slice) : std::nullopt;
+                    if (member->proximity) {
+                        events.emplace_back(lower_text(member->event), "the proximity object of the encounter " + recipe.rootName);
+                    } else if (placement.refused.empty() && link) {
+                        rows.emplace_back(link->row, "the start object of the encounter " + recipe.rootName);
+                    } else {
                         events.emplace_back(lower_text(member->event), "the start object of the encounter " + recipe.rootName);
                     }
                 }
             }
             for (const auto& [event, source] : events) {
                 if (placement.refused.empty()) {
-                    index.gatherEvents.emplace(event, source);
-                    index.gatherEventsFree.insert(event);
+                    index.gatherSources[event].push_back(Index::GatherSource{source, "", 0, ""});
                 } else {
                     index.refusedEvents.emplace(event, "the encounter " + recipe.rootName + " is refused: " + placement.refused.front());
                 }
+            }
+            for (const auto& [row, source] : rows) {
+                add_row(row, source);
             }
         }
     }
@@ -723,7 +732,8 @@ void QuestSupport::build() {
             const gamedata::QuestObjectRow& row = objects->rows()[object.row];
             if (!row.event.empty()) {
                 // Stage QG5a: a proximity object (the trails and the torches) gives its event when its character is in its sphere.
-                index.gatherEvents.emplace(lower_text(row.event), object.proximity ? "a proximity quest object" : "a destructible quest object");
+                index.gatherSources[lower_text(row.event)].push_back(
+                    Index::GatherSource{object.proximity ? "a proximity quest object" : "a destructible quest object", "", 0, ""});
             }
             if (!object.tag.empty()) {
                 index.objectTags.insert(object.tag);
@@ -1148,52 +1158,84 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
             break;
         }
         case task_type::kGameEvent: {
-            std::string found;
-            for (const std::string& target : task.targets) {
-                if (!found.empty()) {
-                    break;
-                }
-                if (index.killEvents.count(target) != 0) {
-                    found = "the kill event " + target;
-                } else if (const auto gather = index.gatherEvents.find(target); gather != index.gatherEvents.end()) {
-                    found = gather->second + " (" + target + ")";
-                }
-            }
-            // Stage QG5b: a gather with the rank gate of a trade skill that a hand-in gives (AzothStaff): the history must have the rank.
-            const auto ranked = task.targets.empty() || !found.empty() ? index.rankEvents.end() : index.rankEvents.find(task.targets.front());
             if (task.targets.empty()) {
                 // Stage QG2a: a pin or a map task of the data (PinTask, Dummy_WorldPin): no event, it never completes.
                 block("the task names no game event: a pin or a map task of the data (it never completes)");
-            } else if (ranked != index.rankEvents.end()) {
-                fact.supplier = "a gather with the rank " + std::to_string(ranked->second.second) + " of the trade skill " + ranked->second.first
-                                + " (" + task.targets.front() + ")";
-                fact.rankSkill = ranked->second.first;
-                fact.rankLevel = ranked->second.second;
-            } else if (found.empty()) {
+                break;
+            }
+            // The first target that a kill or a producer gives. Code review of stage QG5c2, finding QG5C2R-R6: a producer is taken as a
+            // whole (its rank gate and its item together), in this order: no rank gate and no item or an item of a source of the world; the
+            // smallest rank gate (stage QG5b: AzothStaff, the history must have the rank) with no item or an item of the world; no rank gate
+            // and an item of a quest give (the history must have it); a rank gate and an item of a quest. Finding QG5BR-R3: a ranked producer
+            // needs both of its gates.
+            const Index::GatherSource* best = nullptr;
+            const std::string* bestTarget = nullptr;
+            int bestClass = 99;
+            const std::string* itemBlocked = nullptr;
+            const Index::GatherSource* blockedSource = nullptr;
+            bool kill = false;
+            for (const std::string& target : task.targets) {
+                if (index.killEvents.count(target) != 0) {
+                    fact.supplier = "the kill event " + target;
+                    kill = true;
+                    break;
+                }
+                const auto sources = index.gatherSources.find(target);
+                if (sources == index.gatherSources.end()) {
+                    continue;
+                }
+                for (const Index::GatherSource& source : sources->second) {
+                    const bool world = source.item.empty() || index.items.count(source.item) != 0;
+                    const bool quest = !world && index.questItems.count(source.item) != 0;
+                    const int rank = source.rankSkill.empty() ? 0 : 1;
+                    const int classOf = world ? rank : quest ? 2 + rank : 99;
+                    if (classOf == 99) {
+                        if (itemBlocked == nullptr) {
+                            itemBlocked = &target;
+                            blockedSource = &source;
+                        }
+                        continue;
+                    }
+                    if (classOf < bestClass || (classOf == bestClass && rank == 1 && source.rankLevel < best->rankLevel)) {
+                        best = &source;
+                        bestTarget = &target;
+                        bestClass = classOf;
+                    }
+                }
+                if (best != nullptr) {
+                    break;
+                }
+            }
+            if (kill) {
+                break;
+            }
+            if (best == nullptr && itemBlocked != nullptr) {
+                // Stage QG5b: a gather with the restriction ItemRequired needs its item in the bag: a source of the world, or a quest give.
+                block("the gather of the game event " + *itemBlocked + " needs the item " + blockedSource->item
+                      + " (the restriction ItemRequired), and no supported source gives it");
+                break;
+            }
+            if (best == nullptr) {
                 const auto refused = index.refusedEvents.find(task.targets.front());
                 block("no producer of the game event " + task.targets.front()
                       + (refused != index.refusedEvents.end() ? " (" + refused->second + ")"
                                                               : std::string(" (no creature, gatherable, or destructible object of the data gives it)")));
-            } else {
-                fact.supplier = found;
+                break;
             }
-            if (!task.targets.empty() && (ranked != index.rankEvents.end() || !found.empty())) {
-                // Stage QG5b: a gather with the restriction ItemRequired needs its item in the bag: a source of the world, or a quest give
-                // (the history must have it). Finding QG5BR-R3: also the gather of a ranked producer (it needs the rank and the item).
-                const std::string event = task.targets.front();
-                const bool gather = ranked != index.rankEvents.end() || index.gatherEvents.count(event) != 0;
-                const auto needed = gather && index.gatherEventsFree.count(event) == 0 ? index.gatherEventItems.find(event)
-                                                                                       : index.gatherEventItems.end();
-                if (needed != index.gatherEventItems.end()) {
-                    if (index.items.count(needed->second) != 0) {
-                        fact.supplier += " with the item " + needed->second + " of a source of the world";
-                    } else if (index.questItems.count(needed->second) != 0) {
-                        fact.supplier += " with the item " + needed->second + " of a quest (the history decides)";
-                        fact.questItem = needed->second;
-                    } else {
-                        block("the gather of the game event " + event + " needs the item " + needed->second
-                              + " (the restriction ItemRequired), and no supported source gives it");
-                    }
+            if (best->rankSkill.empty()) {
+                fact.supplier = best->kind + " (" + *bestTarget + ")";
+            } else {
+                fact.supplier = "a gather with the rank " + std::to_string(best->rankLevel) + " of the trade skill " + best->rankSkill + " ("
+                                + *bestTarget + ")";
+                fact.rankSkill = best->rankSkill;
+                fact.rankLevel = best->rankLevel;
+            }
+            if (!best->item.empty()) {
+                if (bestClass < 2) {
+                    fact.supplier += " with the item " + best->item + " of a source of the world";
+                } else {
+                    fact.supplier += " with the item " + best->item + " of a quest (the history decides)";
+                    fact.questItem = best->item;
                 }
             }
             break;

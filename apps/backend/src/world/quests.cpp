@@ -1594,7 +1594,15 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
         ok = ok && m_store.delete_quest(entity.characterId, instance);
     }
     if (ok && plan.trackedChanged) {
-        ok = m_store.write_quest_pins(entity.characterId, plan.tracked);
+        // Code review of stage QG5c2, finding QG5C2R-R4: the store has the pins of the quests only (the rule of client_tracked); a pinned root
+        // of a linked encounter stays in the list of the entity for the client and has no row.
+        std::vector<std::uint64_t> stored;
+        for (const std::uint64_t instance : plan.tracked) {
+            if (plan.peek(instance) != nullptr) {
+                stored.push_back(instance);
+            }
+        }
+        ok = m_store.write_quest_pins(entity.characterId, stored);
     }
     if (ok && !unlocks.empty()) {
         ok = m_store.grant_achievements(entity.characterId, unlocks, nullptr);

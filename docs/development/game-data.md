@@ -478,6 +478,19 @@ backend. The tool of each system is also in the document of that system.
   out), to `interaction-data.json` the member `encounterObjects` (`{SLICE: {"template", "variationSlot", "variant"}}`: 48 templates, 42 with
   a variation), and to `gathering-data.json` the member `encounterObjects` (`{SLICE: [TEMPLATE, ROW, TAG, ONLY_ON_QUEST]}`: 37). The formats
   stay; the counts of the other entries do not change.
+  Stage QG5c3 (still format 1): the detector has `shapes` (each DetectionVolumeComponent of the entity of the ParticipantTracker: `shape`
+  sphere, cylinder, or aabb, `radius`, `height`, `extents`, `center`; `radius` stays the largest sphere or cylinder), a stage has its
+  `children` (indexes of the stages) and `childrenOptional`, the objective `SliceSpawnedObjective` is read, and a member has `direct` (a
+  creature slice itself: its vitals row `m_rowReference`), `interact` and `radius` (a proximity object: DetectionVolumeSphereRadius of its
+  row, else the sphere of its slice), or `lifetime` (an unknown member that ends itself: the earliest trigger of a DestroyGDEComponent
+  from the delayed events of its init, through the triggers and the rerouters). The new refusal rules are in the docstring of
+  `encounters.py` (the parent spawner, the detector shapes, the counts of finding QG5C2R-R3; no cause for a reset event, a child stage, a
+  proximity object, a start object with several places). Code review of stage QG5c2, finding QG5C2R-R2: the tool stops (no file) when a
+  read of its recipes found no source of a file. An area trigger (a proximity object with no Interact component) makes no recipe a quest
+  recipe. The build: 67 recipes, 36 with no cause of the tool (32 taken by the runner); members 287 creatures, 71 objects, 106 unknown;
+  17 s. `creatures.json` has 141 member kinds (18 left out); `gathering-data.json` has 43 `encounterObjects` (the proximity start objects
+  of the ambushes: the table Gatherable_Quest_Proximity for an encounter start object, `gathering.py` `quest_capital`) and one more
+  skinning link (a direct creature member slice); `interaction-data.json` has the same bytes.
 - `quest-objects.json` (stage 1.8e, `tools/gamedata/quest-objects.sh`, [Quests](../systems/quests.md)): format 1. The destructible quest
   objects: each placement of the layers (the capital placements of `gathering.py`) whose slice has a variation of the table
   `Gatherable_Quest_Damageable`, with its key (the placement UUID), its managed actor (the UUID rule of a capital node), its asset, its
@@ -591,6 +604,12 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   backend of `dist` loads them). The variant index of a start object is the file row order of its variation table: a new build of the game
   moves it, and the old file gives the client a wrong variant (a wrong prompt or none). `tools/release.sh` takes the four files with the
   game data folder.
+- Stage QG5c3 changes `encounter-data.json`, `creatures.json`, and `gathering-data.json` (the formats stay; the 33,023 spawn points and the
+  3,901 kinds of the spawn points keep their values; the `gathering/` folder has the same bytes); `interaction-data.json` does not change.
+  Write the three again from one game copy, after `creatures.sh` (the skinning links of `gathering.sh` read `creatures.json`). A backend of
+  stage QG5c2 loads the three files and takes 22 recipes, some of which it cannot run (it does not know the child stages, the spawned
+  objective, and the proximity objects: an instance can stay in a stage): put the backend and the files together (`tools/release.sh` takes
+  both).
 
 - Stage BT2 changes `creatures.json` (still format 4, `tools/gamedata/creatures.sh`): each slice that names a server tree has the member
   `serverTrees` (the asset paths of `m_behaviorTreeAssets` of its `BehaviorTreeComponent`, the entity "AI Functionality"; lower case, with
@@ -887,8 +906,9 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   `check_spell_tool.py`): else the tool stops and the old file stays. The loader of the backend refuses a file of format 4 whose volume
   time does not agree with the delayed events of its entity, and the creature areas need format 4 (finding AR-R4). The creature tool
   stops for a cast of a supported area spell with a malformed event or a broken join (finding AR-R7, cases `review-area-*` of
-  `check_creature_tool.py`), but for the authored cases of the retail data in `AREA_EXCEPTIONS` of `creature_behavior.py` (15: the
-  ghosts with the shared action list of the plague nova, the two Dynasty summoners); `areasLeftOut` has only the casts of spells and
+  `check_creature_tool.py`), but for the authored cases of the retail data in `AREA_EXCEPTIONS` of `creature_behavior.py` (17: the
+  ghosts with the shared action list of the plague nova, with the starved ghost of Torment and the boss ghost of the siphon fight of stage
+  QG5c3, the two Dynasty summoners); `areasLeftOut` has only the casts of spells and
   actions with no support. `creatures.json` has the area attacks of 10 spells (the list `areaSpells`: the four casts at the caster of
   stage 3.4f-D added; 22 slices, 177 kinds, 539 spawn points), the status actions (`statusActions` of a slice and the list
   `statusActions` of `creature_slices.json`: 3 slices, 18 kinds, 91 spawn points), and `lowHealth` (119 slices), with their counts.

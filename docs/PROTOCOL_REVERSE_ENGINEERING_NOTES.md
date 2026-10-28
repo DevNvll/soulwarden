@@ -7519,7 +7519,7 @@ InteractTeleportComponentClientFacet (vtable 0x82FBDA0) compares the action 0x52
 is the ordinary interaction block (writer 0x35E67E0); the teleport answer of the server and a gather of the row at action 82: not found].
 The shrine of `99D_MSQ_07_PortalFight` and the lift of `Quest_16008` stay out (a teleport handler of a later stage).
 
-### 4.62 The encounter states: the root record, the manager state, the stage state and 1278, the link of a nearby event, the participant message, the kill counter, the VariationData state of a start object (live proof of stages QG5c1 and QG5c2; static proof for the client code; the backend runner of stage QG5c2: docs/systems/encounters.md)
+### 4.62 The encounter states: the root record, the manager state, the stage state and 1278, the link of a nearby event, the participant message, the kill counter, the VariationData state of a start object (live proof of stages QG5c1, QG5c2, and QG5c3; static proof for the client code; the backend runner of stages QG5c2 and QG5c3: docs/systems/encounters.md)
 
 Research: `~/Games/soulwarden/work/research/quest-encounters.md` section 2; the static read A of stage QG5c1
 (`~/Games/soulwarden/work/evidence/quests/qg5c1/implement/static/A/ANSWERS.md`); the live probes of the same folder (`shots/steps/`,
@@ -7664,6 +7664,24 @@ notification]:
 [live: both lists with the actor of the character: the session stays, and no change shows.] The meaning of the two lists: not found.
 Message 915 (`EncounterRewardsComponentClientFacet_OnSyncEncounterRewards`, `target:u64 G:u64 rewards:u32`, handler 0x26FEB70: it stores the
 value and notifies) [static only]: the meaning of the value is not found.
+
+**The encounters of stage QG5c3** (the summoned opponents, the ambushes, the kill waves with child stages;
+`docs/systems/encounters.md`) [live: checks L1 to L3 of stage QG5c3, `~/Games/soulwarden/work/evidence/quests/qg5c3/implement/`]: no
+new message and no new state. The backend sends the records and the states of this section.
+
+- A proximity start object (an ambush, for example `io_99b_msq_05_yonasretreatprox.dynamicslice`) is a server child with the same
+  record as a gather start object. The backend finds the character in its sphere at its scan (each 500 ms). It does not wait for a
+  client message [agent; live: L2, the walk into the 30 m sphere found the object, and the stage ended in the same scan].
+- An area trigger member of a stage (a member with no slice body) and a timed member have no record [agent].
+- The HUD counter of a parent stage with child stages shows the destroyed spawns of its children: "0 / 2" then "1 / 2 - Defeat
+  Helvan's Lackeys" [live: L3]. The backend counts each spawn of a child for its parent too.
+- The HUD shows a red timer "00:00:00" under the counter of a stage [live: L3]. The client field of the start time of a stage timer
+  is not found, and the backend sends none.
+- The HUD row of an encounter with timed user-wave stages (the intermissions of Thorpe) stays at the first intermission through the
+  later stages [live: L4]. The index of the generated tasks of a timed user-wave stage is not proved (the rule 2k + 1 above is proved
+  only for the destroyed stages). Open.
+- The client runs the actions of a stage from the stage status of 2133. For example, the sky of the siphon encounter of
+  09A_S18 goes dark [live: L1; the backend sends no weather and no world time change].
 
 ## 5. Open items
 

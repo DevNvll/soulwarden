@@ -16,7 +16,9 @@
 // entity), its manager, its participant tracker and detector, its stages in the order of the manager (each with its spawns, its objective,
 // its actions), and its parent spawner (the respawn of a new instance). The members are the slices of the spawns: a creature member (its
 // kind is in creatures.json, "members") or a start object (its template is in interaction-data.json and its row in gathering-data.json,
-// "encounterObjects"). Without the file the world has no encounter, and the rest of the backend works.
+// "encounterObjects"). Without the file the world has no encounter, and the rest of the backend works. Stage QG5c3 (still format 1; a
+// backend of before ignores the new members): the child stages, the spawned objective, the detector shapes, the proximity objects (their
+// radius; an area trigger with no Interact component), the members that end themselves (lifetime), and the direct creature members.
 
 namespace soulwarden::backend::gamedata {
 
@@ -28,6 +30,8 @@ enum class EncounterObjectiveKind : std::uint8_t {
     timed,
     /** SliceDestroyedObjective: m_requiredCount destroyed spawns of the stage (its tracked slice, else each spawn). */
     destroyed,
+    /** Stage QG5c3: SliceSpawnedObjective: m_requiredCount spawns of its tracked slice were made (the spawn of Helvan). */
+    spawned,
     /** A class that the runner does not run (the recipe is refused by the tool). */
     other,
 };
@@ -85,6 +89,25 @@ struct EncounterStage {
     /** A KillSpawnsAction in m_startActions or m_endActions: the members of the encounter go (no reward). */
     bool killSpawnsAtStart{false};
     bool killSpawnsAtEnd{false};
+    /**
+     * Stage QG5c3: the child stages (m_stages of the stage: indexes into the stages of the recipe; they run one after the other), the stage
+     * whose m_stages names this one (-1: a stage of the manager), and m_childStagesOptional (the stage can end before its child stages).
+     */
+    std::vector<std::uint32_t> children;
+    std::int32_t parent{-1};
+    bool childrenOptional{false};
+};
+
+/** Stage QG5c3: one shape of the detector of the participants (a DetectionVolumeComponent of the entity of the ParticipantTracker). */
+struct EncounterShape {
+    enum class Kind : std::uint8_t { sphere, cylinder, aabb };
+    Kind kind{Kind::sphere};
+    /** The radius of a sphere or of a cylinder, the height of a cylinder (centered on `center`), the half sizes of an axis box. */
+    float radius{0.0F};
+    float height{0.0F};
+    std::array<float, 3> extents{0.0F, 0.0F, 0.0F};
+    /** m_center: the offset from the root (world axes). */
+    std::array<float, 3> center{0.0F, 0.0F, 0.0F};
 };
 
 struct EncounterParent {
@@ -129,6 +152,12 @@ struct EncounterRecipe {
     /** The detector sphere of the participants: m_Radius and m_strFilter. */
     float detectorRadius{0.0F};
     std::string detectorFilter;
+    /**
+     * Stage QG5c3: the shapes of the detector (a character in one of them is in the detector; a file of before has one sphere of
+     * `detectorRadius`), and the distance from the root that holds each shape (the query of the position index).
+     */
+    std::vector<EncounterShape> detectorShapes;
+    float detectorReach{0.0F};
     /** m_universalSuccessGameEventId (empty: none) and the quest events of the recipe (lower case). */
     std::string successEvent;
     std::vector<std::string> questEvents;
@@ -157,6 +186,15 @@ struct EncounterMember {
     bool onlyOnQuest{false};
     bool proximity{false};
     std::string cause;
+    /**
+     * Stage QG5c3: the sphere of a proximity object (DetectionVolumeSphereRadius of its row, else the sphere of its slice), and false for an
+     * object with no Interact component (the area triggers: the backend makes no record of it); the seconds after which a member of the
+     * kind unknown ends itself (the smoke burst, the powder keg: 0 for none); a creature member that is the creature slice itself.
+     */
+    float radius{0.0F};
+    bool interact{true};
+    float lifetime{0.0F};
+    bool direct{false};
 };
 
 class EncounterData {

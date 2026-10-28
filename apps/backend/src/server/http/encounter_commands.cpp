@@ -34,7 +34,9 @@ json encounters_view(world::World& world, const std::string& character, float ra
                 {{"placements", counts.placements}, {"taken", counts.taken}, {"made", counts.made}, {"succeeded", counts.succeeded},
                  {"failed", counts.failed}, {"dormant", counts.dormant}, {"membersMade", counts.membersMade},
                  {"membersRemoved", counts.membersRemoved}, {"memberDeaths", counts.memberDeaths}, {"objectsMade", counts.objectsMade},
-                 {"objectsGathered", counts.objectsGathered}, {"oldGeneration", counts.oldGeneration},
+                 {"objectsGathered", counts.objectsGathered}, {"objectsFound", counts.objectsFound},
+                 {"proximityLooks", counts.proximityLooks}, {"timedEnds", counts.timedEnds}, {"spawnsSkipped", counts.spawnsSkipped},
+                 {"oldGeneration", counts.oldGeneration},
                  {"participantsAdded", counts.participantsAdded}, {"participantsLeft", counts.participantsLeft}, {"credits", counts.credits},
                  {"creditRetries", counts.creditRetries}, {"creditsDropped", counts.creditsDropped}, {"scans", counts.scans},
                  {"placementsLooked", counts.placementsLooked}, {"entitiesLooked", counts.entitiesLooked}, {"due", encounters.due_count()}}}};

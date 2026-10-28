@@ -25,6 +25,17 @@ The chain of one recipe (all files are in the pak files of the game copy; resear
   4. Each slice of a spawn timeline: a creature member (an AIVariantProviderComponent with m_vitalsTableRowId, and a spawner whose
      m_sliceAsset or m_aliasAsset is the creature slice) or a start object (a GatherableController component and an Interact component: a
      quest gatherable with its variation m_selectedVariant). An other slice is an unknown member: the recipe keeps it with its cause.
+     Stage QG5c3 adds three kinds of the data:
+       - a direct creature member: a creature slice itself (a CharacterComponent and a Vitals component with m_rowReference, no
+         AIVariantProvider: the inquisitors of the corrupted tree, the named anubian brute of the tomb). Its vitals row is m_rowReference,
+         its body the slice itself ("direct": true); a creature slice with a GatherableController (the mining of the body) is a creature;
+       - a proximity object: a GatherableController with m_isProximityGatherable (the ambush starts of Gatherable_Quest_Proximity, the 20 m
+         area trigger of Grivaros, which has no Interact component: "interact": false). Its "radius" is DetectionVolumeSphereRadius of its
+         variation row, else the m_Radius of the sphere of its DetectionVolumeComponent (the rule of quest_objects.py, stage QG5a);
+       - a member that ends itself: an unknown member whose delayed events of the init reach the trigger of an entity with a
+         DestroyGDEComponent ("lifetime": the seconds; the smoke burst of the lost pylons 4.2 s, the powder keg 13.15 s). The reach follows
+         the event types of spells.py (0 trigger): a trigger of an entity starts its delayed events with m_startDelayOnTrigger and sends the
+         events of its EventRerouterComponent at once; an activation or a deactivation (2, 3) ends nothing.
 
 A quest recipe (`quest` true): its success event, or the game event of the gatherable row of a start object, is a game event that a quest
 task names (KillEnemyType of the task tables). The other encounters of the world (the random encounters, the sieges of the open world) are
@@ -34,6 +45,7 @@ events are later stages, and they would change the open world).
 
 from __future__ import annotations
 
+import heapq
 import json
 import math
 import struct
@@ -45,7 +57,8 @@ sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from appearance_tables import Failure, field_id  # noqa: E402
-from creature_data import (REGIONS_FOLDER, TABLES_FOLDER, Catalog, Sources, asset_id, read_alias, spawner_path)  # noqa: E402
+from creature_data import (REGIONS_FOLDER, TABLES_FOLDER, Catalog, Sources, asset_id, read_alias, slice_assets,  # noqa: E402
+                           spawner_path)
 from interactions import (IDENTITY, INTERACT_CLASS, child_of, matrix_of, multiply, placement_matrix, quaternion_of, text_of,  # noqa: E402
                           walk)
 from item_catalog import Sheet, sheet_type  # noqa: E402
@@ -65,6 +78,17 @@ REWARDS_CLASS = uuid.UUID("c8962cbd-855c-4307-9a21-4ef149b38d5b")
 VARIANT_PROVIDER_CLASS = uuid.UUID("8b86f1ed-3ca0-4e28-b816-4f5ba3267c13")
 CONTROLLER_CLASS = uuid.UUID("0b382af4-7946-4698-9223-206d1187b612")
 SPHERE_CLASS = uuid.UUID("7f2ef312-4089-4582-89c5-5d4156daa7fb")
+# Stage QG5c3: the shapes of a detector (the query shapes of a DetectionVolumeComponent: spells.py SHAPE_CLASSES and the name index).
+CYLINDER_CLASS = uuid.UUID("709b11ea-fd56-4fef-b841-7cea549368e6")
+AABB_CLASS = uuid.UUID("27462017-fe0f-4b81-96e9-8875b750ec69")
+# Stage QG5c3: the parts of a creature slice and of a slice that ends itself.
+CHARACTER_CLASS = uuid.UUID("15407caa-4970-4d06-8b5c-612fba11bb45")
+VITALS_CLASS = uuid.UUID("0c848755-1f41-4408-b2be-0a3627674f50")
+DELAYED_EVENT_CLASS = uuid.UUID("d353f7e8-4266-f749-19a1-aa2c3841fbca")
+REROUTER_CLASS = uuid.UUID("ea210bd0-1072-c3d6-25f0-82bbbecb0bfb")
+DESTROY_CLASS = uuid.UUID("28e4c1a4-b9b4-8675-59e8-a21527d9da65")
+# The event type of a trigger (spells.py: 0 trigger, 2 activate, 3 deactivate).
+EVENT_TRIGGER = 0
 OBJECTIVE_CLASSES = {
     uuid.UUID("632e9ece-f80c-48c0-9922-711537743873"): "SliceDestroyedObjective",
     uuid.UUID("cddd161a-9a85-4b81-9f7f-18845c6560c9"): "InvasionWaveObjective",
@@ -92,7 +116,9 @@ F = {name: field_id(name) for name in (
     "m_liveCount", "m_minRespawnRange", "m_maxRespawnRange", "m_minRespawnCooldown", "m_maxRespawnCooldown", "m_respawnAfterDeath",
     "m_spawnOnInitialize", "m_isClientAuthoratative", "m_worldTM", "m_selectedVariant", "m_variationTableUniqueName",
     "m_gatherableEntryId", "m_eventId", "m_entityRef", "m_isProximityGatherable",
-    "m_overrideAggroDelay", "m_aggroDelayOverride")}
+    "m_overrideAggroDelay", "m_aggroDelayOverride",
+    "m_rowReference", "m_timeDelaySeconds", "m_eventData", "m_startDelayOnInit", "m_startDelayOnTrigger", "m_events", "m_Height",
+    "m_center", "m_aabb")}
 TASK_TYPE = "ObjectiveTasks"
 GATHERABLE_TYPE = "GatherableData"
 VARIATION_TYPE = "VariationData"
@@ -117,6 +143,14 @@ def real(element) -> float:
 def text(element) -> str:
     value = text_of(element).strip().strip("\0")
     return "" if value == "0" and element is not None and len(element.value or b"") == 1 else value
+
+
+def vector(element) -> list[float] | None:
+    """@return The three finite floats of an AZ::Vector3 field (12 bytes), or no value."""
+    if element is None or element.value is None or len(element.value) != 12:
+        return None
+    values = struct.unpack(">fff", element.value)
+    return [round(value, 4) for value in values] if all(math.isfinite(value) for value in values) else None
 
 
 def field(component, name: str):
@@ -165,6 +199,72 @@ def read_entities(roots) -> dict[int, dict]:
 
 def slot_of(component) -> int:
     return number(find_field(component, F["m_replicationIndex"]))
+
+
+def detector_shape(component) -> dict:
+    """@return The query shape of a DetectionVolumeComponent (stage QG5c3): "sphere" with its radius, "cylinder" with its radius and its
+    height (centered on m_center: the Torment detector has the height 10 and the center 5 m up), or "aabb" with its extents (the half sizes
+    on each axis: the box of the Bathory hall has the z extent 4.25, the half of the height 8.5 of the polygon prism of the same entity);
+    "none" for an other or no shape. m_center is the offset from the entity."""
+    center = vector(field(component, "m_center")) or [0.0, 0.0, 0.0]
+    holder = field(component, "m_shape")
+    for node in walk(holder) if holder is not None else []:
+        if node.type_id == SPHERE_CLASS:
+            return {"shape": "sphere", "radius": round(real(field(node, "m_Radius")), 3), "center": center}
+        if node.type_id == CYLINDER_CLASS:
+            return {"shape": "cylinder", "radius": round(real(field(node, "m_Radius")), 3), "height": round(real(field(node, "m_Height")), 3),
+                    "center": center}
+        if node.type_id == AABB_CLASS:
+            return {"shape": "aabb", "extents": vector(field(node, "m_aabb")) or [0.0, 0.0, 0.0], "center": center}
+    return {"shape": "none", "center": center}
+
+
+def event_target(element) -> tuple[int | None, int]:
+    """@return The target entity (no value: none) and the type of an event of m_eventData or of m_events."""
+    target = refs(field(element, "m_entityRef")) if element is not None else []
+    return (target[0] if target else None), number(field(element, "m_type")) if element is not None else 0
+
+
+def lifetime_of(entities: dict[int, dict]) -> float | None:
+    """@return The seconds after which a slice ends itself (stage QG5c3), or no value: the earliest trigger of an entity with a
+    DestroyGDEComponent from the delayed events of the init (m_startDelayOnInit; with no field: of the init, the rule of spells.py). A
+    trigger (type 0) of an entity starts its delayed events with m_startDelayOnTrigger and sends the trigger events of its
+    EventRerouterComponent at once (the powder keg: the fuse 8 s, the micro delay 0.15 s, the rerouter, the destroy delay 5 s: 13.15 s)."""
+    delays: list[tuple[int, float, int | None, int, bool, bool]] = []
+    reroutes: dict[int, list[tuple[int | None, int]]] = {}
+    destroys: set[int] = set()
+    for identifier, info in entities.items():
+        for component in info["components"]:
+            if component.type_id == DESTROY_CLASS:
+                destroys.add(identifier)
+            elif component.type_id == DELAYED_EVENT_CLASS:
+                target, kind = event_target(field(component, "m_eventData"))
+                init = field(component, "m_startDelayOnInit")
+                trigger = field(component, "m_startDelayOnTrigger")
+                delays.append((identifier, max(real(field(component, "m_timeDelaySeconds")), 0.0), target, kind,
+                               number(init) != 0 if init is not None else True, number(trigger) != 0 if trigger is not None else False))
+            elif component.type_id == REROUTER_CLASS:
+                holder = field(component, "m_events")
+                reroutes.setdefault(identifier, []).extend(event_target(entry) for entry in (holder.children if holder is not None else []))
+    if not destroys:
+        return None
+    queue = [(delay, target) for _, delay, target, kind, init, _ in delays if init and kind == EVENT_TRIGGER and target is not None]
+    heapq.heapify(queue)
+    reached: set[int] = set()
+    while queue:
+        time, entity = heapq.heappop(queue)
+        if entity in reached:
+            continue
+        reached.add(entity)
+        if entity in destroys:
+            return round(time, 3)
+        for owner, delay, target, kind, _, trigger in delays:
+            if owner == entity and trigger and kind == EVENT_TRIGGER and target is not None:
+                heapq.heappush(queue, (time + delay, target))
+        for target, kind in reroutes.get(entity, []):
+            if kind == EVENT_TRIGGER and target is not None:
+                heapq.heappush(queue, (time, target))
+    return None
 
 
 def asset_path(catalog: Catalog, element) -> str | None:
@@ -228,6 +328,13 @@ class Reader:
         self.streams: dict[str, list | None] = {}
         self.members: dict[str, dict] = {}
         self.counts = {"layers": 0, "placements": 0, "parentsRead": 0, "encounters": 0, "quest": 0, "notQuest": 0}
+        self.assets: dict[str, tuple[bytes, int]] | None = None
+
+    def own_asset(self, path: str) -> tuple[bytes, int] | None:
+        """@return The asset id of a slice path (stage QG5c3: the body of a direct creature member is the member slice itself)."""
+        if self.assets is None:
+            self.assets = slice_assets(self.catalog)
+        return self.assets.get(path)
 
     def stream(self, path: str):
         if path not in self.streams:
@@ -275,11 +382,19 @@ class Reader:
                 for row in range(sheet.row_count):
                     identifier = sheet.source(row, "VariantID").strip()
                     if identifier:
+                        radius = sheet.source(row, "DetectionVolumeSphereRadius").strip() \
+                            if "DetectionVolumeSphereRadius" in sheet.columns else ""
+                        try:
+                            radius_value = float(radius) if radius else 0.0
+                        except ValueError:
+                            radius_value = 0.0
                         variations.setdefault((sheet.name.lower(), identifier.lower()), {
                             "gatherable": sheet.source(row, entry).strip(),
                             "tag": sheet.source(row, "InteractTag").strip() if "InteractTag" in sheet.columns else "",
                             "onlyOnQuest": sheet.source(row, "InteractOnlyOnQuest").strip() == "1"
-                            if "InteractOnlyOnQuest" in sheet.columns else False})
+                            if "InteractOnlyOnQuest" in sheet.columns else False,
+                            # Stage QG5c3: the sphere of a proximity object ("Change Sphere Shape Radius" of the row; quest_objects.py).
+                            "radius": radius_value if math.isfinite(radius_value) and radius_value > 0.0 else 0.0})
         return variations, gatherables
 
     def member(self, path: str) -> dict:
@@ -292,14 +407,23 @@ class Reader:
             vitals = category = ""
             level = 0
             body = None
-            controller = interact = proximity = False
-            variant = table = entry = ""
-            for info in read_entities(roots).values():
+            controller = interact = proximity = character = False
+            variant = table = entry = own_vitals = ""
+            sphere = 0.0
+            entities = read_entities(roots)
+            for info in entities.values():
                 for component in info["components"]:
                     if component.type_id == VARIANT_PROVIDER_CLASS:
                         vitals = vitals or text(field(component, "m_vitalsTableRowId"))
                         category = category or text(field(component, "m_vitalsCategoryTableRowId"))
                         level = level or number(field(component, "m_vitalsLevel"))
+                    if component.type_id == CHARACTER_CLASS:
+                        character = True
+                    if component.type_id == VITALS_CLASS:
+                        own_vitals = own_vitals or text(field(component, "m_rowReference"))
+                    if component.type_id == DETECTOR_CLASS and not sphere:
+                        shape = detector_shape(component)
+                        sphere = shape["radius"] if shape["shape"] == "sphere" else 0.0
                     if component.type_id == CONTROLLER_CLASS:
                         controller = True
                         entry = entry or text(field(component, "m_gatherableEntryId"))
@@ -325,11 +449,24 @@ class Reader:
                 result = {"slice": path, "kind": "creature", "vitals": vitals, "category": category, "level": level,
                           "bodyField": "alias" if body[0] == "m_aliasAsset" else "slice", "body": body_path,
                           "bodySlices": sorted(path for path in bodies if path), "_asset": body[1]}
-            elif controller and interact:
-                result = {"slice": path, "kind": "object", "variant": variant, "table": table, "entry": entry, "proximity": proximity}
+            elif not vitals and character and own_vitals and self.own_asset(path) is not None:
+                # Stage QG5c3: a direct creature member (the creature slice itself; its Vitals row; a GatherableController of the mining
+                # or the skinning of its body is a part of the creature).
+                result = {"slice": path, "kind": "creature", "vitals": own_vitals, "category": "", "level": 0, "bodyField": "slice",
+                          "body": path, "bodySlices": [path], "direct": True, "_asset": self.own_asset(path)}
+            elif controller and (interact or proximity):
+                result = {"slice": path, "kind": "object", "variant": variant, "table": table, "entry": entry, "proximity": proximity,
+                          "interact": interact}
+                if proximity:
+                    result["_sphere"] = sphere
             else:
                 result["cause"] = ("a member with a vitals row and no creature slice" if vitals
                                    else "no vitals row and no start object (GatherableController and Interact)")
+                lifetime = lifetime_of(entities)
+                if lifetime is not None:
+                    # Stage QG5c3: a member that ends itself (a visual of its stage that counts as destroyed at its end).
+                    result["lifetime"] = lifetime
+                    result["cause"] += f"; it ends itself {lifetime:g} s after its spawn (a delayed event of its init, DestroyGDEComponent)"
         self.members[path] = result
         return result
 
@@ -338,6 +475,8 @@ class Reader:
         entities = read_entities(roots)
         recipe: dict = {"slice": path, "unsupported": []}
         stages: dict[int, dict] = {}
+        detectors: dict[int, dict] = {}
+        tracker_entity = None
         for identifier, info in entities.items():
             for component in info["components"]:
                 kind = component.type_id
@@ -373,16 +512,26 @@ class Reader:
                 elif kind == TRACKER_CLASS:
                     recipe["tracker"] = {"component": component_id(component) or 0, "grace": number(field(component, "m_gracePeriodSec")),
                                          "addedEvent": text(field(component, "m_participantAddedGameEventId"))}
+                    tracker_entity = identifier
                 elif kind == DETECTOR_CLASS:
-                    shape = field(component, "m_shape")
-                    sphere = next((node for node in walk(shape) if node.type_id == SPHERE_CLASS), None) if shape is not None else None
-                    recipe["detector"] = {"radius": round(real(field(sphere, "m_Radius")), 3) if sphere is not None else 0.0,
-                                          "filter": text(field(component, "m_strFilter")),
-                                          "sphere": sphere is not None}
+                    # Stage QG5c3: the shape of each detector (a sphere, a cylinder, an axis box) and its entity.
+                    shape = detector_shape(component)
+                    shape["filter"] = text(field(component, "m_strFilter"))
+                    detectors.setdefault(identifier, []).append(shape)
                 elif kind == REWARDS_CLASS:
                     recipe["successEvent"] = text(field(component, "m_universalSuccessGameEventId"))
         if "root" not in recipe:
             raise Failure(f"{path}: the encounter slice has no EncounterManagerComponent")
+        # The detector of the participants (stage QG5c3): the detection volumes of the entity of the ParticipantTracker (the Bathory hall has
+        # its box there and an other sphere elsewhere). 29 of the 65 encounter slices of the build have two volumes there (the master
+        # template: a sphere of 30 m and a second one of 12 to 50 m), and no field names one of them: a character in one of them is in the
+        # detector (a rule of this project). "radius" is the largest sphere or cylinder (the field of format 1 for a backend of before).
+        shapes = detectors.get(tracker_entity) or detectors.get(recipe["root"]) or next(iter(detectors.values()), None)
+        if shapes is not None:
+            radii = [shape.get("radius", 0.0) for shape in shapes if shape["shape"] in ("sphere", "cylinder")]
+            recipe["detector"] = {"radius": max(radii, default=0.0), "filter": shapes[0]["filter"],
+                                  "sphere": all(shape["shape"] == "sphere" for shape in shapes),
+                                  "shapes": [{key: value for key, value in shape.items() if key != "filter"} for shape in shapes]}
         place = place_of(matrix)
         recipe.update(position=place["position"], rotation=place["rotation"], yaw=place["yaw"])
         # The stages in the manager order; a stage that no stage list names stays a diagnostic (research: 5 unreferenced definitions).
@@ -508,12 +657,20 @@ class Reader:
             member["onlyOnQuest"] = row["onlyOnQuest"] if row is not None else False
             if gatherable is None:
                 member["cause"] = "the start object has no gatherable row (its variant and its m_gatherableEntryId)"
+            if member.get("proximity"):
+                # Stage QG5c3: the sphere of a proximity object: DetectionVolumeSphereRadius of its variation row, else the sphere of its
+                # DetectionVolumeComponent (the rule of quest_objects.py, stage QG5a).
+                member["radius"] = round((row or {}).get("radius", 0.0) or member.get("_sphere", 0.0), 4)
+                if not member["radius"] > 0.0:
+                    member["cause"] = "the proximity object has no sphere (no DetectionVolumeSphereRadius and no sphere of the slice)"
         for recipe in recipes.values():
             quest_events = {recipe.get("successEvent", "").lower()}
             for stage in recipe["stages"]:
                 for spawn in stage["spawns"]:
                     member = self.members.get(spawn["member"]) if spawn["member"] else None
-                    if member is not None and member["kind"] == "object" and member.get("event"):
+                    # Stage QG5c3: an area trigger (a proximity object with no Interact component) has the shared row PressurePlate_Ancient:
+                    # its event names no encounter (one task of the instance QuestYonas names it), and it makes no quest recipe.
+                    if member is not None and member["kind"] == "object" and member.get("event") and member.get("interact", True):
                         quest_events.add(member["event"].lower())
             quest_events.discard("")
             recipe["questEvents"] = sorted(event for event in quest_events if event in events)
