@@ -7341,6 +7341,58 @@ completion was not found]: the backend gives the standing of a hand-in to the te
 with no standing row (a project rule). The reward preview of an offer and the journal show the standing as a number with no territory
 (`objectivedatahelper GetRewardDataFromGameEventData`); the reward notice of the hand-in names the territory ("+100 Windsward Standing").
 
+### 4.60 The small quest rules: the category rule of a kill, TaskHaveLevel, the salvage event of a container, the Azoth amount, no arc gate, the push (live proof of stage QG2a; static proof for the client code and the game data; the payment of the Azoth amount, the schedule of the push, and the open paying only coin are project rules)
+
+Research: `~/Games/soulwarden/work/research/quest-gaps.md` (QG0), `quest-gaps-qg2b.md` (QG2b), the static read of stage QG2a
+(`~/Games/soulwarden/work/evidence/quests/qg2a/implement/static/category/CATEGORY.md`), the live runs of stage QG2a
+(`~/Games/soulwarden/work/evidence/quests/qg2a/implement/RESULT.md`). No new message and no new state: the rules use the Objectives state
+(slot 22, 4.53), the achievements (slot 66), the currency state (slot 60), the categorical state (slot 65), and 1733 (4.57). The rules
+are in [Quests](systems/quests.md), section of stage QG2a.
+
+**The category of a kill** [static: the event callback of TaskKillContribution 0x3B171D0 (function pointer 0x8277688) calls the predicate
+0x3B19F40 with the base vitals id (event +0x6C) and the separate category (event +0x70) of the victim]: a task category Q matches the base
+vitals id (0x3B1A057), the separate category (0x3B1A078), the parent of the separate category (one lookup of the category row 0x3A375A0,
+row +4 against Q: 0x3B1A081 to 0x3B1A098), each category of the base row (the vector of row +0xF0: 0x3B1A0D0), and the parent of each of
+them (0x3B1A0DA to 0x3B1A0F3). No lookup of a parent of a parent. The loader of VitalsCategoryData 0x5BBF960 keeps GroupVitalsCategoryId at
+row +4 (0x5BBFD1C); a failed lookup gives a row with parent 0. The quest drop helper of ItemDropVC 0x5C75830 has the same parent rule with
+no base vitals id test. The replicated vitals state has vitalsId (state +0xF48) and vitalsCategoryId (+0xF70; constructor 0x671E040): the
+separate category of a creature is a value of its state, the base-row list is local game data. Live: the kill of a Bronzeroot Soldier
+(`Dryad_Soldier_31`, separate category `Dryad_Soldier_02BW04`, parent `Bronzeroot`) changes the journal line "0 / 3 - Destroy Bronzeroot in
+Postrekhin" to "1 / 3" (`shots/15-journal-kill-before.png`, `shots/18-journal-kill-after.png`).
+
+**TaskHaveLevel** [static: factory 0x4461150 case 48, constructor 0x3B01C80 (base target 1; TargetQty +0x550, ShouldCheckPoints +0x554,
+the progression id +0x558), activation 0x3B04F40, the level callback 0x3B073A0, the points and rank callbacks 0x3B07100, 0x3B07140]: with
+no progression id the task is satisfied at the level of the screen TargetQty or more; the Objectives state has its progress 1 and its
+state. No message.
+
+**The open of a container with a salvage event** [data: SalvageGameEventID of MasterItemDefinitions; live]: the client sends 1733 for the
+double click of a "Bag of Coin" (`QuestReward_WW_Coin_Purse2`, no RepairRecipe) like for a container with a table (4.57); the server pays
+CurrencyReward (2500: 25.00 coin) and sends the container state (the stack 2 to 1) and the currency state (986.02 to 1,011.02)
+(`shots/07-bag-before-purse.png`, `shots/09-bag-after-purse.png`). The rule of the original server for the other rewards of a salvage
+event is not known (the open pays only coin: a project rule).
+
+**The Azoth amount** [static: the integer getter 0x5AC0ED0, cvttss2si at 0x5AC0F7B; the event loader 0x31E8025, ax at row +0xC
+(0x31E802A); the chance at +0x34 (0x31E806F) has no reader in the previews: objectivedatahelper.luac, research quest-gaps-qg2b.md section
+2]: the offer, the journal, and the hand-in screen show the truncated 16-bit amount (37 for 37.5). Live: "Dentistry Artistry" shows 37 in
+the journal and at the hand-in (`shots/25-journal-azoth-preview.png`, `shots/28-hamza-talk-3.png`), and the categorical state of Azoth
+goes from 393 to 430 (`shots/26-azoth-before.png`, `shots/29-azoth-after.png`).
+
+**The eligibility of an objective** [static: 0x3A4BFE0; loader 0x445CA30, the objective constructor 0x3A1B560 at `[rbp+0x110]`; research
+quest-gaps-qg2b.md section 1]: row +0x20 is QuestArcTag, +0x24 ScheduleId, +0x28 AchievementId, +0x30 RequiredEntitlementId, +0x34
+RequiredGameModeId. The check at 0x3A4C0A3 to 0x3A4C0E6 is RequiredGameModeId (the query 0x2CE2150 is IsInGameMode of the
+GameModeParticipant component, 0x32BA3B0: a match of an active mode of slot 24, type 3312); the eligibility does not read QuestArcTag.
+The study QG0 and an earlier study named the check of +0x34 the arc gate: wrong (QG2b). The arc tag groups the QuestArc meta-achievements after a completion (0x38ACDC0
+calls 0x38A6E20: row +0x20 against meta row +0xDC, type 0x13).
+
+**PushObjectiveOnReqMet** [static: the loader keeps ReqMet at row +0x368 (0x445E55C) and Retrigger at +0x369 (0x445E5A4); the ReqMet rows
+go into a list of the data manager (+0xC90, 0x445EB7F to 0x445EBCA); the eligibility reads ReqMet at 0x3A4C20F and then ExclusiveTerritory
+(+0x328, 0x43D7D00); no client request starts a push]: the server grants a push row through the Objectives state (a new active objective
+of the source push, with its automatic pin) and its first task actions through the achievement state, in one record of the commit. Live:
+the entry of the development character shows "Acquire a Mount", "Faction Introductions", "Orbs of Power" in the journal
+(`shots/03-journal-mount-push.png`, `shots/04-journal-side-push.png`); the bit `06A_MSQ_03` adds "Learn to Craft" (Side Stories 3 to 4,
+`shots/05-journal-push-change.png`, `shots/06-journal-push-change-new.png`). The schedule and the Retrigger rule of the original server
+are not known (project rules: the entry, a change of the bits or of the level; Retrigger is a grant of one time).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

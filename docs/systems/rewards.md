@@ -80,9 +80,11 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
   respawn time of its spawn point (finding F8, case RL8): the point stays empty until a reset.
 - The kill of the quests (stage 1.8c, [Quests](quests.md)): after the rewards, `Rewards::killed` gives each character of the credit list (the
   creditors of this rule, not each character with a hit) the kill with the vitals categories of the victim (the member VitalsCategories of
-  its base vitals row in `loot-tables.json`; a file of before: the vitals row and the category row of the kind) and its kill event, with a
-  result id (the creature and the revision of its death). The quest drops of the character (`Quests::plan_drops`: a possession task whose
-  ItemDropVC names a category of the victim) go with its loot (its part of the loot bag, or its bag), in the transaction of its reward with
+  its base vitals row in `loot-tables.json`; a file of before: the vitals row and the category row of the kind; stage QG2a: also the id of
+  the base row, the category of the spawn point of the kind, and the direct parent of each category, `LootTables::kill_categories` [client
+  0x3B19F40]) and its kill event, with a result id (the creature and the revision of its death). The quest drops of the character
+  (`Quests::plan_drops`: a possession task whose ItemDropVC names a category of the victim; stage QG2a: the same rule with no id of the base
+  row [client 0x5C75830]) go with its loot (its part of the loot bag, or its bag), in the transaction of its reward with
   the award rows of AwardOnlyOnce. A kill with no credit (no creditor, no loot tables) gives the quests nothing. A quest drop that the bag
   lost (a full bag, with no loot bag data) writes no award row and keeps its misses: the next kill can drop it again (code review of stage
   1.8c, finding QR8C-R9; case QRW9).

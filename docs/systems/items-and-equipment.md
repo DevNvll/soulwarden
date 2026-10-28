@@ -168,6 +168,19 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   nothing [agent: the rule of a gather]. The client shows its reward popup for the cause 26. Live F: the Meat Pouch ("Essential
   Supplies Cache") gives 10 FoodHealthRecoveryT2 and 5 PotionHealthT1 (the table `QuestReward_MB_Meat_Pouch` is an AND of the two rows)
   [data; live]. Cases QD2 and QD6.
+- Stage QG2a, the salvage event of a loot container (`ItemContainers::open`, `open_refusal`; `LootTables::container_event`,
+  `salvage_event`) [data: `MasterItemDefinitions.SalvageGameEventID`, `GameEventData`; research quest-gaps.md section 8; live QG2a]: an item
+  of the class LootContainer with a SalvageGameEventID (the coin purses `QuestReward_MB_Coin_Purse2`, `QuestReward_WW_Coin_Purse2`: the
+  event `MB_CoinPurse2_Event` with CurrencyReward 2500; `Coin_Stack_500`, `_3000`, `_5000`: 50000, 300000, 500000; their RepairRecipe is
+  blank) pays its event at the open: CurrencyReward (the units of the wallet) for each unit, with CoinRewardChance (a blank cell is 1:
+  client loader 0x31E70B0, row +0x38), in the transaction of the take (`Inventory::write` with the coin), up to the wallet limit; then the
+  currency state of the owner. A container with a table and an event (80 gift boxes of the data) rolls the table and pays the event. The
+  open pays only the coin: an event with another reward (EntitlementId: 151 skin boxes; AchievementId: the mount boxes; AzothSalt,
+  FactionTokens, UmbralCurrency, PvpXp, a categorical progression; an item, the experience, or the Azoth of the event; a CurrencyReward
+  range "5000-10000"; LootTags or LootLimitId) or with no row of the data (5 items) refuses the open (`eventNotPayable`), and the item and
+  the coin stay [agent: the open path of this stage pays the coin; the other owners come later; no loot table is made]. The open of a purse
+  that rolls no coin (a chance below 1) is `emptyRoll`. Live QG2a: the bag shows the purse as "Bag of Coin"; a double click sends 1733;
+  986.02 coin before, 1,011.02 after, and the stack goes from 2 to 1 (no reward popup in the picture). Cases QG2C, QG2G.
 
 ## Commands
 

@@ -514,6 +514,18 @@ struct TerritoryPool {
 };
 
 /**
+ * Code review of stage QG1, finding QG1R-R1: a stored card of a territory pool whose card the loaded progression data does not have (a
+ * file of the format 3 has no cards). It has no effect and spends no token; each write of the skills writes it again, so that the data of
+ * the format 4 at a later start has the card and its token again.
+ */
+struct KeptCard {
+    std::uint32_t pool{0};
+    std::uint32_t card{0};
+    std::string name;
+    std::uint32_t level{0};
+};
+
+/**
  * The weapon masteries, the weapon trees, the ability bars, and the trade skills of a
  * character. The skill system changes them (world/skills.h). Each key is an id on the wire:
  * the CRC-32 of the lower-case id text of the game table (protocol notes 4.13). The id of a
@@ -532,6 +544,8 @@ struct SkillSet {
      * pool that a state does not have.
      */
     std::map<std::uint32_t, TerritoryPool> territoryPools;
+    /** Code review of stage QG1, finding QG1R-R1: the stored cards that the loaded data cannot read (KeptCard). */
+    std::vector<KeptCard> keptCards;
     /**
      * World revision of the last bar request of a client that the backend refused. 0: none. It
      * is not a value of the character: the store does not have it. A session that got the

@@ -73,22 +73,6 @@ std::optional<double> number(const std::string& text) {
     return value;
 }
 
-/**
- * Code review of stage 1.8d, finding QR8D-R6: @return The number of a whole text (no trailing text after the number), or no value. The reward
- * columns of stage 1.8d (GearScoreRange, TerritoryStanding) use it: a text such as "100-200junk" is not a range.
- */
-std::optional<double> whole_number(const std::string& text) {
-    if (text.empty()) {
-        return std::nullopt;
-    }
-    char* end = nullptr;
-    const double value = std::strtod(text.c_str(), &end);
-    if (end == text.c_str() || *end != '\0' || !std::isfinite(value)) {
-        return std::nullopt;
-    }
-    return value;
-}
-
 std::string trimmed(const std::string& text) {
     const std::size_t first = text.find_first_not_of(" \t");
     if (first == std::string::npos) {
@@ -232,6 +216,7 @@ bool QuestData::load_text(const std::string& text) {
         const std::string rule = lower_text(trimmed(cell(cells, "TriggerAreaType")));
         task.areaRule = rule == "leave" ? AreaRule::leave : rule == "stay inside" ? AreaRule::stayInside : AreaRule::enter;
         task.nameCrc = trimmed(task.itemName).empty() ? 0U : quest_crc(trimmed(task.itemName));
+        task.checkPoints = flag(cell(cells, "ShouldCheckPoints")); // Stage QG2a: TaskHaveLevel.
         taskByKey.emplace(key, static_cast<std::uint32_t>(m_tasks.size()));
         m_tasks.push_back(std::move(task));
     }
@@ -358,7 +343,9 @@ bool QuestData::load_text(const std::string& text) {
             for (const std::uint8_t child : node.children) {
                 node.stayActive = node.stayActive || objective.nodes[child].stayActive;
             }
-            if (task.type == task_type::kPartialContainer) {
+            // Stage QG2a: TaskHaveLevel is a condition with the base target 1 (constructor 0x3B01C80 passes 1 to the base task 0x3ACD210 and
+            // keeps TargetQty at +0x550 for its own compare: the callback 0x3B073A0 sets the progress 1); TargetQty is its level.
+            if (task.type == task_type::kPartialContainer || task.type == task_type::kHaveLevel) {
                 node.target = 1;
             } else if (is_container(task.type)) {
                 node.target = static_cast<std::uint32_t>(node.children.size());
@@ -448,77 +435,14 @@ bool QuestData::load_text(const std::string& text) {
             if (!cells.is_object()) {
                 return fail("the game event " + key + " is not an object");
             }
-            QuestGameEvent event;
-            event.id = cell(cells, "id").empty() ? key : cell(cells, "id");
-            const auto whole = [&](const char* column) -> std::uint64_t {
-                const std::optional<double> value = number(cell(cells, column));
-                return value && *value > 0.0 ? static_cast<std::uint64_t>(std::min(*value, 1e12)) : 0U;
-            };
-            event.experience = whole("UniversalExpAmount");
-            event.coin = whole("CurrencyReward");
-            if (const std::optional<double> chance = number(cell(cells, "CoinRewardChance"))) {
-                event.coinChance = std::clamp(*chance, 0.0, 1.0);
-            }
-            event.item = trimmed(cell(cells, "ItemReward"));
-            if (const std::optional<double> quantity = number(cell(cells, "ItemRewardQty"))) {
-                // The sign stays (code review of stage 1.8b, finding QR8B-R10): a negative quantity refuses the hand-in.
-                event.itemQty = static_cast<std::int64_t>(std::clamp(*quantity, -1e6, 1e6));
-            }
-            // Stage 1.8d: GearScoreRange (client 0x31E43A0: split at "-"; one number is both ends). A text that is not one or two whole
-            // numbers from 0 to 65535 keeps the event with the column as a reward that the backend cannot pay.
-            if (const std::string text = trimmed(cell(cells, "GearScoreRange")); !text.empty()) {
-                const std::size_t dash = text.find('-');
-                const std::optional<double> low = whole_number(trimmed(text.substr(0, dash)));
-                const std::optional<double> high = dash == std::string::npos ? low : whole_number(trimmed(text.substr(dash + 1)));
-                if (low && high && *low >= 0.0 && *high >= *low && *high <= 65535.0 && std::floor(*low) == *low && std::floor(*high) == *high) {
-                    event.gearScoreRange = std::make_pair(static_cast<std::uint16_t>(*low), static_cast<std::uint16_t>(*high));
-                } else {
-                    event.unpaid.push_back("GearScoreRange " + text);
+            // Stage QG2a: one reader of the reward cells (gamedata/game_event.h): the salvage events of the loot data use it too.
+            EventCells values;
+            for (const auto& [column, text] : cells.items()) {
+                if (text.is_string()) {
+                    values.emplace(column, text.get<std::string>());
                 }
             }
-            // Stage 1.8d: TerritoryStanding has an owner (the standing of a territory, decision D3 option B of the orchestrator). A text that
-            // is not a whole number of 0 or more (the data has one "#REF!") stays a reward that the backend cannot pay.
-            if (const std::string text = trimmed(cell(cells, "TerritoryStanding")); !text.empty()) {
-                const std::optional<double> value = whole_number(text); // Finding QR8D-R6: the whole text.
-                if (value && *value >= 0.0 && std::floor(*value) == *value && *value <= 1e9) {
-                    event.standing = static_cast<std::uint64_t>(*value);
-                } else {
-                    event.unpaid.push_back("TerritoryStanding " + text);
-                }
-            }
-            event.achievement = trimmed(cell(cells, "AchievementId"));
-            event.whisper = trimmed(cell(cells, "WhisperId"));
-            if (event.whisper.empty()) {
-                event.whisper = trimmed(cell(cells, "WhisperID"));
-            }
-            // The rewards with no owner in the backend yet (research quest-engine.md Q6; stage 1.8d and later).
-            // Stage 1.8e: AzothReward has an owner (the Azoth balance of stage 3.7c) when AzothRewardChance is 1 (each event of the data with an
-            // amount and a chance cell has 1). A blank chance, another chance, or an amount that is not a whole number stays unpaid.
-            if (const std::string text = trimmed(cell(cells, "AzothReward")); !text.empty()) {
-                const std::optional<double> value = whole_number(text);
-                const std::string chance = trimmed(cell(cells, "AzothRewardChance"));
-                const std::optional<double> chanceValue = whole_number(chance);
-                if (value && *value == 0.0) {
-                    // No reward.
-                } else if (value && *value > 0.0 && std::floor(*value) == *value && *value <= 1e9 && chanceValue && *chanceValue == 1.0) {
-                    event.azoth = static_cast<std::uint64_t>(*value);
-                } else {
-                    event.unpaid.push_back("AzothReward " + text + " (AzothRewardChance " + (chance.empty() ? std::string("blank") : chance) + ")");
-                }
-            }
-            for (const char* column : {"FactionReputation", "FactionTokens", "CategoricalProgressionReward", "UmbralCurrency", "PvpXp",
-                                       "PVPXP", "SeasonsXp", "AzothSalt", "CursedSilvers", "CursedCrowns"}) {
-                const std::string text = trimmed(cell(cells, column));
-                const std::optional<double> value = number(text);
-                if (!text.empty() && (!value || *value != 0.0)) {
-                    event.unpaid.push_back(std::string(column) + " " + text);
-                }
-            }
-            for (const char* column : {"EntitlementId", "StatusEffectId"}) {
-                if (const std::string text = trimmed(cell(cells, column)); !text.empty()) {
-                    event.unpaid.push_back(std::string(column) + " " + text);
-                }
-            }
+            QuestGameEvent event = read_game_event(key, values);
             m_events.emplace(lower_text(event.id), std::move(event));
         }
     }

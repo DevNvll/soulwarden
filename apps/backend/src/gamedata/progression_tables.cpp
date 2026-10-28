@@ -347,6 +347,12 @@ bool ProgressionTables::load(const std::string& path) {
                 || ranks == rankTables.end() || standing.maxRank >= ranks->second.experience.size()) {
                 return false;
             }
+            // Code review of stage QG1, finding QG1R-R2: in the format 4 the rank table of a standing has its rank experience (xpReward) and
+            // its card offers (cards), one entry for each rank: with an empty default a rank-up would pay no experience and give a token
+            // that no card can spend.
+            if (format >= 4 && (xpRewards.count(row[2].get<std::string>()) == 0 || cardOffers.count(row[2].get<std::string>()) == 0)) {
+                return false;
+            }
             standing.territory = static_cast<std::uint16_t>(territory);
             standing.ranks = ranks->second;
             standing.xpReward = xpRewards[row[2].get<std::string>()];

@@ -367,7 +367,8 @@ void availability(const Options&) {
               && gamedata::faction_mask("!Any") == 0x1 && gamedata::faction_mask("Syndicate") == 0x2 && gamedata::faction_mask("!Marauder") == 0xB
               && gamedata::faction_mask("!None") == 0xE,
           "the masks of the parser: blank 0xF, Any 0xE, !Any 0x1, Syndicate 0x2, !Marauder 0xB, !None 0xE");
-    check(available("Qd_Arc") == world::QuestError::unsupportedGate, "a QuestArcTag (no rule of the service): hidden");
+    // Stage QG2a (research quest-gaps-qg2b.md section 1): the eligibility 0x3A4BFE0 does not read QuestArcTag (row +0x20): no gate.
+    check(available("Qd_Arc") == world::QuestError::none, "a QuestArcTag is no gate (stage QG2a): offered");
     check(available("Qd_Npa") == world::QuestError::none, "!NPA with a false NPA: offered");
     check(shop.host.world.ownership().unlock_achievement(*a, "Qb_Event_Bit", 907), "control: the bit of the NPA");
     shop.host.steps(3, {&shop.clientA, &shop.clientB});
@@ -722,7 +723,10 @@ void ready_root_holds(const Options&) {
     check(quests.hand_in(*a, readyA->instance).ok(), "the hand-in of A after the conditional became false");
 }
 
-/** QF7 (stage 1.8e, I3): AzothReward goes into the Azoth balance (stage 3.7c); the cap; a blank chance; no cap data; two sessions. */
+/**
+ * QF7 (stage 1.8e, I3): AzothReward goes into the Azoth balance (stage 3.7c); the cap; a blank chance (stage QG2a: paid); no cap data; two
+ * sessions.
+ */
 void azoth_reward(const Options&) {
     json document = reward_document();
     document["events"]["qf_azoth_success"] = {{"id", "Qf_Azoth_Success"}, {"UniversalExpAmount", "20"}, {"AzothReward", "30"}, {"AzothRewardChance", "1"}};
@@ -771,12 +775,13 @@ void azoth_reward(const Options&) {
     const world::HandInResult capped = quests.hand_in(*a, shop.ready(kCharacterA, "Qf_Azoth_Again"));
     check(capped.ok() && capped.azoth == 10 && world::Skills::balance(a->skills, world::kAzothCurrency) == 2500,
           "at 2,490 of 2,500 the hand-in gives 10: the balance stops at the cap");
-    // A blank AzothRewardChance: the default of the client loader is not read, the reward stays unpaid.
+    // Stage QG2a: a blank AzothRewardChance loads as 0 (research quest-gaps-qg2b.md section 2) and the client shows the amount: the hand-in
+    // pays it (a project rule of the orchestrator).
     const std::uint64_t blank = shop.ready(kCharacterB, "Qf_Azoth_Blank");
-    const world::HandInResult refused = quests.hand_in(*b, blank);
-    check(refused.error == world::QuestError::cannotPay && refused.detail.find("AzothRewardChance blank") != std::string::npos
-              && world::Skills::balance(b->skills, world::kAzothCurrency) == 0 && questfix::quest_of(*b, "Qf_Azoth_Blank") != nullptr,
-          "AzothReward with a blank chance is refused: the quest of B stays ready");
+    const world::HandInResult blankPaid = quests.hand_in(*b, blank);
+    check(blankPaid.ok() && blankPaid.azoth == 50 && world::Skills::balance(b->skills, world::kAzothCurrency) == 50
+              && questfix::quest_of(*b, "Qf_Azoth_Blank") == nullptr,
+          "AzothReward with a blank chance pays the amount (stage QG2a): B has 50");
     // The owner view: the categorical state of A has its balance; B gets no state of A.
     shop.host.steps(3, {&shop.clientA, &shop.clientB});
     bool own = false;

@@ -40,7 +40,8 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage 1.8e: the support manifest | `world/quest_support.h` (`QuestSupport::manifest`, `default_profiles`), the command `quest_support_json`; the second computation `~/Games/soulwarden/work/evidence/quests/18f/implement/scripts/support_check.py` (stage 1.8f); cases QF4, QRE5, QRE6, QRE8 |
 | Stage 1.8e: a cinematic in a development run | the command `quest_cinematic` (`server/http/quest_commands.cpp`), `Quests::cinematic` |
 | Stage 1.8f: the corrections of the review of 1.8e | `Combat::strike_objects`, `QuestObjects::strike` (the cutscene, the wall line: `Navigation::line_ready`, `line_stop`), `Quests::object_destroyed` (one plan), `QuestObjectData::load_text` (one actor, one key), `QuestSupport` (the items, the hand-in, `std::size_t` counters); `tests/review_quests_18e_tests.cpp`, cases QRE1 to QRE8, QF1 |
-| The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md` |
+| Stage QG2a: the small quest rules (the category rule, TaskHaveLevel, the salvage events, the Azoth amount, no arc gate, the push) | `LootTables::kill_categories` (`gamedata/loot_tables.h`), `Rewards::killed`; the TaskHaveLevel predicate of `Quests::Plan::predicate`, `Quests::level_changed` (called by `Progress::finish`); `gamedata/game_event.h` (`read_game_event`, `azoth_amount`); `ItemContainers::open`, `open_refusal`; `Quests::available`; `Quests::PushIndex`, `push_changed`, `pushed`; `QuestSupport` (the reasons, the location rule, the push source); `tests/quest_gap_tests.cpp` (QG2A to QG2G, but QG2D), `tests/quest_gap_support_tests.cpp` (QG2D); the second computation `~/Games/soulwarden/work/evidence/quests/qg2a/implement/scripts/support_check.py` |
+| The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`; stage QG2a: `research/quest-gaps.md`, `research/quest-gaps-qg2b.md`, the static read of the category rule `evidence/quests/qg2a/implement/static/category/CATEGORY.md` |
 
 ## Rules
 
@@ -138,7 +139,8 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
 - A kill [client 0x825E7C0; data VitalsBaseData.VitalsCategories]: `Rewards::killed` gives each character of the credit list (the credit
   rule of [Rewards](rewards.md)) the kill with each vitals category of the victim (the VitalsCategories of its base vitals row, in lower
   case: `Corrupted_Sailor_1H_Club,Hostile,Corrupted,Pirate`; a loot tables file of before stage 1.8c: the vitals row and the category row
-  of the kind) and the kill event of its vitals row (KillEventIdOverride, or KillEvent). TaskKillContribution counts a kill whose categories
+  of the kind; stage QG2a: also the category of its spawn point and the direct parent of each, the rule of the section of stage QG2a) and
+  the kill event of its vitals row (KillEventIdOverride, or KillEvent). TaskKillContribution counts a kill whose categories
   have one of its KillEnemyType; TaskGameEvent counts the event [live K1: the kill of a Corrupted Mariner, `Corrupted_Sailor_1H_Club`,
   shows "1 / 5 - Defeat Corrupted Mariners" on the HUD]. KillEnemyWeaponID (5 rows): the item of the kill must be that item; the
   backend has no item of a kill now, so such a task waits [agent]. A character that is not in the credit list gets nothing (case QE1, QE8).
@@ -306,8 +308,9 @@ research is `~/Games/soulwarden/work/research/scratch/quests-18d/` (rules Q1 to 
 - GearScoreRange of the event [client parser 0x31E43A0: the text splits at "-"; one number is both ends]: the gear score of the item of the
   event, a uniform roll of the world generator in the range [agent: the three rows of the data have one value].
 - A loot container item (the class has `LootContainer`: the Meat Pouch `QuestReward_MB_Meat_Pouch` of 06_skinningknife) is a normal reward
-  item of the bag. The loot data must have its table (member `containerRoots` of `loot-tables.json`), else the hand-in is refused: a
-  container that cannot open would lose its reward [brief of stage 1.8d]. The open is in [Items and equipment](items-and-equipment.md).
+  item of the bag. The loot data must have its table (member `containerRoots` of `loot-tables.json`), or (stage QG2a) its salvage event
+  must pay only coin (the coin purses), else the hand-in is refused with the cause (`ItemContainers::open_refusal`): a container that
+  cannot open would lose its reward [brief of stage 1.8d]. The open is in [Items and equipment](items-and-equipment.md).
 - TerritoryStanding (stage QG1; it replaces decision D3 option B of stage 1.8d) goes to the territory of the character at the hand-in
   (`World::territory_of`: the territory bounds of the POI data at its position) [client: the grant of a game event 0x31F5400 takes the
   territory of its context and, with none, the detected territory of the player, 0x31F6D2B to 0x31F6D63; the writer of the context of an
@@ -323,17 +326,19 @@ research is `~/Games/soulwarden/work/research/scratch/quests-18d/` (rules Q1 to 
 - The availability (`Quests::available`) has the checks of the client in their order [client 0x37AE910 at the person, eligibility
   0x3A4BFE0; research quests-18d rules Q2]: no active instance; no other active objective with the same completion achievement
   (HasObjectiveWithCompletionAchievement 0x3A47310: the variants); the completion achievement (IsObjectiveComplete 0x3A48A30): a repeat on
-  its cooldown is `onCooldown`, else `completedBefore`; a gate whose service rule the backend does not have (RequiredGameModeId,
-  QuestArcTag, RequiredWorldTags, a required categorical progression) is false [agent: an unknown rule is false, as an unknown achievement
-  is, research U7]; RequiredLevel against the level of the screen [client 0x3A4C13E]; RequiredAchievementId as a conditional (with `!`,
+  its cooldown is `onCooldown`, else `completedBefore`; a gate whose service rule the backend does not have (RequiredWorldTags, a required
+  categorical progression) is false [agent: an unknown rule is false, as an unknown achievement is, research U7]; RequiredGameModeId (row
+  +0x34) is false: it is IsInGameMode of the GameModeParticipant component (0x32BA3B0), and the open world has no active game mode [client
+  0x3A4C0A3 to 0x3A4C0E6; research quest-gaps-qg2b.md section 1]; stage QG2a: QuestArcTag (row +0x20) is no gate (the eligibility 0x3A4BFE0
+  does not read it); RequiredLevel against the level of the screen [client 0x3A4C13E]; RequiredAchievementId as a conditional (with `!`,
   `&&`, `||`, and the NPA rows) [client]; RequiredFaction as a mask [client parser 0x445CA30: blank or None 0xF, Any 0xE, Syndicate 0x2,
   Marauder 0x4, Covenant 0x8; a leading `!` gives the complement in the four bits; bit 0 bypasses the test at 0x3A4C166]. The backend has
   no faction of a character yet (roadmap 4.5): each character is unaligned (faction 0) [agent].
 - The client shows no locked offer: it hides an offer that fails a check [client; live I2 of stage 1.8d: Urda shows no offer before the
   hand-in of 06_skinningknife and the offer of 06_boarfeast after it]. The person system offers only what `available` permits.
-- PushObjectiveOnReqMet (21 rows) is not applied [agent: the push of `01_SoleSurvivor2` would grant the old start of 134 tasks, and the
-  release status of these rows is not known; decision of the user]. SkipReqAchievmentWhenInvalid and
-  ShouldResetInProgressQuestOnScheduleEnd are read and not applied (no row of the beach chain has them).
+- PushObjectiveOnReqMet: stage QG2a pushes 18 of the 21 rows (the rules of the section of stage QG2a; decision B of the orchestrator, the
+  decision of the user is open). SkipReqAchievmentWhenInvalid and ShouldResetInProgressQuestOnScheduleEnd are read and not applied (no row
+  of the beach chain has them).
 - TaskTimer: the timer of the server, its fraction, and its end action are the rules of stage 1.8a. Stage 1.8d adds: a timer keeps its start
   across a reconnect (the start is in the task row), and the end of a failure timer fails its objective with the authored action (case QD4)
   [client 0x3B2BA40]. The countdown row of the HUD is open: the client publishes `MissionTimers.<instance>.TargetTime` at the bind of the
@@ -405,12 +410,11 @@ client), the live checks are in `~/Games/soulwarden/work/evidence/quests/18e/imp
 - TaskTriggerArea with TriggerAreaType Enter stays satisfied after the character leaves the volume; only Stay Inside regresses [data: 778
   Enter tasks, 3 Stay Inside; live M1: the monolith of `06_demonstorm2` stands outside the cave volume of the Enter task before it, and the
   regression took the quest back before the strike]. Case QF3.
-- AzothReward of a success event goes into the Azoth balance (the categorical progression `Azoth_Currency` of stage 3.7c) when
-  AzothRewardChance is 1 [data: 672 events with an amount have the chance 1; research quest-engine-3.md Q4 names the Azoth balance as the
-  owner]. The gain stops at the cap of the crafting data (2,500; AllowOverflow 0, the rule of `Skills::add_balance`). A blank or another
-  chance stays a reward with no owner [agent: the 4 mission events with a blank cell; the default of the loader 0x31E70B0 for this column is
-  not read]. With no cap in the crafting data the hand-in is refused. The skills plan of the hand-in has the standing and the Azoth: one
-  write. Case QF7.
+- AzothReward of a success event goes into the Azoth balance (the categorical progression `Azoth_Currency` of stage 3.7c) [research
+  quest-engine-3.md Q4 names the Azoth balance as the owner]. The gain stops at the cap of the crafting data (2,500; AllowOverflow 0, the
+  rule of `Skills::add_balance`). With no cap in the crafting data the hand-in is refused. The skills plan of the hand-in has the standing
+  and the Azoth: one write. Case QF7. Stage QG2a replaces the chance rule of stage 1.8e: the amount is the amount of the client, and the
+  chance has no effect (the section of stage QG2a).
 - The cinematic `TempestRising` of `06_raisealarm` [client, static read `research/scratch/quests-18e/cinematic/ANSWERS.md`]: the lead-in
   cutscene timeline starts it (layer `Trigger_Bink_Video` at 9.7 s); the client plays a Bink 2 file and sends 6606 at the start and 6542 at
   the end (or at a skip: a hold of Escape for 2.25 s). The play function returns before it opens the video when `sys_audio_disable` is
@@ -434,6 +438,81 @@ client), the live checks are in `~/Games/soulwarden/work/evidence/quests/18e/imp
   hidden timer: `06_skinningknife_03_swapDelay`). The UI data build 0x3AD7BE0 reads the TimeLimit of the task (+0x1F4), not its Duration.
   No server field or message that makes the row count is known [client, inference of the read; no live trace]. The row stays open, with
   the trace checks A and B of the read for a later run.
+
+### The small quest rules (stage QG2a)
+
+The research is `~/Games/soulwarden/work/research/quest-gaps.md` (QG0) and `quest-gaps-qg2b.md` (QG2b); the static read of the category
+rule (GPT-6.1-Sol, read only) is `~/Games/soulwarden/work/evidence/quests/qg2a/implement/static/category/CATEGORY.md`; the result and the
+live checks are in `~/Games/soulwarden/work/evidence/quests/qg2a/implement/RESULT.md`.
+
+- The vitals categories of a victim (`LootTables::kill_categories`, one rule for the kill credit, the quest drops, and the source index of
+  the manifest) [client: the predicate of TaskKillContribution 0x3B19F40, called by the event callback 0x3B171D0; the drop helper of
+  ItemDropVC 0x5C75830; data `javelindata_vitalscategories`, `GroupVitalsCategoryId`, loader 0x5BBF960, row +4]: the VitalsCategories of
+  its base row (row +0xF0), the category of its spawn point (the VitalsCategoryId of the level metadata, the separate category of the
+  victim, also when the base row has categories), and the direct parent of the spawn category and of each base-row category. One level: a
+  parent of a parent is no match (0x3B1A081 to 0x3B1A098, 0x3B1A0DA to 0x3B1A0F3: one lookup of the category row, no second lookup). The
+  kill credit also matches the id of the base vitals row (0x3B1A057); the drop helper does not. A Bronzeroot Soldier (`Dryad_Soldier_31`,
+  spawn category `Dryad_Soldier_02BW04`, parent `Bronzeroot`) counts for "Destroy Bronzeroot" of `02A_Side02_02_EarthProvide` [live QG2a:
+  the journal "0 / 3", then "1 / 3" after one kill]. Each parent target of the kill tasks of the data is a direct parent (49 targets).
+- TaskHaveLevel [client: factory 0x4461150 case 48, constructor 0x3B01C80, activation 0x3B04F40, callback 0x3B073A0; research
+  quest-gaps.md section 8]: with a blank ItemName the task is the level of the character: it is satisfied at the level of the screen
+  TargetQty or more (the callback compares the level index with TargetQty - 1, unsigned: a TargetQty of 0 never). Its target is 1 (the
+  constructor passes 1 to the base task and keeps TargetQty at +0x550). It looks at its activation and at each change of the level
+  (`Progress::finish` calls `Quests::level_changed`; the next tick looks at the tasks of the key "level"). With an ItemName (Covenant,
+  Marauder, Syndicate: 24 of the 30 tasks of the data) it is the points (ShouldCheckPoints) or the rank of a categorical progression of a
+  faction: no owner in the backend (roadmap 4.5), the task waits.
+- The salvage event of a loot container (`SalvageGameEventID` of the item row: the coin purses `QuestReward_MB_Coin_Purse2` and
+  `QuestReward_WW_Coin_Purse2` name `MB_CoinPurse2_Event`, CurrencyReward 2500; `Coin_Stack_500` 50000) [data; research quest-gaps.md
+  section 8]: the open pays the CurrencyReward of the event (with CoinRewardChance; a blank chance is 1) for each unit, in the transaction
+  of the take, up to the wallet limit; a container with a table and an event rolls the table and pays the event. An event with another
+  reward (an entitlement: a skin box; an achievement: a mount box; AzothSalt; an item, the experience, or the Azoth of an event: no path
+  of the open yet; a range "5000-10000"; a loot limit) or with no row is refused, and the item stays [agent: the open path pays the coin
+  only; no loot table is made]. Live QG2a: the "Bag of Coin" of the bag opens with a double click (1733): 986.02 coin before, 1,011.02
+  after, one purse less. Details in [Items and equipment](items-and-equipment.md).
+- One reader of the reward cells of a game event (`read_game_event`, `gamedata/game_event.h`): the quest data and the salvage events of the
+  loot data. Stage QG2a: CurrencyReward must be a whole number (a text after the number is a reward with no rule, not its first number);
+  LootTags and LootLimitId are rewards with no rule.
+- The Azoth amount [client: the integer getter 0x5AC0ED0 truncates the float cell toward zero (cvttss2si at 0x5AC0F7B), the event loader
+  keeps 16 bits (0x31E802A, row +0xC); the offer, the journal, and the hand-in screen show that amount and no chance (objectivedatahelper,
+  research quest-gaps-qg2b.md section 2)]: 37.5 is 37, 12.5 is 12, a blank AzothRewardChance loads as 0. A project rule of the
+  orchestrator (2026-10-28): the hand-in pays the amount that the client shows, with no roll of the chance (the payment rule of the original
+  server is not known). The loader normalizes it one time (`azoth_amount`); a negative amount or a text is a reward with no rule. Live
+  QG2a: "Dentistry Artistry" (`12A_Side_08_GatherFangs`, AzothReward 37.5) shows 37 in the journal and at the hand-in, and the balance goes
+  from 393 to 430.
+- QuestArcTag (row +0x20) is no gate [client: the eligibility 0x3A4BFE0 does not read row +0x20; the check of row +0x34 at 0x3A4C0A3 is
+  RequiredGameModeId; research quest-gaps-qg2b.md section 1]. The tag groups the QuestArc meta-achievements: after a completion the client
+  calls 0x38A6E20 (row +0x20 against meta row +0xDC) for their progress. The backend has no meta-achievement progress yet (a later stage).
+- PushObjectiveOnReqMet (loader 0x445CA30: +0x368; Retrigger +0x369) [decision B of the orchestrator, 2026-10-28; the user can change it:
+  the 18 rows of the released game]: the server grants a push row when the normal availability passes (`Quests::available`: no active
+  instance, the completion achievement, RequiredLevel, RequiredAchievementId with its `_pushedonce` bits, the faction, the gates) and the
+  character is in its ExclusiveTerritory when the row has one (eligibility 0x3A4C20F, 0x3A4C218). The grant has the source `push`, the
+  territory of ExclusiveTerritory (none in the 18 rows), and the automatic pin. Not pushed: `01_SoleSurvivor2` (the old start: its
+  condition is true for each new character) and `Quest_03189`, `Quest_03190` (seasonal rows behind `debug_1`) (`kPushExcluded`).
+  - Project rules (the schedule of the original server is not known; research quest-gaps-qg2b.md section 3): the test runs when the saved
+    state of the character is ready at the world entry (each push row), and at the next tick after a change of an achievement of the
+    character (each change of the bits: a completion, an action, an undo, a command) or of its level. Retrigger is a grant of one time: no
+    other rule.
+  - The `_pushedonce` bits (the ten Dunwood rows) are normal achievement actions of the task tree: the first task unlocks the bit at the
+    activation (StayActive 0: an undo row), and the abandon and the reset undo it. After an abandon the row is available again, and the
+    change of the bit grants it again at the next tick (a project rule that follows from the rules above).
+  - The cost (MP-8): an index of the push rows by their dependencies (`Quests::PushIndex`: the bits of RequiredAchievementId with its
+    non-persisted achievements, the completion achievement, RequiredLevel). A change visits only the rows of the bits that changed since
+    the last check of the character (the watched bits that the character has: 55 bits for the 18 rows) and of the levels that it passed.
+  - Live QG2a: the entry of the development character (level 65) granted `Quest_18000`, `Quest_18008`, `Vector_Faction_PushQuest`,
+    `Vector_Kiln_PushQuest`, `Vector_Mounts_PushQuest` (the journal: "Acquire a Mount", "Faction Introductions", "Orbs of Power"); the
+    bit `06A_MSQ_03` (a command) granted `Vector_Crafting_WW_PushQuest` ("Learn to Craft") at the next tick.
+- The manifest (stage QG2a): a push row with no ExclusiveTerritory is a grant source of a kind that the backend runs, and a history plays
+  it when the availability passes; TaskHaveLevel with a blank ItemName completes in a history of that level or more. The reasons say what
+  a block is: a task with no TP_TargetTag (a pin or a cyclic puzzle: `impossible_task`, `DummyPin`), a never-true trigger tag (`nevertrue`,
+  `NEVERCOMPLETE`, `nevetrue`, `nvere true`), a game event task with no event (a pin or a map task), a task with no ItemName (of a mission
+  template or a community goal: its mission instance gives the item), KillEnemyWeaponID of an ability table (a weapon filter:
+  `BowAbilityTable`) or of neither an item nor a table (`Turkey`), TaskHaveLevel of a faction progression, and a loot container whose
+  salvage event pays a reward with no owner [research quest-gaps.md sections 2 and 8]. No row becomes supported by these reasons.
+- The location rule in the manifest (stage QG2a): a task with EnforceLocationRequirement and a POITag progresses only in a point of interest
+  of a tag (`Quests::matched_tasks`, `plan_drops`, `Plan::location_ok`, stage 1.8c); with no shape of any of its tags in the POI data the
+  task never progresses, and the manifest blocks it ("the location rule (EnforceLocationRequirement) needs a point of interest shape") [the
+  rule of the runtime; agent]. The manifests of the stages 1.8e to QG1 did not test it: 13 rows were marked supported that no character can
+  complete (among them `FactionIntro_Marauders_01`, `06A_MSQ_12_DefeatPirateCaptain`; the tags `abandoned_village_40289`, `brightwood8`).
 
 ### The support manifest (stage 1.8e)
 
@@ -514,6 +593,27 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   second computation (a copy of `support_check.py` with the rules of stage QG1 in the evidence of the stage: its own point-in-polygon test
   of the bounds and of the places of the person slots) gives the same counts: 2,147 rows, 304 supported, 0 row differences, 306 histories
   with 0 differences, 25 groups.
+
+- The counts of stage QG2a (the same game data, with `loot-tables.json` of stage QG2a: the category groups and the salvage events): 356
+  supported objectives (304 before; 65 new, 13 no longer: the location rule). The first reasons before of the 65 new rows: 18 the gate
+  QuestArcTag, 15 no grant source (the push rows and their chains), 10 an Azoth fraction, 10 no creature of the categories (the category
+  rule), 4 a loot container (the coin purses and `Coin_Stack_500`), 8 an item or another task that a new grant or reward reaches. A new
+  character of each archetype completes 35 (25 before; new: `06A_MSQ_02_VisitInn` (the purse), `06A_MSQ_03_VisitMarket`,
+  `06A_S_01_FindArcheologists`, `06A_TS_01_GatherAndRefine`, `06A_Z_02_SpreadJoy`, `12A_MSQ_02_InnTutorial` (the purse),
+  `12A_MSQ_03_VaultTutorial`, `12A_MSQ_04_MeetPayne`, `12A_MSQ_06_ToMiclot`, `12A_Side_01_PlaceFlowers`, `12A_Side_02_GatherGift`,
+  `12A_Side_03_CollectPicks`, `12A_Side_15_CollectResources`, `12A_Side_16_ToGoodUse`; gone by the location rule: `1125_0101_SongoftheSea`,
+  `FactionIntro_Marauders_01`, `FactionIntro_Marauders_02`, `FactionIntro_Marauders_Vector`). A level 60 character with no template
+  completes 7 (11 before). The 298 template histories in 23 groups complete 7 to 14 (8 to 17 before; `09A_M9_MeetShirzad` and
+  `16_Side_19_HelpWarden`: 13; 158 templates with no start objective: 7 to 14). No history completes a push row: the requirements of the 18
+  rows are false in the histories (17_MSQ_22, the Dunwood bits), or a later gap blocks them (`Quest_18008`: no NpcDestinationId,
+  `Vector_Faction_PushQuest`: a topic wait, `Vector_Kiln_PushQuest`: a recipe). The first reasons of the 671 objectives that are not
+  supported: 183 a point of interest with no shape, 141 an item with no source, 63 no producer of a game event, 39 TaskGameMode, 38 the
+  location rule with no shape, 36 no creature of the categories, 35 TaskQuickCourse, 28 no grant source that the backend runs, 20
+  TaskHaveLevel of a faction progression, 18 no object of the interact tag, and 25 smaller groups. The second computation (a copy of
+  `support_check.py` with the rules of stage QG2a in the evidence of the stage: its own kill facts with the category rule and the location
+  rule, its own TaskHaveLevel, an allow list of the cells of a salvage event, the Azoth amount, the push) gives the same counts: 2,147
+  rows, 356 supported, 0 row differences, 0 kill and level fact differences, 306 histories with 0 differences, 25 groups; on the manifest
+  of stage QG1 it finds 230 row differences.
 
 ### The corrections of the code review of stage 2.5c (in stage 1.8b)
 
@@ -716,3 +816,12 @@ from the client at a person (a development run: `tools/world quest grant` gives 
   first beach nodule: 0.46 m). A probe with the floor of the data is not the line of a live strike; read the position of the input report.
 - Stage 1.8f: an objective with no NpcDestinationId (1,206 rows of the data, among them `09A_S4_BlowUpFarm`) has no hand-in on the server:
   `Persons::hand_in` compares the destination with the person of the conversation. The client rule for such a row is not known.
+- Stage QG2a: the push grants its rows also to an existing character at its next entry: the development character of level 65 got five
+  quests at once (two main story rows of Dunwood, three vectors). An abandon of a push row gives it back at the next tick (its
+  `_pushedonce` bit, or its requirement, is true again).
+- Stage QG2a: the HUD of the client shows its own list of pins: a quest of a command (`tools/world quest grant`) can be pinned on the server
+  and not on the HUD when the client has many quests. Read the counter of a task in the journal (J, the category of the quest).
+- Stage QG2a: a kill task with EnforceLocationRequirement and a tag with no shape never counts (the bears of `02A_Side06_01_Bears`, the tag
+  `brightwood8`): the manifest blocks such a row now. Choose a quest of the manifest of the same tree for a live check.
+- Stage QG2a: in a live fight with the journal open the creatures still attack: the development character died at the ruins of
+  `ancient_ruins_40214`. Take the pictures with `tools/world ignore CHARACTER on`, then turn it off for the kill (the mode gives no credit).

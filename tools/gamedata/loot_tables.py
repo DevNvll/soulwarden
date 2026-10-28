@@ -21,7 +21,11 @@ entries, the pak entries with an Oodle library, or the files that tools/research
   AILevelDisparity (LevelDisparityData)           for each level difference (creature minus character):
                                                   KillExpModifier and MaxRewardLevelDelta
   the game events (GameEventData)                 the coin chance of KillEvent and of each kill event that
-                                                  a vitals row names in KillEventIdOverride
+                                                  a vitals row names in KillEventIdOverride; stage QG2a: the
+                                                  cells of each event that a loot container item names in
+                                                  SalvageGameEventID (the open pays it)
+  the vitals categories (VitalsCategoryData)      stage QG2a: GroupVitalsCategoryId, the parent of each category
+                                                  (the kill credit and the quest drops of a parent category)
   XPLevels (ExperienceData)                       the gear score ranges GSLimitT1 to GSLimitT5 of each level
   VitalsLevels (VitalsLevelData)                  AILootGSCeiling of each creature level
   the vitals tables (VitalsBaseData,              for each base row: CanDropLoot, LootDropChance,
@@ -58,6 +62,9 @@ Output: {"format": 1,
            [[kind, id, threshold, quantityMin, quantityMax, gearScoreMin, gearScoreMax], ...]], ...},
 "buckets": {"<bucket id>": [[item, quantityMin, quantityMax, odds, matchOne, [[tag] | [tag, low, high], ...]], ...]},
 "containerRoots": {"<loot container item id in lower case>": "<table id>", ...}   (stage 1.8d; a file of before has none),
+"containerEvents": {"<loot container item id in lower case>": "<SalvageGameEventID>", ...}   (stage QG2a; a file of before has none),
+"salvageEvents": {"<event id in lower case>": {"<column>": "<source text>", ...}, ...}   (stage QG2a: the nonblank cells of the row),
+"categoryGroups": {"<vitals category id in lower case>": "<GroupVitalsCategoryId in lower case>", ...}   (stage QG2a),
 "counts": {...}}
 `and` is 1 for AND and 0 for OR. `bonus` is 0 AddToRoll, 1 ClampMax, 2 IgnoreBonus. `kind` is "t" (a table),
 "b" (a bucket), or "i" (an item). A gear score range of 0 and 0 is no range. The entries of a table are in the
@@ -109,12 +116,14 @@ LIMIT_TYPE = "LootLimitData"
 GATHERABLE_TYPE = "GatherableData"
 # Stage 1.8d: the loot container items (ItemClass LootContainer: the Meat Pouch of a quest; docs/systems/items-and-equipment.md). The open
 # of the client (message 1733, the salvage of quantity 1) rolls the loot table of RepairRecipe in the loot table form "[LTID]NAME" (client
-# 0x2E57210, 0x3687F10). An item with a SalvageGameEventID (a coin event, an entitlement) is not exported: the event of a salvage has no
-# owner in the backend yet.
+# 0x2E57210, 0x3687F10). Stage QG2a: an item with a SalvageGameEventID (the coin purses, Coin_Stack_500; research quest-gaps.md section 8)
+# names the game event that its open pays; the file has the cells of each such event (the backend decides which rewards it can pay).
 ITEM_TYPE = "MasterItemDefinitions"
 CONTAINER_CLASS = "lootcontainer"
+# Stage QG2a: the vitals categories and their parents (GroupVitalsCategoryId; research quest-gaps.md section 6).
+CATEGORY_TYPE = "VitalsCategoryData"
 USED_TYPES = (LOOT_TABLE_TYPE, LOOT_BUCKET_TYPE, VARIANT_TYPE, BASE_TYPE, REWARD_TYPE, MODIFIER_TYPE, DISPARITY_TYPE,
-              EVENT_TYPE, EXPERIENCE_TYPE, VITALS_LEVEL_TYPE, VARIATION_TYPE, LIMIT_TYPE, GATHERABLE_TYPE, ITEM_TYPE)
+              EVENT_TYPE, EXPERIENCE_TYPE, VITALS_LEVEL_TYPE, VARIATION_TYPE, LIMIT_TYPE, GATHERABLE_TYPE, ITEM_TYPE, CATEGORY_TYPE)
 # The loot container variation table of the chests (the variation component of slices/master_lootcontainer.dynamicslice; the chest
 # tool, chests.py): the root of each row. Each chest placement of the main world names a row of it (the census of chests.py). The
 # older table LootContainers names roots that no loot table has (POI_LootLarge and others) and no placement uses: not read.
@@ -234,8 +243,9 @@ def read_sheets(sources: Sources) -> dict[str, list[Sheet]]:
             raise Failure(f"{path}: the table did not parse: {error}") from error
     sources.check_complete()
     for kind, tables in sheets.items():
-        # The item tables are optional (stage 1.8d): with none the file has no loot container item.
-        if not tables and kind != ITEM_TYPE:
+        # The item tables are optional (stage 1.8d): with none the file has no loot container item. The category tables are optional
+        # (stage QG2a): with none no category has a parent.
+        if not tables and kind not in (ITEM_TYPE, CATEGORY_TYPE):
             raise Failure(f"the game copy has no data table of the type {kind}")
     return sheets
 
@@ -403,26 +413,69 @@ def read_gathering_roots(sheets: dict[str, list[Sheet]]) -> list[str]:
     return sorted(roots)
 
 
-def read_container_roots(sheets: dict[str, list[Sheet]]) -> tuple[dict[str, str], int]:
-    """@return The loot table of each loot container item (stage 1.8d: the item id in lower case to the table name), and the number of
-    container items with a salvage event (not exported)."""
+def read_container_roots(sheets: dict[str, list[Sheet]]) -> tuple[dict[str, str], dict[str, str]]:
+    """@return The loot table of each loot container item (stage 1.8d: the item id in lower case to the table name), and the salvage event
+    of each loot container item with one (stage QG2a: the item id in lower case to the SalvageGameEventID). The first row of an item id
+    in the byte order of the paths has it. A container can have both: its open rolls the table and pays the event."""
     roots: dict[str, str] = {}
-    with_event = 0
+    events: dict[str, str] = {}
+    seen: set[str] = set()
     for sheet in sheets.get(ITEM_TYPE, []):
         if "ItemClass" not in sheet.columns or "RepairRecipe" not in sheet.columns or "ItemID" not in sheet.columns:
             continue
         for row in range(sheet.row_count):
             if CONTAINER_CLASS not in sheet.source(row, "ItemClass").lower():
                 continue
-            recipe = sheet.source(row, "RepairRecipe").strip()
             item = sheet.source(row, "ItemID").strip()
-            if not item or not recipe.startswith(TABLE_PREFIX):
+            if not item or item.lower() in seen:
                 continue
-            if "SalvageGameEventID" in sheet.columns and sheet.source(row, "SalvageGameEventID").strip():
-                with_event += 1
+            seen.add(item.lower())
+            recipe = sheet.source(row, "RepairRecipe").strip()
+            if recipe.startswith(TABLE_PREFIX):
+                roots[item.lower()] = recipe[len(TABLE_PREFIX):].strip()
+            event = sheet.source(row, "SalvageGameEventID").strip() if "SalvageGameEventID" in sheet.columns else ""
+            if event:
+                events[item.lower()] = event
+    return dict(sorted(roots.items())), dict(sorted(events.items()))
+
+
+def read_salvage_events(sheets: dict[str, list[Sheet]], wanted: set[str]) -> dict[str, dict[str, str]]:
+    """@return The nonblank cells (source text) of each game event of `wanted` (lower case ids): the first row of the id in the byte
+    order of the paths, in the event tables with the column EventID (stage QG2a)."""
+    events: dict[str, dict[str, str]] = {}
+    for sheet in sheets[EVENT_TYPE]:
+        if "EventID" not in sheet.columns:
+            continue
+        for row in range(sheet.row_count):
+            identifier = sheet.source(row, "EventID").strip()
+            if identifier.lower() not in wanted or identifier.lower() in events:
                 continue
-            roots.setdefault(item.lower(), recipe[len(TABLE_PREFIX):].strip())
-    return dict(sorted(roots.items())), with_event
+            cells = {}
+            for name in sheet.columns:
+                text = sheet.source(row, name).strip()
+                if text:
+                    cells[name] = text
+            events[identifier.lower()] = dict(sorted(cells.items()))
+    return dict(sorted(events.items()))
+
+
+def read_category_groups(sheets: dict[str, list[Sheet]]) -> dict[str, str]:
+    """@return The parent of each vitals category (stage QG2a: VitalsCategoryID to GroupVitalsCategoryId, both in lower case; the first
+    row of an id in the byte order of the paths). A blank group and a row that names itself (two rows of the build) have no parent."""
+    groups: dict[str, str] = {}
+    seen: set[str] = set()
+    for sheet in sheets.get(CATEGORY_TYPE, []):
+        for name in ("VitalsCategoryID", "GroupVitalsCategoryId"):
+            column(sheet, name)
+        for row in range(sheet.row_count):
+            identifier = sheet.source(row, "VitalsCategoryID").strip().lower()
+            if not identifier or identifier in seen:
+                continue
+            seen.add(identifier)
+            group = sheet.source(row, "GroupVitalsCategoryId").strip().lower()
+            if group and group != identifier:
+                groups[identifier] = group
+    return dict(sorted(groups.items()))
 
 
 def read_limits(sheets: dict[str, list[Sheet]]) -> dict:
@@ -668,7 +721,7 @@ def build_tables(sources: Sources) -> dict:
         raise Failure("the reward modifiers have no creature type " + ", ".join(absent_types))
     chest_roots = read_chest_roots(sheets)
     gathering_roots = read_gathering_roots(sheets)
-    container_roots, containers_with_event = read_container_roots(sheets)
+    container_roots, container_events = read_container_roots(sheets)
     roots = sorted({base[5] for base in bases if base[5]} | set(chest_roots) | set(gathering_roots) | set(container_roots.values()))
     tables, buckets, loot_counts = read_loot(sheets, roots)
     # A container item whose table the loot tables do not have (stage 1.8d): not exported (the backend keeps such a reward refused).
@@ -708,6 +761,10 @@ def build_tables(sources: Sources) -> dict:
     document["gatheringRoots"] = [names[root.lower()] for root in gathering_roots]
     document["gatheringRootsWithNoTable"] = gathering_missing
     document["containerRoots"] = {item: names[root.lower()] for item, root in container_roots.items()}
+    # Stage QG2a: the salvage events of the containers (a container with no table keeps its event) and the parents of the categories.
+    document["containerEvents"] = container_events
+    document["salvageEvents"] = read_salvage_events(sheets, {event.lower() for event in container_events.values()})
+    document["categoryGroups"] = read_category_groups(sheets)
     document["limits"] = read_limits(sheets)
     items = {entry[1].lower() for table in tables.values() for entry in table[7] if entry[0] == "i"}
     items |= {candidate[0].lower() for candidate in buckets.values() for candidate in candidate}
@@ -716,7 +773,10 @@ def build_tables(sources: Sources) -> dict:
                           "noExpNoCoin": sum(1 for base in bases if base[7]), "chestRoots": len(chest_roots),
                           "gatheringRoots": len(gathering_roots), "gatheringRootsWithNoTable": len(gathering_missing),
                           "containerRoots": len(container_roots), "containersWithNoTable": len(containers_missing),
-                          "containersWithSalvageEvent": containers_with_event,
+                          "containersWithSalvageEvent": len(container_events),
+                          "salvageEvents": len(document["salvageEvents"]),
+                          "salvageEventsWithNoRow": len({event.lower() for event in container_events.values()} - set(document["salvageEvents"])),
+                          "categoryGroups": len(document["categoryGroups"]),
                           "limits": len(document["limits"]), **vitals_counts,
                           **{key: value for key, value in loot_counts.items() if key != "unresolved"}}
     return document

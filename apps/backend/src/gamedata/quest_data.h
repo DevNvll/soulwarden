@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "gamedata/game_event.h"
 #include "gamedata/loot_tables.h"
 
 // The quest data (stage 1.8a, docs/systems/quests.md): the objectives with their compiled task trees, the task rows, the achievement
@@ -56,6 +57,8 @@ inline constexpr std::uint8_t kRemoveItem = 36;
 inline constexpr std::uint8_t kCraftRecipe = 38;
 inline constexpr std::uint8_t kRefineRecipe = 42;
 inline constexpr std::uint8_t kEquipItem = 45;
+/** Stage QG2a: TaskHaveLevel (factory 0x4461150, case 48; research quest-gaps.md section 8). */
+inline constexpr std::uint8_t kHaveLevel = 48;
 inline constexpr std::uint8_t kCutsceneComplete = 49;
 inline constexpr std::uint8_t kCinematicStart = 50;
 inline constexpr std::uint8_t kCinematicComplete = 51;
@@ -155,6 +158,11 @@ struct QuestTask {
      * TaskCinematicComplete (6606, 6542). 0 for an empty ItemName.
      */
     std::uint32_t nameCrc{0};
+    /**
+     * Stage QG2a: ShouldCheckPoints of TaskHaveLevel (constructor 0x3B01C80, +0x554): with an ItemName (a categorical progression, +0x558) the
+     * points of the progression (true) or its rank (false); with a blank ItemName the level of the character (activation 0x3B04F40).
+     */
+    bool checkPoints{false};
 };
 
 /** The faction mask of a blank RequiredFaction (and of None): bit 0 bypasses the test (client parser 0x445CA30, eligibility 0x3A4C166). */
@@ -234,7 +242,11 @@ struct QuestObjective {
     std::uint32_t requiredLevel{0};
     /** RequiredFaction: the mask of the parser 0x445CA30 (bit 0 bypasses the test; bit N + 1 is the faction N). Blank: 0xF. */
     std::uint8_t factionMask{kAnyFactionMask};
-    /** QuestArcTag, RequiredWorldTags, RequiredGameModeId, RequiredProgression: gates whose service rule the backend does not have. */
+    /**
+     * QuestArcTag (row +0x20): a group key of the QuestArc meta-achievements, not a gate (stage QG2a: the eligibility 0x3A4BFE0 does not read
+     * it; research quest-gaps-qg2b.md section 1). RequiredWorldTags, RequiredGameModeId (row +0x34, IsInGameMode 0x32BA3B0), and
+     * RequiredProgression: gates whose service rule the backend does not have.
+     */
     std::string questArc;
     std::string worldTags;
     std::string gameMode;
@@ -248,48 +260,6 @@ struct QuestObjective {
     std::string schedule;
     /** ShouldResetInProgressQuestOnScheduleEnd (loader 0x445CE86). */
     bool resetOnScheduleEnd{false};
-};
-
-/**
- * One game event (GameEventData; research quest-engine.md Q6, quest-engine-3.md Q3): the reward of a success event of an objective, and the
- * whisper of an event of a TaskTriggerGameEvent. The cells keep the source text; the loader reads the ones of the engine.
- */
-struct QuestGameEvent {
-    std::string id;
-    /** UniversalExpAmount and CurrencyReward (the units of the wallet: 150 is 1.50 coin). */
-    std::uint64_t experience{0};
-    std::uint64_t coin{0};
-    /** CoinRewardChance: the loader of the client sets 1 when the cell is blank (0x31E70B0, row +0x38). */
-    double coinChance{1.0};
-    /**
-     * ItemReward and ItemRewardQty (a blank quantity: 1, the client loader 0x31E7129; an explicit 0 stays 0). The quantity keeps its sign
-     * (code review of stage 1.8b, finding QR8B-R10: a negative quantity is a removal with no rule, and the hand-in refuses it).
-     */
-    std::string item;
-    std::int64_t itemQty{1};
-    /**
-     * Stage 1.8d: GearScoreRange (client parser 0x31E43A0: the text split at "-", one number is the smallest and the largest value). The
-     * gear score of the item of the event. No value: a blank cell.
-     */
-    std::optional<std::pair<std::uint16_t, std::uint16_t>> gearScoreRange;
-    /** Stage 1.8d: TerritoryStanding: the standing of the origin territory of the quest instance (decision D3 option B). */
-    std::uint64_t standing{0};
-    /**
-     * Stage 1.8e: AzothReward: points of the Azoth balance (the categorical progression Azoth_Currency of stage 3.7c, research
-     * quest-engine-3.md Q4). Only with AzothRewardChance 1: the data has no other chance with an amount (672 events have 1; 4 mission
-     * events have a blank cell, and they stay unpaid: the default of the loader 0x31E70B0 for this column is not read).
-     */
-    std::uint64_t azoth{0};
-    /** AchievementId: an achievement of the event. */
-    std::string achievement;
-    /** WhisperId or WhisperID: the whisper of the event (166 of 170 TaskTriggerGameEvent rows name an event with one). */
-    std::string whisper;
-    /**
-     * The rewards of the event that the backend cannot pay yet (stage 1.8d and later: FactionReputation, FactionTokens, a categorical
-     * progression, an Azoth reward with a chance that is not 1, the other currencies, an entitlement, a status effect, a TerritoryStanding
-     * or a GearScoreRange that is not a whole number): "COLUMN VALUE" for each cell with a value that is not 0.
-     */
-    std::vector<std::string> unpaid;
 };
 
 /** One whisper (WhisperData): the voice and the subtitles of the client (message 5070 with the CRC-32 of the lower-case id). */

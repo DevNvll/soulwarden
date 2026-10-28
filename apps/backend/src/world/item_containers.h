@@ -22,6 +22,13 @@
 // agent for a container); a refused write changes nothing. The character is the character of the session (a facet of a different entity
 // changes nothing).
 //
+// Stage QG2a (research quest-gaps.md section 8): a container with a SalvageGameEventID (the coin purses QuestReward_MB_Coin_Purse2 and
+// QuestReward_WW_Coin_Purse2, Coin_Stack_500) pays that game event at its open: CurrencyReward (the units of the wallet: 2500 is 25.00 coin)
+// with CoinRewardChance for each unit, in the transaction of the take, up to the wallet limit. A container with a table and an event rolls
+// the table and pays the event. An event with another reward (an entitlement: a skin box; a mount achievement; AzothSalt; an item, the
+// experience, or the Azoth of an event: no path of the open yet) or with no row of the data refuses the open (eventNotPayable), and the
+// item stays. No loot table is made for such an item [data: the purses have no RepairRecipe; agent: the open path pays the coin only].
+//
 // The cost: one slot, one table roll for each unit (MP-8). World thread only.
 
 namespace soulwarden::backend::world {
@@ -43,6 +50,8 @@ enum class OpenError : std::uint8_t {
      * whole open is refused, as a hand-in refuses such a reward, and the container stays.
      */
     innerNotOpenable,
+    /** Stage QG2a: the salvage event of the container has no row, or a reward that the open does not pay (OpenResult::detail names it). */
+    eventNotPayable,
 };
 
 [[nodiscard]] const char* open_error_text(OpenError error);
@@ -54,6 +63,9 @@ struct OpenResult {
     std::uint32_t opened{0};
     /** The items of the rolls ("ITEM xN"). */
     std::vector<std::string> items;
+    /** Stage QG2a: the coin of the salvage event (the units of the wallet, after the wallet limit), and the cause of eventNotPayable. */
+    std::uint64_t coin{0};
+    std::string detail;
     [[nodiscard]] bool ok() const {
         return error == OpenError::none;
     }
@@ -64,14 +76,22 @@ struct ContainerCounts {
     std::uint64_t refused{0};
     std::uint64_t rolls{0};
     std::uint64_t items{0};
+    /** Stage QG2a: the salvage events that an open paid, and their coin (the units of the wallet). */
+    std::uint64_t events{0};
+    std::uint64_t coin{0};
 };
 
 class ItemContainers {
 public:
     explicit ItemContainers(World& world) : m_world(world) {}
 
-    /** @return True when an item is a loot container whose table the loot data has (the hand-in of a quest pays such an item). */
+    /**
+     * @return True when an item is a loot container whose open the backend runs: the loot data has its table, or (stage QG2a) its salvage
+     *         event pays only coin (the hand-in of a quest pays such an item).
+     */
     [[nodiscard]] bool openable(const std::string& itemId) const;
+    /** Stage QG2a: @return The cause why a loot container cannot open (an empty text: it can, or the item is not a loot container). */
+    [[nodiscard]] std::string open_refusal(const std::string& itemId) const;
     /**
      * The open of `quantity` units of the loot container of a bag slot of a character (message 1733 of the client, or a command): the rolls,
      * one transaction of the inventory (the take and the items), then the entity and the container state.

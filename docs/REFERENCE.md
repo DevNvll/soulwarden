@@ -527,7 +527,9 @@ button on "Confirm").
   file a quest task of a trigger area waits. Stage 1.8b also changes `quests.sh` (the columns of the game events) and `interactions.sh`
   (the ids of the persons near a border of the id rule): run the three tools again. Stage 1.8d changes `progression.sh` (format 3: the territory
   standings) and `loot.sh` (the loot table of each loot container item): run the two tools again; with a file from before, the hand-in of
-  a quest with a standing or a container reward is refused.
+  a quest with a standing or a container reward is refused. Stage QG2a changes `loot.sh` (still format 2: the salvage event of each loot container item, the cells
+  of these events, and the parent of each vitals category; [Game data](development/game-data.md)): run it again; with a file from before,
+  the coin purses stay closed (a quest with a purse reward is refused) and a kill counts for no parent category of a quest task.
 - `tools/gamedata/conversations.sh` makes the conversation data of the persons (stage 2.5c; `conversation-data.json`, format 1, 1.5 MB): the
   NPC rows with their conversation states in authored order, the states with their requirements, topics, and services, and the topics with
   their requirements and ProvidedTopics (1,478 NPC rows, 3,429 states, 556 topics in the supported build). `--npc ID` prints an NPC row

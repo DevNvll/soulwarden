@@ -398,6 +398,16 @@ backend. The tool of each system is also in the document of that system.
   data, and counts them (`containerRoots`, `containersWithNoTable`, `containersWithSalvageEvent`). The format stays 2: the member is
   optional, and a file of before opens no container (the hand-in of a quest with a container reward is refused). The loader refuses a root
   whose table is not in the file. With made-up tables the item tables are optional (`check_loot_tool.py`).
+- `loot-tables.json`, stage QG2a ([Quests](../systems/quests.md), [Items and equipment](../systems/items-and-equipment.md)): three
+  optional members; the format stays 2. `containerEvents`: the SalvageGameEventID of each item of the class LootContainer (the item id in
+  lower case to the event id; 319 items of the build, also with no table: the coin purses, `Coin_Stack_500`). A container with a table and
+  an event keeps its table in `containerRoots` now (80 gift boxes: before stage QG2a the tool left them out). `salvageEvents`: the nonblank
+  cells (source text) of each such event, the first row of an id in the GameEventData tables with an EventID (247 events; 5 events of
+  the items have no row: counted, `salvageEventsWithNoRow`). `categoryGroups`: the GroupVitalsCategoryId of each VitalsCategoryData row
+  with a parent (both in lower case; 6,062 rows; a blank group and the two rows that name themselves have none). The backend decides which
+  rewards of an event it pays (`read_game_event`, the one reader of the quest events too). A file of before has no event and no parent:
+  the purses stay closed (the hand-in of a purse reward is refused), and a kill matches no parent category. The category tables are
+  optional with made-up tables (`check_loot_tool.py`). `tools/release.sh` takes the new file from the common game data folder.
 - `progression-tables.json` format 3 (stage 1.8d, [Progression and skills](../systems/progression-and-skills.md)): the member `standings`:
   `[TERRITORY, LARGEST_RANK, RANK_TABLE, POOL, AUTO_RANK_UP]` for each row of CategoricalProgressionData whose name is a territory number,
   with the rank table `Territory_Standing` and its XpReward (a rank table can have the member `xpReward`). The loader takes the formats 1

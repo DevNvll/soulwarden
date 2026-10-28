@@ -443,6 +443,47 @@ bool LootTables::load(const std::string& path) {
                 data.containerRoots.emplace(lower_text(item), root.get<std::string>());
             }
         }
+        // Stage QG2a: the salvage events of the loot container items and the parents of the vitals categories (optional members).
+        if (document.contains("containerEvents")) {
+            if (!document["containerEvents"].is_object()) {
+                return fail("the loot container events are not an object");
+            }
+            for (const auto& [item, event] : document["containerEvents"].items()) {
+                if (!event.is_string() || event.get<std::string>().empty() || item.empty()) {
+                    return fail("a loot container event is not a text");
+                }
+                data.containerEvents.emplace(lower_text(item), event.get<std::string>());
+            }
+        }
+        if (document.contains("salvageEvents")) {
+            if (!document["salvageEvents"].is_object()) {
+                return fail("the salvage events are not an object");
+            }
+            for (const auto& [key, cells] : document["salvageEvents"].items()) {
+                if (!cells.is_object()) {
+                    return fail("the salvage event " + key + " is not an object");
+                }
+                EventCells values;
+                for (const auto& [column, text] : cells.items()) {
+                    if (!text.is_string()) {
+                        return fail("a cell of the salvage event " + key + " is not a text");
+                    }
+                    values.emplace(column, text.get<std::string>());
+                }
+                data.salvageEvents.emplace(lower_text(key), read_game_event(key, values));
+            }
+        }
+        if (document.contains("categoryGroups")) {
+            if (!document["categoryGroups"].is_object()) {
+                return fail("the vitals category groups are not an object");
+            }
+            for (const auto& [category, group] : document["categoryGroups"].items()) {
+                if (!group.is_string() || group.get<std::string>().empty() || category.empty()) {
+                    return fail("a vitals category group is not a text");
+                }
+                data.categoryGroups.emplace(lower_text(category), lower_text(group.get<std::string>()));
+            }
+        }
     }
     // The tables first: a base row names a table by its id.
     if (!document["tables"].is_object()) {
@@ -628,6 +669,51 @@ std::optional<std::uint32_t> LootTables::container_floor(std::uint32_t level) co
 std::optional<std::uint32_t> LootTables::container_table(std::string_view itemId) const {
     const auto found = m_data.containerRoots.find(lower_text(itemId));
     return found != m_data.containerRoots.end() ? table_index(found->second) : std::nullopt;
+}
+
+std::string LootTables::container_event(std::string_view itemId) const {
+    const auto found = m_data.containerEvents.find(lower_text(itemId));
+    return found != m_data.containerEvents.end() ? found->second : std::string{};
+}
+
+const QuestGameEvent* LootTables::salvage_event(std::string_view eventId) const {
+    const auto found = m_data.salvageEvents.find(lower_text(eventId));
+    return found != m_data.salvageEvents.end() ? &found->second : nullptr;
+}
+
+std::vector<std::string> LootTables::kill_categories(const LootVitals* vitals, std::string_view vitalsRow, std::string_view spawnCategory,
+                                                     bool kill) const {
+    std::vector<std::string> categories;
+    const auto add = [&](std::string category) {
+        if (!category.empty() && std::find(categories.begin(), categories.end(), category) == categories.end()) {
+            categories.push_back(std::move(category));
+        }
+    };
+    // The kill predicate compares the id of the base vitals row with the task (0x3B1A057); the drop helper does not (0x5C75830).
+    if (kill) {
+        add(lower_text(vitals != nullptr && !vitals->id.empty() ? std::string_view(vitals->id) : vitalsRow));
+    }
+    // The categories with a parent test: the base row (stage 1.8c: VitalsCategories, the vector of row +0xF0; a file of the loot tool of
+    // before stage 1.8c has none: the vitals row), and the category of the spawn point (stage QG2a: the separate category of the victim, also
+    // when the base row has categories).
+    std::vector<std::string> own;
+    if (vitals != nullptr && !vitals->categories.empty()) {
+        own = vitals->categories;
+    } else {
+        own.push_back(lower_text(vitalsRow));
+    }
+    own.push_back(lower_text(spawnCategory));
+    for (const std::string& category : own) {
+        add(category);
+    }
+    // The direct parent of each (GroupVitalsCategoryId, category row +4: 0x3B1A081 to 0x3B1A098, 0x3B1A0DA to 0x3B1A0F3; the drop helper
+    // 0x5C758B7, 0x5C75903): one lookup, no parent of a parent.
+    for (const std::string& category : own) {
+        if (const auto parent = m_data.categoryGroups.find(category); parent != m_data.categoryGroups.end()) {
+            add(parent->second);
+        }
+    }
+    return categories;
 }
 
 std::optional<std::uint32_t> LootTables::table_index(std::string_view id) const {

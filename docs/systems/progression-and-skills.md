@@ -142,6 +142,15 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   of the format 2; client: the claim territory and the detected territory of the player, research map.md 2.6, 0x29F77A0]:
   `World::territory_of` is the territory whose bounds hold the position of the character (0 outside each bounds, or with a POI file of the
   format 1). The tool checks the bounds against the region metadata: 266,696 entries, 1 outside the bounds of its territory.
+- The corrections of the code review of stage QG1 (findings QG1R-R1 to R3, `~/Games/soulwarden/work/evidence/quests/qg1/code-review/FINDINGS.md`;
+  stage QG2a; cases QGR1 to QGR3 of `tests/review_qg1_tests.cpp`, each fails on the tree of stage QG1) [agent through the review]:
+  - QG1R-R1: a stored card of a territory pool whose card the loaded data does not have (a file of the format 3 has no cards) stays a row:
+    the skill set keeps it (`SkillSet::keptCards`), each write of the skills writes it again, and it has no effect and spends no token
+    until a start with the card data. Before, a write of a weapon mastery with such data deleted the cards for ever.
+  - QG1R-R2: the loader refuses a file of the format 4 whose rank table of a standing has no card offers (`cards`) or no rank experience
+    (`xpReward`): a rank-up would give a token that no card can spend, or pay no experience.
+  - QG1R-R3: the result of a standing gain with no rank experience (`Skills::give_standing`: the command `standing`) has the level and the
+    experience of the character (before: level 0).
 - The effect of a learned node (stage 3.3b-S5): the evaluator of the passive rules applies the row of each learned node of
   the tree of the weapon of a hit, and the fixed stats of the nodes of the weapon in the hand go into the gear values
   ([Passive rules](passive-rules.md)). A change of the learned nodes of a character in the world (an assignment, a reset of a

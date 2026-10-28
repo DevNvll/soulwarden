@@ -1,9 +1,11 @@
 #include "world/quests.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <iterator>
 
 #include "core/logging/log.h"
 #include "gamedata/crafting_data.h"
@@ -43,6 +45,15 @@ constexpr std::chrono::milliseconds kTimerRetry{2000};
 
 bool done(std::uint8_t state) {
     return state == quest_state::kComplete || state == quest_state::kCompleteActive;
+}
+
+/** @return The text with no blank at its start and its end. */
+std::string trimmed_text(const std::string& text) {
+    const std::size_t first = text.find_first_not_of(" \t");
+    if (first == std::string::npos) {
+        return {};
+    }
+    return text.substr(first, text.find_last_not_of(" \t") - first + 1);
 }
 
 /** Active (1) or CompleteActive (3): the activity predicate of the client (0x3AD5B80). */
@@ -177,7 +188,7 @@ const char* quest_error_text(QuestError error) {
     case QuestError::wrongFaction:
         return "the RequiredFaction of the objective does not permit the faction of the character";
     case QuestError::unsupportedGate:
-        return "the objective has a gate whose rule the backend does not have (QuestArcTag, RequiredWorldTags, a game mode, a progression)";
+        return "the objective has a gate whose rule the backend does not have (RequiredWorldTags, RequiredGameModeId, a progression)";
     case QuestError::onCooldown:
         return "the character completed this repeatable objective in the current cycle of its schedule";
     case QuestError::missingReturnItems:
@@ -272,6 +283,32 @@ std::optional<bool> evaluate_conditional(const std::string& text, IdValue&& valu
     return result;
 }
 
+/**
+ * Stage QG2a: @return The ids of an achievement conditional, and of the non-persisted achievements that it names (their conditionals, to
+ * the depth of the reader). The reader of evaluate_conditional visits each operand.
+ */
+void conditional_ids(const gamedata::QuestData& data, const std::string& text, int depth, std::set<std::string>& ids) {
+    if (text.empty() || depth > kNpaDepth) {
+        return;
+    }
+    (void)evaluate_conditional(text, [&](const std::string& id) -> std::optional<bool> {
+        if (ids.insert(lower_text(id)).second) {
+            if (const gamedata::QuestNpa* npa = data.npa(id); npa != nullptr && !npa->conditional.empty()) {
+                conditional_ids(data, npa->conditional, depth + 1, ids);
+            }
+        }
+        return false;
+    });
+}
+
+/**
+ * Stage QG2a, decision B of the orchestrator (2026-10-28; the user can change it: TASKS.md "Waiting for the user"): the PushObjectiveOnReqMet
+ * rows that the push rule does not grant: the old start of the game (01_SoleSurvivor2: its condition is true for each new character, and the
+ * start of a new character is the Windsward beach, decision D1 of the user) and the two seasonal starts behind the bit debug_1 (research
+ * quest-gaps.md section 8).
+ */
+constexpr std::array<const char*, 3> kPushExcluded{"01_SoleSurvivor2", "Quest_03189", "Quest_03190"};
+
 } // namespace
 
 struct Subscriber {
@@ -286,7 +323,8 @@ struct Subscriber {
  * The index of the active tasks of one character by the key of their event (stage 1.8c; code review of stage 1.8a, finding QR8A-R7). A key
  * is a kind and a value: "k:" a vitals category (a kill), "e:" a game event, "g:" an item of a gather, "c:" a recipe (a craft; "c:*" any
  * recipe), "r:" a recipe of a refine, "s:" a screen CRC, "i:" a tag of TaskInteract, "t:" a tag of a quest object, "kd:" and "gd:" a source
- * of a quest drop, "items" the possession and equip tasks, "place" the tasks of a place, "ach" TaskAchievement, "die" TaskDie.
+ * of a quest drop, "items" the possession and equip tasks, "place" the tasks of a place, "ach" TaskAchievement, "die" TaskDie, "level"
+ * TaskHaveLevel of the level of the character (stage QG2a).
  */
 struct Quests::Subscriptions {
     std::unordered_map<std::string, std::vector<Subscriber>> byKey;
@@ -327,6 +365,25 @@ struct Quests::Subscriptions {
         const auto found = byKey.find(key);
         return found != byKey.end() ? &found->second : nullptr;
     }
+};
+
+/**
+ * Stage QG2a: the index of the push rows of PushObjectiveOnReqMet (decision B: 18 rows of the build) by what their availability depends on:
+ * the achievement bits of RequiredAchievementId (with its non-persisted achievements) and of the completion achievement, and RequiredLevel.
+ * A change of a character visits only the rows of its changed bits and of its new levels (MP-8).
+ */
+struct Quests::PushIndex {
+    /** The push rows (indexes of QuestData::objectives), in data order. */
+    std::vector<std::uint32_t> rows;
+    /** The rows of each watched bit. */
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> byBit;
+    /** The watched bits, sorted. */
+    std::vector<std::uint32_t> bits;
+    /** RequiredLevel (above 1) and the row, sorted by the level. */
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> byLevel;
+    /** The objectives of the data that the index has (a new load of the quest data builds the index again). */
+    const QuestObjective* source{nullptr};
+    std::size_t count{0};
 };
 
 /**
@@ -538,6 +595,17 @@ struct Quests::Plan {
         }
         if (task.type == task_type::kAchievement) {
             return const_cast<Plan*>(this)->evaluate(task.itemName) ? node.target : 0U;
+        }
+        if (task.type == task_type::kHaveLevel) {
+            // Stage QG2a (research quest-gaps.md section 8): with a blank ItemName the level of the character (activation 0x3B04F40); the
+            // callback 0x3B073A0 compares the level index with TargetQty - 1 (unsigned): satisfied at the level of the screen TargetQty or
+            // more (a TargetQty of 0 never). With an ItemName the points or the rank of a categorical progression (a faction): no owner in
+            // the backend (roadmap 4.5), the task waits.
+            if (!trimmed_text(task.itemName).empty()) {
+                return std::nullopt;
+            }
+            const std::int64_t target = task.targetQty.value_or(0);
+            return target >= 1 && static_cast<std::int64_t>(entity.progression.level) >= target ? node.target : 0U;
         }
         if (task.type == task_type::kTriggerArea) {
             // Stage 1.8b: the accepted position of the character in a volume of the tag of the task (the client sends no message for these
@@ -1239,6 +1307,10 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
             if (task.type == task_type::kDie) {
                 subscriptions.add("die", entry);
             }
+            // Stage QG2a: TaskHaveLevel of the level of the character (a blank ItemName) looks again at a change of the level.
+            if (task.type == task_type::kHaveLevel && trimmed_text(task.itemName).empty()) {
+                subscriptions.add("level", entry);
+            }
             if (!open) {
                 continue; // The counters and the drops need an Active task.
             }
@@ -1540,6 +1612,9 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
         }
     }
     m_world.ownership().quest_achievements(entity, unlocks, locks);
+    if (!unlocks.empty() || !locks.empty()) {
+        m_pushDirty.insert(entity.id); // Stage QG2a: the bits of a quest change (a completion, an action, an undo) are a change of the push.
+    }
     m_world.touch(entity.id, ComponentKey::objectives);
     // The index before the items (code review of stage 1.8c, finding QR8C-R14): the item change of this plan marks the possession tasks
     // that the plan activated (a give of the same plan for a new HaveItems task).
@@ -1706,7 +1781,10 @@ void Quests::entered(Entity& entity) {
     }
     run_pending(entity);
     // The items, the place, and the bits can have changed while the character was away (a template, the DLC, a command).
-    refresh(entity, true, true, true, "entry");
+    refresh(entity, true, true, true, true, "entry");
+    // Stage QG2a: the push of PushObjectiveOnReqMet when the saved state of the character is ready (a project rule: the schedule of the
+    // original server is not known).
+    push_changed(entity, true, "entry");
     log::write("quests: character %s has %zu active quest(s), %zu pinned, %zu indexed task(s)", entity.characterId.c_str(),
                entity.quests.active.size(), entity.quests.tracked.size(), subscriber_count(entity));
 }
@@ -1715,6 +1793,9 @@ void Quests::left(const Entity& entity) {
     m_subscriptions.erase(entity.id);
     m_itemsDirty.erase(entity.id);
     m_placesDirty.erase(entity.id);
+    m_levelsDirty.erase(entity.id);
+    m_pushDirty.erase(entity.id);
+    m_pushWatch.erase(entity.id);
 }
 
 void Quests::run_pending(Entity& entity) {
@@ -1820,14 +1901,19 @@ bool Quests::objective_completed(const Entity& entity, std::string_view objectiv
 }
 
 void Quests::achievements_changed(Entity& entity) {
-    if (data() == nullptr || !entity.quests.loaded || entity.quests.active.empty()) {
+    if (data() == nullptr || !entity.quests.loaded) {
+        return;
+    }
+    // Stage QG2a: a change of the bits is a change of the push rows (the next tick looks at the rows of the changed bits).
+    m_pushDirty.insert(entity.id);
+    if (entity.quests.active.empty()) {
         return;
     }
     ++m_counts.events;
-    refresh(entity, false, false, true, "achievement change");
+    refresh(entity, false, false, true, false, "achievement change");
 }
 
-void Quests::refresh(Entity& entity, bool items, bool places, bool achievements, const char* cause) {
+void Quests::refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause) {
     if (data() == nullptr || !entity.quests.loaded) {
         return;
     }
@@ -1890,6 +1976,9 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
     }
     if (places) {
         look("place");
+    }
+    if (levels) {
+        look("level");
     }
     plan.settle(achievements || !plan.actions.empty() ? subscriptions : nullptr);
     if (plan.changed.empty() && plan.actions.empty()) {
@@ -2465,6 +2554,123 @@ void Quests::moved(const Entity& entity) {
     }
 }
 
+void Quests::level_changed(const Entity& entity) {
+    if (data() != nullptr && entity.quests.loaded) {
+        m_levelsDirty.insert(entity.id);
+    }
+}
+
+bool Quests::pushed(const QuestObjective& objective) {
+    return objective.pushOnRequirement && std::none_of(kPushExcluded.begin(), kPushExcluded.end(), [&](const char* id) {
+               return lower_text(objective.id) == lower_text(id);
+           });
+}
+
+const Quests::PushIndex& Quests::push_index() {
+    const auto& objectives = m_data->objectives();
+    if (m_push && m_push->source == objectives.data() && m_push->count == objectives.size()) {
+        return *m_push;
+    }
+    m_push = std::make_unique<PushIndex>();
+    PushIndex& index = *m_push;
+    index.source = objectives.data();
+    index.count = objectives.size();
+    std::set<std::uint32_t> bits;
+    for (std::uint32_t at = 0; at < objectives.size(); ++at) {
+        const QuestObjective& objective = objectives[at];
+        if (!pushed(objective)) {
+            continue;
+        }
+        index.rows.push_back(at);
+        // The dependencies of the availability (Quests::available): the ids of RequiredAchievementId (with its non-persisted achievements)
+        // and the completion achievement, and RequiredLevel.
+        std::set<std::string> ids;
+        conditional_ids(*m_data, objective.required, 0, ids);
+        if (!objective.achievement.empty()) {
+            conditional_ids(*m_data, objective.achievement, 0, ids);
+        }
+        for (const std::string& id : ids) {
+            if (const std::optional<std::uint32_t> bit = m_world.ownership().achievement_bit(id)) {
+                std::vector<std::uint32_t>& rows = index.byBit[*bit];
+                if (std::find(rows.begin(), rows.end(), at) == rows.end()) {
+                    rows.push_back(at);
+                }
+                bits.insert(*bit);
+            }
+        }
+        if (objective.requiredLevel > 1) {
+            index.byLevel.emplace_back(objective.requiredLevel, at);
+        }
+    }
+    index.bits.assign(bits.begin(), bits.end());
+    std::sort(index.byLevel.begin(), index.byLevel.end());
+    log::write("quests: the push of PushObjectiveOnReqMet has %zu row(s) with %zu watched achievement(s) (decision B: %zu row(s) left out)",
+               index.rows.size(), index.bits.size(), kPushExcluded.size());
+    return index;
+}
+
+void Quests::push_changed(Entity& entity, bool all, const char* cause) {
+    if (data() == nullptr || !entity.quests.loaded) {
+        return;
+    }
+    const PushIndex& index = push_index();
+    if (index.rows.empty()) {
+        return;
+    }
+    ++m_counts.pushChecks;
+    // The watched bits of the character now, against its last check (MP-8: the watched bits and the rows of the changed ones, not each row).
+    PushWatch now;
+    now.level = entity.progression.level;
+    for (const std::uint32_t bit : index.bits) {
+        if (std::binary_search(entity.achievements.begin(), entity.achievements.end(), bit)) {
+            now.bits.push_back(bit);
+        }
+    }
+    PushWatch& before = m_pushWatch[entity.id];
+    std::set<std::uint32_t> candidates;
+    if (all) {
+        candidates.insert(index.rows.begin(), index.rows.end());
+    } else {
+        std::vector<std::uint32_t> changed;
+        std::set_symmetric_difference(before.bits.begin(), before.bits.end(), now.bits.begin(), now.bits.end(), std::back_inserter(changed));
+        for (const std::uint32_t bit : changed) {
+            if (const auto rows = index.byBit.find(bit); rows != index.byBit.end()) {
+                candidates.insert(rows->second.begin(), rows->second.end());
+            }
+        }
+        if (now.level > before.level) {
+            for (auto entry = std::upper_bound(index.byLevel.begin(), index.byLevel.end(), std::make_pair(before.level, std::uint32_t{0xFFFFFFFFU}));
+                 entry != index.byLevel.end() && entry->first <= now.level; ++entry) {
+                candidates.insert(entry->second);
+            }
+        }
+    }
+    before = std::move(now);
+    // The grant: the normal availability (Quests::available: no active instance, the completion achievement, RequiredLevel,
+    // RequiredAchievementId with the `_pushedonce` bits, the faction, the gates), and the ExclusiveTerritory of a push row (eligibility
+    // 0x3A4C20F, 0x3A4C218: the character in that territory). The grant runs the first tasks of the tree: their actions set the bits
+    // (`_pushedonce`) in its plan. Retrigger (PushObjectiveOnReqRetrigger) has no other rule here: a grant of one time (a project rule).
+    for (const std::uint32_t at : candidates) {
+        ++m_counts.pushVisits;
+        const QuestObjective& objective = m_data->objectives()[at];
+        if (available(entity, objective) != QuestError::none) {
+            continue;
+        }
+        const std::uint16_t exclusive = objective.exclusiveTerritory.value_or(0);
+        if (exclusive != 0 && m_world.territory_of(entity) != exclusive) {
+            continue;
+        }
+        const QuestResult result = grant(entity, objective.id, "push", exclusive);
+        if (result.ok()) {
+            ++m_counts.pushGrants;
+            log::write("quests: character %s got the objective %s by its push (PushObjectiveOnReqMet; %s)", entity.characterId.c_str(),
+                       objective.id.c_str(), cause);
+        } else {
+            log::write("quests: the push of %s to character %s: %s", objective.id.c_str(), entity.characterId.c_str(), quest_error_text(result.error));
+        }
+    }
+}
+
 void Quests::place_reported(Entity& entity, std::uint16_t territory, bool entered) {
     const gamedata::PoiData* data = pois();
     const gamedata::Poi* poi = data != nullptr ? data->poi(territory) : nullptr;
@@ -2536,15 +2742,20 @@ void Quests::died(Entity& entity) {
 }
 
 void Quests::tick() {
-    if (m_itemsDirty.empty() && m_placesDirty.empty()) {
+    if (m_itemsDirty.empty() && m_placesDirty.empty() && m_levelsDirty.empty() && m_pushDirty.empty()) {
         return;
     }
     std::set<EntityId> items;
     std::set<EntityId> places;
+    std::set<EntityId> levels;
+    std::set<EntityId> pushes;
     items.swap(m_itemsDirty);
     places.swap(m_placesDirty);
+    levels.swap(m_levelsDirty);
+    pushes.swap(m_pushDirty);
     std::set<EntityId> all = items;
     all.insert(places.begin(), places.end());
+    all.insert(levels.begin(), levels.end());
     for (const EntityId id : all) {
         Entity* entity = m_world.find(id);
         if (entity == nullptr || entity->kind != EntityKind::player) {
@@ -2552,9 +2763,20 @@ void Quests::tick() {
         }
         const bool item = items.count(id) != 0;
         const bool place = places.count(id) != 0;
+        const bool level = levels.count(id) != 0;
         m_counts.itemLooks += item ? 1 : 0;
         m_counts.placeLooks += place ? 1 : 0;
-        refresh(*entity, item, place, false, item && place ? "change of the items and the place" : item ? "change of the items" : "move");
+        m_counts.levelLooks += level ? 1 : 0;
+        refresh(*entity, item, place, false, level,
+                item && place ? "change of the items and the place" : item ? "change of the items" : place ? "move" : "change of the level");
+    }
+    // Stage QG2a: the push after a change of the bits or of the level (a project rule: the schedule of the original server is not known).
+    pushes.insert(levels.begin(), levels.end());
+    for (const EntityId id : pushes) {
+        Entity* entity = m_world.find(id);
+        if (entity != nullptr && entity->kind == EntityKind::player) {
+            push_changed(*entity, false, levels.count(id) != 0 ? "a change of the level" : "a change of the achievements");
+        }
     }
 }
 
@@ -2731,10 +2953,12 @@ QuestError Quests::available(const Entity& entity, const QuestObjective& objecti
             return QuestError::onCooldown;
         }
     }
-    // The gates whose service rule the backend does not have: a game mode (no row has it), a quest arc (the query 0x2CE2150), the world tags
-    // (the release status of the service, 0x3A48F40 and 0x3A8DB90), a categorical progression (no row has it). A decision of an agent: an
-    // unknown rule is false, as an unknown achievement is (research U7).
-    if (!objective.gameMode.empty() || !objective.questArc.empty() || !objective.worldTags.empty() || !objective.requiredProgression.empty()) {
+    // The gates whose service rule the backend does not have: RequiredGameModeId (row +0x34: the query 0x2CE2150 is IsInGameMode of the
+    // GameModeParticipant component, 0x32BA3B0; the open world has no active game mode, so a row with a mode is false), the world tags (the
+    // release status of the service, 0x3A48F40 and 0x3A8DB90), a categorical progression (no row has it). A decision of an agent: an unknown
+    // rule is false, as an unknown achievement is (research U7). Stage QG2a (research quest-gaps-qg2b.md section 1): QuestArcTag (row +0x20)
+    // is no gate: the eligibility 0x3A4BFE0 does not read it; it groups the QuestArc meta-achievements (0x38A6E20) only.
+    if (!objective.gameMode.empty() || !objective.worldTags.empty() || !objective.requiredProgression.empty()) {
         return QuestError::unsupportedGate;
     }
     // RequiredLevel: the level index plus 1 (the level of the screen) is not below it (0x3A4C13E).
@@ -2845,9 +3069,12 @@ QuestError Quests::reward_join_of(const std::string& characterId, const SkillSet
             return refuse(QuestError::cannotPay, "the item catalog has no reward item " + itemId);
         }
         // Stage 1.8d: a loot container (Resource+LootContainer: the Meat Pouch of 06_skinningknife) is a reward item of the bag; its open (1733)
-        // rolls its loot table (ItemContainers). With no loot table of the container in the loot data the item would stay closed: refused.
+        // rolls its loot table (ItemContainers). Stage QG2a: or pays its salvage event (the coin purses). A container that cannot open would
+        // stay closed: refused, with the cause (ItemContainers::open_refusal).
         if (lower_text(definition->itemClass).find("lootcontainer") != std::string::npos && !m_world.item_containers().openable(definition->id)) {
-            return refuse(QuestError::cannotPay, "the reward item " + itemId + " is a loot container whose loot table the loot data does not have");
+            const std::string cause = m_world.item_containers().open_refusal(definition->id);
+            return refuse(QuestError::cannotPay, "the reward item " + itemId + " is a loot container that cannot open: "
+                                                     + (cause.empty() ? std::string("no open path") : cause));
         }
         join.items.push_back(RewardItem{definition->id, static_cast<std::uint32_t>(std::min<std::int64_t>(quantity, 0xFFFFFFFF)), range});
         return std::nullopt;

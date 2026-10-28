@@ -37,8 +37,11 @@ an empty ProgressionCurrencyAmount is null; the flag text "TRULE" (a fact of the
 variant vitals row has the loot data of its base row; only the tables that a vitals row reaches are in
 the document. Format 2 (stage 3.5b.1): the root of each row of the chest variation table Gatherable_LootContainers is a root
 (chestRoots), but Empty and the roots of CHEST_ROOTS_NOT_IN_GAME; a variation table of a different name is not read; the container
-floor of each level; the loot limits. Stage 1.8d: the loot table of each loot container item (containerRoots), but a row with a
-salvage event and a row whose table the data does not have (counted).
+floor of each level; the loot limits. Stage 1.8d: the loot table of each loot container item (containerRoots), but a row whose
+table the data does not have (counted). Stage QG2a: a container with a table and a salvage event keeps its table; the salvage event of
+each container (containerEvents: also with no table), the nonblank cells of each such event (salvageEvents; an event with no row is
+counted), and the parent of each vitals category (categoryGroups: the first row of an id; no parent for a blank group and a row that
+names itself).
 
 Usage: check_loot_tool.py WORK_FOLDER [CASE...]     status 0: each case (or each named case) gives its result
 """
@@ -125,7 +128,15 @@ def sheets(case: str) -> dict:
                                       [["10", "0", "1001" if case == "large-disparity" else "10"],
                                        ["-10", "-2" if case == "negative-disparity" else "-0.4", "0"]])],
         lt.EVENT_TYPE: [FakeSheet("GameEvents", ["EventID", "CoinRewardChance"], [["KillEvent", "0.05"], ["KillStructure", "0"]]),
-                        FakeSheet("GameEvents_01", ["EventID"], [["KillOther"]])],
+                        FakeSheet("GameEvents_01", ["EventID"], [["KillOther"]]),
+                        # Stage QG2a: the salvage events of the containers (the first row of an id has the cells).
+                        FakeSheet("GameEvents_Salvage", ["EventID", "CurrencyReward", "EmitTelemetry", "EntitlementId"],
+                                  [["Test_Box_Event", "2500", "1", ""], ["Test_Purse_Event", " 50000 ", "", ""],
+                                   ["Test_Skin_Event", "", "1", "EntitlementSkin_Test"], ["Test_Purse_Event", "1", "", ""]])],
+        # Stage QG2a: the vitals categories and their parents.
+        lt.CATEGORY_TYPE: [FakeSheet("VitalsCategories", ["VitalsCategoryID", "DisplayName", "GroupVitalsCategoryId"],
+                                     [["Dryad_Test_02", "@VC_Dryad", "Bronzeroot_Test"], ["Bronzeroot_Test", "@VC_Bronzeroot", "BASE"],
+                                      ["Self_Test", "", "Self_Test"], ["Blank_Test", "", ""], ["Dryad_Test_02", "", "Other_Test"]])],
         lt.EXPERIENCE_TYPE: [FakeSheet("XPLevels", ["Level Number"] + [f"GSLimitT{tier}" for tier in range(1, 6)],
                                        [["0", "100-100", "100-100", "100-100", "100-100", "100-100"],
                                         ["1", "100-120", "100-130", "100-130", "100-130", "100-130"]])],
@@ -158,6 +169,9 @@ def sheets(case: str) -> dict:
         lt.ITEM_TYPE: [FakeSheet("MasterItemDefinitions_Test", ["ItemID", "ItemClass", "RepairRecipe", "SalvageGameEventID"],
                                  [["QuestReward_Test_Pouch", "Resource+LootContainer", "[LTID]Test_Common", ""],
                                   ["Test_EventBox", "LootContainer", "[LTID]Test_Gear", "Test_Box_Event"],
+                                  ["Test_Purse", "Resource+LootContainer", "", "Test_Purse_Event"],
+                                  ["Test_SkinBox", "LootContainer", "", "Test_Skin_Event"],
+                                  ["Test_NoRowBox", "LootContainer", "", "Test_Missing_Event"],
                                   ["Test_NoTableBox", "LootContainer", "[LTID]Test_NoBoxTable", ""],
                                   ["TestSword", "Weapon+Melee", "[LTID]Test_Gear", ""]])],
     }
@@ -215,10 +229,22 @@ def valid_values(document: dict) -> list[str]:
     if document["gearScore"][1] != [100, 120, 100, 130, 100, 130, 100, 130, 100, 130] or document["lootCeiling"] != [[1, 100], [2, 120]]:
         wrong.append("the gear score ranges or the loot ceilings")
     counts = document["counts"]
-    if document.get("containerRoots") != {"questreward_test_pouch": "Test_Common"} or counts.get("containersWithNoTable") != 1 \
-            or counts.get("containersWithSalvageEvent") != 1:
+    if document.get("containerRoots") != {"questreward_test_pouch": "Test_Common", "test_eventbox": "Test_Gear"} \
+            or counts.get("containersWithNoTable") != 1 or counts.get("containersWithSalvageEvent") != 4:
         wrong.append(f"the container roots {document.get('containerRoots')} {counts.get('containersWithNoTable')} "
                      f"{counts.get('containersWithSalvageEvent')}")
+    # Stage QG2a: the salvage events and the parents of the categories.
+    if document.get("containerEvents") != {"test_eventbox": "Test_Box_Event", "test_norowbox": "Test_Missing_Event",
+                                           "test_purse": "Test_Purse_Event", "test_skinbox": "Test_Skin_Event"}:
+        wrong.append(f"the container events {document.get('containerEvents')}")
+    if document.get("salvageEvents") != {"test_box_event": {"CurrencyReward": "2500", "EmitTelemetry": "1", "EventID": "Test_Box_Event"},
+                                         "test_purse_event": {"CurrencyReward": "50000", "EventID": "Test_Purse_Event"},
+                                         "test_skin_event": {"EmitTelemetry": "1", "EntitlementId": "EntitlementSkin_Test",
+                                                             "EventID": "Test_Skin_Event"}} \
+            or counts.get("salvageEventsWithNoRow") != 1:
+        wrong.append(f"the salvage events {document.get('salvageEvents')} {counts.get('salvageEventsWithNoRow')}")
+    if document.get("categoryGroups") != {"bronzeroot_test": "base", "dryad_test_02": "bronzeroot_test"}:
+        wrong.append(f"the category groups {document.get('categoryGroups')}")
     return wrong
 
 

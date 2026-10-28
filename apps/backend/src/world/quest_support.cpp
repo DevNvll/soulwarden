@@ -70,6 +70,47 @@ bool is_developer(const std::string& table) {
     return table.find("devworld") != std::string::npos;
 }
 
+/**
+ * Stage QG2a (research quest-gaps.md section 2): the never-true trigger tags of the data (the spellings of the build: Quest_16006,
+ * Quest_16008, and the other Dunwood rows): a task with such a tag never completes; no volume has it.
+ */
+bool never_true_tag(const std::string& tag) {
+    std::string key;
+    for (const char character : tag) {
+        if (character != ' ') {
+            key.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(character))));
+        }
+    }
+    return key == "nevertrue" || key == "nevetrue" || key == "nveretrue" || key == "nevercomplete";
+}
+
+/** @return True for the task types of a place (they test the shape of their tags themselves). */
+bool is_place_type(std::uint8_t type) {
+    return type == task_type::kGoToPoi || type == task_type::kGoToPoiOnTerritory || type == task_type::kExitPoi;
+}
+
+/** @return True for a blank cell text. */
+bool trimmed_blank(const std::string& text) {
+    return text.find_first_not_of(" \t") == std::string::npos;
+}
+
+/**
+ * Stage QG2a (research quest-gaps.md section 8, "The 66 missing item rows"): @return The reason of a task with no ItemName: the item of a
+ * mission or community goal template comes from its mission instance (the MissionData overrides: roadmap 4.5, 5.4), not from the catalog.
+ */
+std::string blank_item(const std::string& kind) {
+    return kind == "missionTemplate" || kind == "communityGoal"
+               ? "the task has no ItemName: the mission instance of a template gives it (the mission boards and the community goals: roadmap "
+                 "4.5, 5.4)"
+               : "the task has no ItemName (a blank cell of the data)";
+}
+
+/** Stage QG2a: @return True for a KillEnemyWeaponID that names an ability table of a weapon (BowAbilityTable): a filter, not an item. */
+bool weapon_filter(const std::string& weapon) {
+    const std::string key = lower_text(weapon);
+    return key.size() > 12 && key.compare(key.size() - 12, 12, "abilitytable") == 0;
+}
+
 /** The archetype of the default of the creation (the Soldier; Quests::new_character_rows): the primary history of the manifest. */
 constexpr const char* kPrimaryArchetype = "Archetype_Soldier";
 
@@ -99,10 +140,20 @@ std::string reason_kind(const std::string& reason) {
     }
     static const std::vector<std::pair<std::string, std::string>> kinds{
         {"the engine has no evaluator for the task type ", "task: no evaluator for the type "},
+        {"the location rule (EnforceLocationRequirement)", "task: the location rule with no point of interest shape (EnforceLocationRequirement)"},
         {"no trigger volume of the tag", "task: no trigger volume of its tag"},
         {"no point of interest shape", "task: no point of interest shape of its tags"},
         {"no creature of a spawn point", "task: no creature of its categories"},
+        {"is a weapon filter", "task: a weapon filter of a kill (KillEnemyWeaponID: an ability table)"},
+        {"names no item and no ability table", "task: KillEnemyWeaponID names no item and no ability table"},
         {"KillEnemyWeaponID", "task: the item of a kill (KillEnemyWeaponID)"},
+        {"the task has no TP_TargetTag", "task: a pin or a puzzle task with no trigger tag (never completes)"},
+        {"is a never-true tag of the data", "task: a never-true trigger tag of the data (a sentinel)"},
+        {"the task names no game event", "task: a pin or a map task with no game event (never completes)"},
+        {"the mission instance of a template gives it", "task: a blank item of a template (the mission instance gives it)"},
+        {"the task has no ItemName", "task: a blank item (no ItemName)"},
+        {"TaskHaveLevel of the categorical progression", "task: TaskHaveLevel of a faction progression (no owner)"},
+        {"TaskHaveLevel with the TargetQty", "task: TaskHaveLevel that never completes (TargetQty below 1)"},
         {"no producer of the game event", "task: no producer of its game event"},
         {"no object of the data has the interact tag", "task: no object with its interact tag"},
         {"the item catalog has no", "task: an item that the catalog does not have"},
@@ -115,15 +166,16 @@ std::string reason_kind(const std::string& reason) {
         {"is not a refining recipe", "task: a recipe that is not a refining recipe"},
         {"the quest data has no child objective", "task: a child objective that the data does not have"},
         {"the tree has no completion path", "the tree has no completion path"},
+        {"has a reward with no owner in the open (", "rewards: a loot container whose salvage event pays "},
+        {"has no row in the loot data", "rewards: a loot container whose salvage event has no row"},
+        {"rewards: the reward item", "rewards: a loot container with no table and no salvage event"},
         {"rewards: the reward ", "rewards: "},
         {"rewards: the item catalog has no", "rewards: an item that the catalog does not have"},
         {"rewards: the standing", "rewards: a standing with no territory"},
         {"rewards: the quest data has no", "rewards: a game event or a next objective that the data does not have"},
-        {"rewards: the reward item", "rewards: a loot container with no table"},
         {"rewards: a negative", "rewards: a negative quantity"},
         {"gate: RequiredLevel", "gate: RequiredLevel above the level cap"},
         {"gate: RequiredFaction", "gate: RequiredFaction needs a faction"},
-        {"gate: QuestArcTag", "gate: QuestArcTag"},
         {"gate: RequiredWorldTags", "gate: RequiredWorldTags"},
         {"gate: RequiredGameModeId", "gate: RequiredGameModeId"},
         {"gate: RequiredProgression", "gate: RequiredProgression"},
@@ -136,6 +188,12 @@ std::string reason_kind(const std::string& reason) {
         if (kind == "task: no evaluator for the type ") {
             const std::size_t end = text.find(' ', found + needle.size());
             return kind + text.substr(found + needle.size(), end == std::string::npos ? std::string::npos : end - found - needle.size());
+        }
+        if (kind == "rewards: a loot container whose salvage event pays ") {
+            // "... has a reward with no owner in the open (EntitlementId X)": the column.
+            const std::size_t start = found + needle.size();
+            const std::size_t end = text.find_first_of(" )", start);
+            return kind + text.substr(start, end == std::string::npos ? std::string::npos : end - start);
         }
         if (kind == "rewards: ") {
             // "the reward FactionReputation 50 of EVENT has no owner": the column.
@@ -169,6 +227,8 @@ struct QuestSupport::Index {
     /** The vitals categories and the kill events of the creatures of the spawn points (lower case). */
     std::unordered_set<std::string> killCategories;
     std::unordered_set<std::string> killEvents;
+    /** Stage QG2a: the categories of the quest drops of a kill (the rule of the kill with no id of the base row). */
+    std::unordered_set<std::string> dropCategories;
     /** The game events of the gatherable rows with a node in the world: the kind of the node (lower case event id). */
     std::unordered_map<std::string, std::string> gatherEvents;
     /** The gatherable rows with a node in the world (lower case id). */
@@ -346,11 +406,16 @@ void QuestSupport::build() {
             }
             const gamedata::CreatureKind& kind = creatures->kinds()[at];
             const gamedata::LootVitals* vitals = options.lootTables != nullptr ? options.lootTables->vitals_of(kind.vitals) : nullptr;
-            std::vector<std::string> categories = vitals != nullptr ? vitals->categories : std::vector<std::string>{};
-            if (categories.empty()) {
-                categories = {lower_text(kind.vitals), lower_text(kind.category)};
-            }
+            // Stage QG2a: the rule of the kill credit and of the quest drops (LootTables::kill_categories: the base row, the spawn category,
+            // the direct parent of each; the kill also the id of the base row).
+            const std::vector<std::string> categories = options.lootTables != nullptr
+                                                            ? options.lootTables->kill_categories(vitals, kind.vitals, kind.category, true)
+                                                            : std::vector<std::string>{lower_text(kind.vitals), lower_text(kind.category)};
+            const std::vector<std::string> drops = options.lootTables != nullptr
+                                                       ? options.lootTables->kill_categories(vitals, kind.vitals, kind.category, false)
+                                                       : std::vector<std::string>{lower_text(kind.vitals), lower_text(kind.category)};
             index.killCategories.insert(categories.begin(), categories.end());
+            index.dropCategories.insert(drops.begin(), drops.end());
             index.killEvents.insert(vitals != nullptr && !vitals->event.empty() ? vitals->event : std::string(gamedata::kKillEvent));
             if (vitals != nullptr && vitals->canDropLoot && vitals->table && *vitals->table < options.lootTables->data().tables.size()) {
                 roots.emplace_back(options.lootTables->data().tables[*vitals->table].id, "the loot of the creature " + kind.vitals);
@@ -443,7 +508,7 @@ void QuestSupport::build() {
             }
             const bool gather = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
             for (const std::string& source : task.dropSources) {
-                if (gather ? index.gatherRows.count(source) != 0 : index.killCategories.count(source) != 0) {
+                if (gather ? index.gatherRows.count(source) != 0 : index.dropCategories.count(source) != 0) {
                     index.gives[at].push_back(lower_text(task.itemName));
                     index.questItems.emplace(lower_text(task.itemName), "the quest drop of " + source);
                     break;
@@ -603,8 +668,15 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
             add_grant("child", data.objectives()[parent].id, true, "");
         }
     }
+    // Stage QG2a, decision B of the orchestrator: the push of PushObjectiveOnReqMet (18 rows; not the old start 01_SoleSurvivor2 and the two
+    // debug seasonal rows). A push row with ExclusiveTerritory needs the character in that territory (no history has a territory).
     if (objective.pushOnRequirement) {
-        add_grant("push", objective.required, false, "PushObjectiveOnReqMet is not applied (a decision of the user is open)");
+        const bool pushed = Quests::pushed(objective);
+        const bool territory = objective.exclusiveTerritory.value_or(0) != 0;
+        add_grant("push", objective.required, pushed && !territory,
+                  !pushed     ? "decision B of the orchestrator: the push does not grant this row (the old start of the game or a debug seasonal row)"
+                  : territory ? "the push of a row with ExclusiveTerritory needs the character in that territory"
+                              : "");
     }
     if (row.kind == "missionTemplate") {
         add_grant("mission", objective.type, false, "the mission boards and the mission definitions have no contract (roadmap 4.5, 5.4)");
@@ -616,11 +688,10 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
     }
     // The gates whose rule is known before a history: the gates with no service rule, the faction of an unaligned character, a level above
     // the cap.
+    // Stage QG2a: RequiredGameModeId (row +0x34, IsInGameMode 0x32BA3B0) is false in the open world (no active game mode); QuestArcTag is no
+    // gate (the eligibility 0x3A4BFE0 does not read row +0x20).
     if (!objective.gameMode.empty()) {
-        row.gates.push_back("RequiredGameModeId " + objective.gameMode + " has no rule");
-    }
-    if (!objective.questArc.empty()) {
-        row.gates.push_back("QuestArcTag " + objective.questArc + " has no rule");
+        row.gates.push_back("RequiredGameModeId " + objective.gameMode + " is false: no game mode is active in the open world");
     }
     if (!objective.worldTags.empty()) {
         row.gates.push_back("RequiredWorldTags " + objective.worldTags + " has no rule");
@@ -695,7 +766,13 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
             break;
         case task_type::kTriggerArea:
             triggers.push_back(task.targetTag);
-            if (options.triggerData == nullptr || !options.triggerData->knows(task.targetTag)) {
+            // Stage QG2a (research quest-gaps.md section 2): a task with no tag (a pin or a cyclic puzzle: impossible_task, DummyPin) and a
+            // task with a never-true tag (nevertrue, NEVERCOMPLETE) never complete; no volume of the data is missing for them.
+            if (task.targetTag.empty()) {
+                block("the task has no TP_TargetTag: a pin or a puzzle task of the data with no volume (it never completes)");
+            } else if (never_true_tag(task.targetTag)) {
+                block("the tag " + task.targetTag + " is a never-true tag of the data (a sentinel: no volume; the task never completes)");
+            } else if (options.triggerData == nullptr || !options.triggerData->knows(task.targetTag)) {
                 block("no trigger volume of the tag " + task.targetTag + " in the trigger data");
             } else {
                 fact.supplier = "the trigger volume " + task.targetTag;
@@ -724,7 +801,14 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                     found = target;
                 }
             }
-            if (!task.weapon.empty()) {
+            // Stage QG2a (research quest-gaps.md section 8): KillEnemyWeaponID names an ability table of a weapon (a filter: the kill with
+            // that weapon), or an item; one row names neither (Turkey).
+            if (!task.weapon.empty() && weapon_filter(task.weapon)) {
+                block("KillEnemyWeaponID " + task.weapon + " is a weapon filter (an ability table of a weapon, not an item): the backend has no "
+                      "weapon of a kill");
+            } else if (!task.weapon.empty() && (options.itemCatalog == nullptr || options.itemCatalog->find(task.weapon) == nullptr)) {
+                block("KillEnemyWeaponID " + task.weapon + " names no item and no ability table of the data");
+            } else if (!task.weapon.empty()) {
                 block("KillEnemyWeaponID " + task.weapon + ": the backend has no item of a kill");
             } else if (found.empty()) {
                 block("no creature of a spawn point has a vitals category of the task");
@@ -745,7 +829,10 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                     found = gather->second + " (" + target + ")";
                 }
             }
-            if (found.empty()) {
+            if (task.targets.empty()) {
+                // Stage QG2a: a pin or a map task of the data (PinTask, Dummy_WorldPin): no event, it never completes.
+                block("the task names no game event: a pin or a map task of the data (it never completes)");
+            } else if (found.empty()) {
                 block("no producer of the game event " + (task.targets.empty() ? std::string{} : task.targets.front())
                       + " (no creature, gatherable, or destructible object of the data gives it)");
             } else {
@@ -798,14 +885,16 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
             if (drop) {
                 const bool gather = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
                 for (const std::string& source : task.dropSources) {
-                    if (gather ? index.gatherRows.count(source) != 0 : index.killCategories.count(source) != 0) {
+                    if (gather ? index.gatherRows.count(source) != 0 : index.dropCategories.count(source) != 0) {
                         dropSource = source;
                         break;
                     }
                 }
             }
             const std::string item = lower_text(task.itemName);
-            if (options.itemCatalog == nullptr || options.itemCatalog->find(task.itemName) == nullptr) {
+            if (trimmed_blank(task.itemName)) {
+                block(blank_item(row.kind));
+            } else if (options.itemCatalog == nullptr || options.itemCatalog->find(task.itemName) == nullptr) {
                 block("the item catalog has no " + task.itemName);
             } else if (!dropSource.empty()) {
                 fact.supplier = "the quest drop of " + dropSource;
@@ -832,7 +921,9 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
         case task_type::kGiveItem:
         case task_type::kGiveAndTakeItem:
         case task_type::kRemoveItem:
-            if (options.itemCatalog == nullptr || options.itemCatalog->find(task.itemName) == nullptr) {
+            if (trimmed_blank(task.itemName)) {
+                block(blank_item(row.kind));
+            } else if (options.itemCatalog == nullptr || options.itemCatalog->find(task.itemName) == nullptr) {
                 block("the item catalog has no " + task.itemName);
             } else {
                 fact.supplier = "an item action";
@@ -869,6 +960,18 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
             }
             break;
         }
+        case task_type::kHaveLevel:
+            // Stage QG2a (research quest-gaps.md section 8; client 0x3B04F40, 0x3B073A0): a blank ItemName is the level of the character; an
+            // ItemName is the points or the rank of a categorical progression (Covenant, Marauder, Syndicate: a faction, roadmap 4.5).
+            if (!trimmed_blank(task.itemName)) {
+                block("TaskHaveLevel of the categorical progression " + task.itemName + " (" + (task.checkPoints ? "points" : "rank") + " "
+                      + std::to_string(task.targetQty.value_or(0)) + "): the faction progression has no owner in the backend (roadmap 4.5)");
+            } else if (task.targetQty.value_or(0) < 1) {
+                block("TaskHaveLevel with the TargetQty " + std::to_string(task.targetQty.value_or(0)) + " never completes (client 0x3B073A0)");
+            } else {
+                fact.supplier = "the level of the character (" + std::to_string(*task.targetQty) + " or more; the history decides)";
+            }
+            break;
         case task_type::kObjective:
             if (data.objective(task.itemName) == nullptr) {
                 block("the quest data has no child objective " + task.itemName);
@@ -880,6 +983,23 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
             block("the engine has no evaluator for the task type " + (task.typeName.empty() ? std::to_string(task.type) : task.typeName)
                   + " (a later stage)");
             break;
+        }
+        // Stage QG2a: the location rule of a task (EnforceLocationRequirement with a POITag: the counters, the drops, the possession and the
+        // equip tasks progress only in a point of interest of a tag; Quests::matched_tasks, plan_drops, Plan::location_ok). With no shape of
+        // any tag of the task in the POI data the task never progresses (brightwood8 of 02A_Side06_01_Bears is a tag with no shape). A place
+        // task has its own check above.
+        if (fact.supported && task.enforceLocation && !task.poiTags.empty() && !is_place_type(task.type)) {
+            const bool shaped = options.poiData != nullptr && options.poiData->loaded()
+                                && std::any_of(task.poiTags.begin(), task.poiTags.end(),
+                                               [&](const std::string& tag) { return options.poiData->knows(std::vector<std::string>{tag}); });
+            if (!shaped) {
+                std::string tags;
+                for (const std::string& tag : task.poiTags) {
+                    tags += (tags.empty() ? "" : ",") + tag;
+                }
+                block("the location rule (EnforceLocationRequirement) needs a point of interest shape of the tags " + tags
+                      + ": the POI data has none (the task never progresses)");
+            }
         }
         if (!fact.supported) {
             row.blocked.push_back("task " + std::to_string(node) + " " + task.id + ": " + fact.reason);
@@ -1286,6 +1406,11 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                     if (!needs[node].empty() && !has_item(needs[node])) {
                         continue; // Only a quest gives the item, and the history does not have it (finding QR8E-R5).
                     }
+                    // Stage QG2a: TaskHaveLevel of the level of the character: the level of the history (Quests::Plan::predicate).
+                    if (task.type == task_type::kHaveLevel
+                        && static_cast<std::int64_t>(history.scratch.progression.level) < task.targetQty.value_or(0)) {
+                        continue;
+                    }
                     if (task.type == task_type::kConversationTopic && conversations != nullptr) {
                         if (const std::optional<std::uint32_t> topic = conversations->topic_of_crc(gamedata::quest_crc(task.screen));
                             topic && !conversations->topic(*topic).achievementUnlock.empty()) {
@@ -1313,6 +1438,9 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                     const auto reason = std::find_if(fact.tasks.begin(), fact.tasks.end(), [&](const TaskFact& item) { return item.index == node; });
                     return "task " + std::to_string(node) + " " + task.id + " waits: "
                            + (task.type == task_type::kAchievement ? "the achievement condition " + task.itemName + " is false in this history"
+                              : task.type == task_type::kHaveLevel && supported[node]
+                                  ? "the level " + std::to_string(history.scratch.progression.level) + " of the history is below "
+                                        + std::to_string(task.targetQty.value_or(0))
                               : reason != fact.tasks.end() && !reason->reason.empty() ? reason->reason
                               : !needs[node].empty() ? "the history has no " + needs[node] + " (only a quest gives it: " + reason->supplier + ")"
                                                      : std::string("no step completes it"));
@@ -1405,6 +1533,11 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                         }
                     }
                 }
+            }
+            // Stage QG2a: the push of PushObjectiveOnReqMet (Quests::push_changed): the availability below decides; a row with ExclusiveTerritory
+            // needs the character in that territory (no history has one).
+            if (!origin && Quests::pushed(objective) && objective.exclusiveTerritory.value_or(0) == 0) {
+                origin = 0;
             }
             if (!origin) {
                 if (history.cause[at].empty()) {

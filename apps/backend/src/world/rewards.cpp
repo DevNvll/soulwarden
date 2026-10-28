@@ -447,11 +447,10 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
     const std::string& creatureType = vitals != nullptr && !vitals->creatureType.empty() ? vitals->creatureType : body.kind->creatureType;
     const gamedata::RewardModifier* type = m_tables->modifier(creatureType);
     // The vitals categories of the victim (stage 1.8c: the VitalsCategories of its base vitals row, in lower case; a file of the loot tool
-    // of before: the vitals row and the category row of the kind, the two categories that the backend knows).
-    std::vector<std::string> categories = vitals != nullptr ? vitals->categories : std::vector<std::string>{};
-    if (categories.empty()) {
-        categories = {gamedata::lower_text(body.kind->vitals), gamedata::lower_text(body.kind->category)};
-    }
+    // of before: the vitals row). Stage QG2a: also the category of its spawn point and the direct parent of each (LootTables::kill_categories:
+    // the rule of the kill credit with the id of the base row, and of the quest drops without it; the support manifest uses the same calls).
+    const std::vector<std::string> categories = m_tables->kill_categories(vitals, body.kind->vitals, body.kind->category, true);
+    const std::vector<std::string> dropCategories = m_tables->kill_categories(vitals, body.kind->vitals, body.kind->category, false);
     const gamedata::CombatTables* combat = m_world.options().combatTables;
     // The personal loot bag of the kill (stage 3.5b.2, docs/systems/loot-bags.md): the items of each character go into its own part of one
     // bag at the place of the creature. With no personal container in the interaction data (a file of format 1 or 2) the items go into
@@ -500,7 +499,7 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
         }
         // The quest drops of the character (stage 1.8c, world/quests.h): an item of a possession task whose ItemDropVC names a vitals
         // category of the victim. They go with the loot (its part of the loot bag), in the transaction of the reward.
-        const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, false, categories);
+        const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, false, dropCategories);
         for (const QuestDrop& drop : drops) {
             reward.items.push_back(LootDrop{drop.itemId, drop.quantity, std::nullopt});
         }

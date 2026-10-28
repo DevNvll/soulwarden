@@ -341,6 +341,11 @@ ProgressResult Progress::finish(Plan& plan, const char* what) {
         if (sheet.attributes.spent != before.attributes.spent || sheet.progression.level != before.progression.level) {
             m_world.gear().refresh(*entity);
         }
+        // Stage QG2a: a change of the level is a change of the TaskHaveLevel tasks and of the push rows of the character (the quest system
+        // looks at the next tick: this finish can run inside a commit of a quest).
+        if (sheet.progression.level != before.progression.level) {
+            m_world.quests().level_changed(*entity);
+        }
     }
     log::write("progress: %s of character %s: level %u, experience %u, %u spent and %u free attribute point(s) (%s)",
                what,

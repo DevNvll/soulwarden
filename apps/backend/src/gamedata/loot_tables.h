@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "gamedata/game_event.h"
+
 // The loot tables and the kill rewards: what the rewards of a kill need from the game files
 // (protocol notes 4.21). The experience and the coin of a kill for each creature level, the reward
 // modifiers of each creature type, the level difference rows, the credit values of the game, the
@@ -197,6 +199,19 @@ struct LootData {
      * to the table id; RepairRecipe "[LTID]NAME" of the item table, client 0x2E57210, 0x3687F10). A file of before has none.
      */
     std::unordered_map<std::string, std::string> containerRoots;
+    /**
+     * Stage QG2a (`containerEvents`, `salvageEvents`: optional members of format 2): the SalvageGameEventID of each loot container item
+     * (the item id in lower case to the event id; the coin purses and Coin_Stack_500: research quest-gaps.md section 8), and the rewards of
+     * each such event (the event id in lower case; the one reader of the reward cells, read_game_event). An event with no row of the data
+     * is not in `salvageEvents`. A file of before has none.
+     */
+    std::unordered_map<std::string, std::string> containerEvents;
+    std::unordered_map<std::string, QuestGameEvent> salvageEvents;
+    /**
+     * Stage QG2a (`categoryGroups`, an optional member of format 2): the parent of each vitals category (VitalsCategoryData:
+     * VitalsCategoryID to GroupVitalsCategoryId, both in lower case; Dryad_Soldier_02BW04 to Bronzeroot). A file of before has none.
+     */
+    std::unordered_map<std::string, std::string> categoryGroups;
     std::vector<LootVitals> bases;
     /** Vitals row id in lower case (a base row, or a level variant row) to the index of its base row. */
     std::unordered_map<std::string, std::uint32_t> vitals;
@@ -256,6 +271,19 @@ public:
     [[nodiscard]] std::optional<std::uint32_t> table_index(std::string_view id) const;
     /** Stage 1.8d: @return The loot table of a loot container item (any case), or no value. */
     [[nodiscard]] std::optional<std::uint32_t> container_table(std::string_view itemId) const;
+    /** Stage QG2a: @return The SalvageGameEventID of a loot container item (any case), or an empty text. */
+    [[nodiscard]] std::string container_event(std::string_view itemId) const;
+    /** Stage QG2a: @return The rewards of a salvage event (any case), or null when the data has no row of it. */
+    [[nodiscard]] const QuestGameEvent* salvage_event(std::string_view eventId) const;
+    /**
+     * Stage QG2a: the vitals categories of a creature that a quest task matches (research quest-gaps.md section 6; static read
+     * evidence/quests/qg2a/implement/static/category/CATEGORY.md): the VitalsCategories of its base row (a file of before: the vitals row),
+     * the category of its spawn point (the VitalsCategoryId of the level metadata), and the direct parent (GroupVitalsCategoryId) of the spawn
+     * category and of each base-row category: one level, not the whole chain. `kill`: the kill credit (TaskKillContribution, predicate
+     * 0x3B19F40) also matches the id of the base vitals row; the quest drops (ItemDropVC, helper 0x5C75830) do not. Each in lower case, once.
+     */
+    [[nodiscard]] std::vector<std::string> kill_categories(const LootVitals* vitals, std::string_view vitalsRow, std::string_view spawnCategory,
+                                                           bool kill = true) const;
     /** @return The table with this id (the compare ignores the case of the letters A to Z), or null. */
     [[nodiscard]] const LootTable* table(std::string_view id) const;
     [[nodiscard]] const LootTable& table(std::uint32_t index) const {

@@ -102,7 +102,10 @@ enum class QuestError {
     levelTooLow,
     /** Stage 1.8d: the RequiredFaction mask of the objective does not have the faction of the character (client 0x3A4C166). */
     wrongFaction,
-    /** Stage 1.8d: a gate whose service rule the backend does not have (QuestArcTag, RequiredWorldTags, RequiredGameModeId, RequiredProgression). */
+    /**
+     * Stage 1.8d: a gate whose service rule the backend does not have (RequiredWorldTags, RequiredGameModeId, RequiredProgression). Stage QG2a:
+     * QuestArcTag is no gate.
+     */
     unsupportedGate,
     /** Stage 1.8d: a repeatable objective that the character completed in the current cycle of its schedule (the OnCooldown answer, 0x37AE910). */
     onCooldown,
@@ -191,6 +194,15 @@ struct QuestCounts {
     std::uint64_t repeatsScheduled{0};
     std::uint64_t repeatsDue{0};
     std::uint64_t repeatResets{0};
+    /**
+     * Stage QG2a: the push checks of PushObjectiveOnReqMet (an entry, a change of the bits or of the level), the candidate rows that they
+     * visited (the rows of the index of the changed bits and levels; each visit before any filter), and the grants of the push.
+     */
+    std::uint64_t pushChecks{0};
+    std::uint64_t pushVisits{0};
+    std::uint64_t pushGrants{0};
+    /** Stage QG2a: the characters whose level changed (Progress::finish): a look at their TaskHaveLevel tasks at the next tick. */
+    std::uint64_t levelLooks{0};
 };
 
 /** Stage 1.8b: the result of a hand-in (794): the rewards that the transaction paid, or the cause of the refusal. */
@@ -477,6 +489,16 @@ public:
     void items_touched(const Entity& entity);
     /** The accepted position of a character changed (World::place): its tasks of a place look again at the next tick. */
     void moved(const Entity& entity);
+    /**
+     * Stage QG2a: the level of a character changed (Progress::finish, the one writer of the level): its TaskHaveLevel tasks and the push
+     * candidates of its new level look again at the next tick.
+     */
+    void level_changed(const Entity& entity);
+    /**
+     * Stage QG2a: @return True for an objective that the push rule grants (PushObjectiveOnReqMet, decision B of the orchestrator: each row of
+     * the data but the three rows of kPushExcluded).
+     */
+    [[nodiscard]] static bool pushed(const gamedata::QuestObjective& objective);
     /** The client reported a point of interest (2297 entered, 6416 left): a cue; the server looks at the shapes itself. */
     void place_reported(Entity& entity, std::uint16_t territory, bool entered);
     /** The character died (the health system): TaskDie with FailOnCondition fails its objective, with ResetOnCondition resets it. */
@@ -575,6 +597,16 @@ public:
 private:
     struct Plan;
     struct Subscriptions;
+    struct PushIndex;
+    /** Stage QG2a: the watched bits that a character has, and its level, at the last push check (the base of the next change). */
+    struct PushWatch {
+        std::vector<std::uint32_t> bits;
+        std::uint32_t level{0};
+    };
+    /** Stage QG2a: the index of the push rows (built at the first use, from the quest data). */
+    const PushIndex& push_index();
+    /** Stage QG2a: the push rows whose dependencies changed since the last check of a character (all rows at its entry): the grants. */
+    void push_changed(Entity& entity, bool all, const char* cause);
     /** Commits a plan (one transaction), then gives the entity the values. */
     [[nodiscard]] QuestError commit(Entity& entity, Plan& plan, const std::vector<state::QuestGrantRow>& grants);
     /** Runs the pending grants of a character in the world. */
@@ -586,8 +618,11 @@ private:
     [[nodiscard]] std::uint64_t now_ns() const;
     /** Builds the index of a character again for the instances of a plan (all instances: `all`). */
     void index(const Entity& entity, const std::set<std::uint64_t>& instances, bool all);
-    /** The predicates of the indexed tasks of some kinds (items, places, achievements) of a character: one plan when one changed. */
-    void refresh(Entity& entity, bool items, bool places, bool achievements, const char* cause);
+    /**
+     * The predicates of the indexed tasks of some kinds (items, places, achievements, stage QG2a: the level) of a character: one plan when one
+     * changed.
+     */
+    void refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause);
     /**
      * Ends an instance (abandon, reset, failure) in a plan: the undo, the returns, the pin. `completed` (the hand-in, stage 1.8b): only the
      * undo of a temporary unlock (client 0x8260590; an unlock or a lock reverts only at a reset or an abandon: 0x8260730, 0x8260880), and
@@ -622,6 +657,11 @@ private:
     std::unordered_map<EntityId, std::unique_ptr<Subscriptions>> m_subscriptions;
     std::set<EntityId> m_itemsDirty;
     std::set<EntityId> m_placesDirty;
+    /** Stage QG2a: the characters whose level changed, and the characters whose bits changed (the push looks at the next tick). */
+    std::set<EntityId> m_levelsDirty;
+    std::set<EntityId> m_pushDirty;
+    std::unique_ptr<PushIndex> m_push;
+    std::unordered_map<EntityId, PushWatch> m_pushWatch;
     /** The misses of each task with GuranteedDropAttempts since its last drop (key: the character, the instance, the index). */
     std::map<std::tuple<std::string, std::uint64_t, std::uint8_t>, std::uint32_t> m_misses;
     /** The result ids of the last events (a ring of kResultWindow ids): a repeated delivery counts one time, with a bound store. */

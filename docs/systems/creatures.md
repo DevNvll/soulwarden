@@ -352,6 +352,12 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   or by the distance rule) removes the external object of its body in the interaction base (`Interactions::body_removed`), and a use
   of it ends. A respawn makes a new entity: a new body, a new node.
 
+- The vitals categories of a creature for the quests (stage QG2a, [Quests](quests.md); `LootTables::kill_categories`) [client 0x3B19F40,
+  0x5C75830; data]: the VitalsCategories of its base row (`loot-tables.json`), the category of the kind (the VitalsCategoryId of the spawn
+  entry of the level metadata: `CreatureKind::category`), and the direct parent of each (`categoryGroups` of `loot-tables.json`,
+  GroupVitalsCategoryId of `javelindata_vitalscategories`). A kind of the creature data is one vitals row, one spawn category, and one set of
+  bodies: two spawn points of one vitals row with two spawn categories are two kinds (`Dryad_Archer_31` and `Dryad_Archer_31:2`).
+
 ## Open points
 
 These rules of the data have no code yet (protocol notes 4.40, "Not known, not done"; the code review of stage 3.4f-D). The status-action start rules

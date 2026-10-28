@@ -48,10 +48,13 @@ SkillSet Skills::read_skills(const std::string& characterId) const {
         if (row.level == 0) {
             continue;
         }
-        // Stage QG1: a row of a territory pool is a card with its level (a card that the point data does not have is not loaded).
+        // Stage QG1: a row of a territory pool is a card with its level. Code review of stage QG1, finding QG1R-R1: a card that the point data
+        // does not have (a file of the format 3) is not loaded, and it stays a row: the next write keeps it (KeptCard).
         if (tables() != nullptr && tables()->standing_of_pool(row.pool) != nullptr) {
             if (const gamedata::TerritoryCard* card = tables()->territory_card(row.node)) {
                 skills.territoryPools[row.pool].cards[row.node] = static_cast<std::uint16_t>(std::min(row.level, card->maxLevel));
+            } else {
+                skills.keptCards.push_back(KeptCard{row.pool, row.node, row.name, row.level});
             }
             continue;
         }
@@ -135,6 +138,10 @@ state::SkillRows Skills::rows_of(const SkillSet& skills) const {
                 rows.nodes.push_back({pool, card, row != nullptr ? row->id : std::string{}, level});
             }
         }
+    }
+    // Code review of stage QG1, finding QG1R-R1: the stored cards that the loaded data cannot read, as they were.
+    for (const KeptCard& kept : skills.keptCards) {
+        rows.nodes.push_back({kept.pool, kept.card, kept.name, kept.level});
     }
     return rows;
 }
@@ -580,6 +587,10 @@ StandingResult Skills::give_standing(const std::string& characterId, std::uint16
         const ProgressResult experience = m_world.progress().finish(*sheet, "the experience of a standing rank");
         result.level = experience.level;
         result.levelExperience = experience.experience;
+    } else if (const std::optional<ProgressView> current = m_world.progress().view(characterId)) {
+        // Code review of stage QG1, finding QG1R-R3: a gain with no rank experience reports the level and the experience of the character.
+        result.level = current->progression.level;
+        result.levelExperience = current->progression.experience;
     }
     const gamedata::StandingRow* row = tables()->standing(territory);
     result.tokens = row != nullptr ? plan.skills.free_tokens(row->poolId) : 0;
