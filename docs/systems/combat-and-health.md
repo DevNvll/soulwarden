@@ -102,6 +102,9 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   (a decision of an agent). 0 or more.
   From stage B4 the pool has the parts of the fixed perk rows too (Alchemist Reprieve, The Thirst: [Gear and perks](gear-and-perks.md));
   Divine (a status, HealMod) counts for a potion (decision D9 of the orchestrator). Live check B4-5: a potion of the bow build 1.501.
+- A hit on a stationary target (stage QG5c1, [Creatures](creatures.md): a totem, a nest) is a hit on a creature: the damage rule, the
+  mitigation of its vitals row, the damage number, the credit, and the death are the same; it plays no reaction, takes no push and no
+  knockdown, and takes no target. A shot tests the default capsule of the projectile system (the slice has no CharacterComponent).
 - The reduction of a creature hit (stage B4): the damage reduction of the gear plus the BaseDamageReduction of the rules with OnHitTaken
   whose AttackType has the attack type of the creature attack (Enchanted Ward and Enchanted Ward II: `Passives::taken_reduction`,
   [Passive rules](passive-rules.md)). The log line of a creature hit has the attack type and the reduction (`attack type Light,

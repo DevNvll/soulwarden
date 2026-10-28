@@ -37,7 +37,9 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
 - The kinds of an entity (`EntityKind`): a player, a creature, a spell (stage 3.3b-S2a,
   [Spell entities](spells.md)), and a probe (a development aid for a live check of a slice
   record). Each kind has its own list of codecs (`codecs_of`: `player_codecs`,
-  `creature_codecs`, `spell_codecs`, `probe_codecs`). A spell and a probe have only the
+  `creature_codecs`, `spell_codecs`, `probe_codecs`; stage QG5c1: the creature codecs also have the PositionInTheWorld state of a
+  stationary target at the place slot of its slice, `ComponentKey::targetPlace`, slot 0 for a creature with a movement component,
+  [Creatures](creatures.md)). A spell and a probe have only the
   observer view. A session observes a spell or a probe at its own distance (the
   `m_sliceSpawnRadius` of the slice, 50 m for the vortex; not more than the distance of a
   character) and stops it at that distance plus 20 m. A new spell makes each session look for

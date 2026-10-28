@@ -474,7 +474,8 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, Ent
             m_world.rewards().killed(*entity);
         }
     }
-    if (result.error == CreatureError::none && !entity->creature.dead) {
+    if (result.error == CreatureError::none && !entity->creature.dead && !entity->creature.body->stationary()) {
+        // A stationary target (stage QG5c1: a totem, a nest) takes the damage only: no reaction, no push, and no target.
         // A stun that ends at the next hit (the stun of Shockwave) ends now (stage 3.3a).
         const auto breaks = std::find_if(entity->creature.effects.begin(), entity->creature.effects.end(),
                                          [](const CreatureEffect& effect) { return effect.stun && effect.endsOnHit; });
@@ -932,7 +933,8 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
 
 bool Creatures::knock(Entity& entity, unsigned power, std::chrono::milliseconds time) {
     Creature& creature = entity.creature;
-    if (creature.dead || creature.immune()) {
+    // A stationary target (stage QG5c1) has no reaction and no action: it takes no knockdown and no stagger.
+    if (creature.dead || creature.immune() || creature.body->stationary()) {
         return false;
     }
     const WorldClock::time_point now = m_world.clock().now();

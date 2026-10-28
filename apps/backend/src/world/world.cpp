@@ -47,8 +47,9 @@ constexpr ComponentKey kEnteredComponents[] = {ComponentKey::status, ComponentKe
 constexpr ComponentKey kSpellComponents[] = {ComponentKey::metadata, ComponentKey::spell, ComponentKey::spellPlace, ComponentKey::vitals,
                                              ComponentKey::delayedEvents};
 /** The component states of a creature. */
-constexpr ComponentKey kCreatureComponents[] = {ComponentKey::metadata, ComponentKey::movement, ComponentKey::vitals,
-                                                ComponentKey::marker, ComponentKey::status};
+// Stage QG5c1: the place of a stationary target (a creature with no movement component; slot 0 for a creature that has one).
+constexpr ComponentKey kCreatureComponents[] = {ComponentKey::metadata, ComponentKey::movement, ComponentKey::targetPlace,
+                                                ComponentKey::vitals,   ComponentKey::marker,   ComponentKey::status};
 
 } // namespace
 

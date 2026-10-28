@@ -338,10 +338,13 @@ bool GatheringData::parse(const std::string& text) {
         // The mark "supported" (no cause) must agree with the gates of the row (finding GA-R5): an empty list of causes does not remove
         // a restriction that the backend cannot check or more than one gatherer. Such a row is refused, with the cause of the loader.
         // Stage QG5b: ItemRequired with an item is a gate of the gather (the item in the bag); a file with no member `item` (a file of before
-        // the review) cannot name it: refused.
+        // the review) cannot name it: refused. Code review of stage QG5b, finding QG5BR-R1: a row with an item and no member `itemCount` is
+        // not a complete gate (a count of 0 would need nothing): refused too. The tool writes a blank quantity cell as the count 0.
         if (row.unsupported.empty()) {
             if (row.restriction == kItemRequired && !itemKnown) {
                 row.unsupported.push_back("the restriction ItemRequired with no item member (the file marks the row supported)");
+            } else if (row.restriction == kItemRequired && !row.item.empty() && !entry.contains("itemCount")) {
+                row.unsupported.push_back("the restriction ItemRequired with an item and no member itemCount (the file marks the row supported)");
             } else if (row.restriction != kNoToolNecessary && row.restriction != kToolRequired && row.restriction != kItemRequired) {
                 row.unsupported.push_back("the restriction " + (row.restriction.empty() ? std::string("(none)") : row.restriction)
                                           + " (the file marks the row supported)");

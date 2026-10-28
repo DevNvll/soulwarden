@@ -28,7 +28,8 @@ bool ForcedMotion::impact(Entity& entity, const gamedata::DamageImpact& impact, 
                           const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length, float scale,
                           float pushBack, bool additive) {
     Creature& creature = entity.creature;
-    if (entity.kind != EntityKind::creature || creature.dead || creature.immune()) {
+    // A stationary target (stage QG5c1: a totem, a nest) never moves.
+    if (entity.kind != EntityKind::creature || creature.dead || creature.immune() || creature.body->stationary()) {
         ++m_counts.refused;
         return false;
     }

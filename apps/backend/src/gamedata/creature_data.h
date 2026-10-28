@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "gamedata/combat_tables.h"
@@ -504,6 +505,12 @@ struct CreatureSlice {
     std::uint32_t movementSlot{0};
     std::uint32_t vitalsSlot{0};
     std::uint32_t markerSlot{0};
+    /**
+     * Stage QG5c1: the slot of the PositionInTheWorld component of a stationary target (member `place`: a totem, a nest; the list
+     * `targets` of tools/gamedata/creature_slices.json). Such a slice has no movement component: its record has its place in this state
+     * (type 13), and it never moves, turns, reacts, or attacks. 0: a creature with a movement component.
+     */
+    std::uint32_t placeSlot{0};
     std::vector<Slot> slots;
     std::vector<Component> components;
     /** The action table of the slice. Empty: the tool found no grid file for the slice. */
@@ -641,6 +648,11 @@ struct CreatureSlice {
     /** @return The basic shot of the slice, or null. */
     [[nodiscard]] const CreatureRangedAttack* basic_shot() const {
         return basicShot && *basicShot < ranged.size() ? &ranged[*basicShot] : nullptr;
+    }
+
+    /** @return True for a stationary target (stage QG5c1): a slice with a place slot and no movement component. */
+    [[nodiscard]] bool stationary() const {
+        return movementSlot == 0 && placeSlot != 0;
     }
 
     /** @return The index of the action with this name that has a fragment, or no value. */
@@ -834,6 +846,16 @@ public:
     [[nodiscard]] const std::optional<CreatureCapsule>& player_capsule() const {
         return m_playerCapsule;
     }
+    /**
+     * Stage QG5c1 (the member keptOut of the tool): the cause of a vitals row or a spawn category whose entries the file does not have (the
+     * client does not show the slice, an encounter entry, an override entry). Null: the file names no cause (a name of no entry of the open
+     * world, or a file of an older tool). The support manifest names it in the reason of a kill task.
+     */
+    [[nodiscard]] const std::string* kept_out(std::string_view name) const;
+    /** Sets the kept-out causes with no file (tests): lower-case names. */
+    void set_kept_out(std::unordered_map<std::string, std::string> causes) {
+        m_keptOut = std::move(causes);
+    }
     /** @return The number of slices with a basic shot (stage 3.4f-A). */
     [[nodiscard]] std::size_t shooting_slices() const {
         return m_shootingSlices;
@@ -933,6 +955,8 @@ private:
     std::vector<PatrolRoute> m_routes;
     std::vector<ProjectileSliceData> m_projectiles;
     std::optional<CreatureCapsule> m_playerCapsule;
+    /** Stage QG5c1: the kept-out names of the file (lower case) to their cause. */
+    std::unordered_map<std::string, std::string> m_keptOut;
     std::size_t m_shootingSlices{0};
     std::size_t m_areaSlices{0};
     std::size_t m_statusActionSlices{0};

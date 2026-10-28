@@ -410,7 +410,7 @@ button on "Confirm").
   the skills that it has: the backend gives no level, no attribute point, no mastery point, and no DLC.
 - `tools/gamedata/creatures.sh` makes the creature data
   (`~/.local/share/soulwarden/gamedata/creatures.json`): the usual spawn points of the creatures
-  of the whole world (32,840 spawn points of 3,848 kinds in the 25 regions of the supported
+  of the whole world (33,023 spawn points of 3,901 kinds in the 25 regions of the supported
   build, a file of 8.8 MB; `--radius METERS` with `--center X Y` writes a smaller file with
   the spawn points of a circle), and for each kind its slice, the slots of its components,
   its vitals ids, its health, its name, and its action table (protocol notes 4.14). From
@@ -431,10 +431,14 @@ button on "Confirm").
   constraint of its spawner: 405 points make their creature only in some phases of the day, and their creature goes away at the end
   of them (with a file from before, each creature comes at each time). `--no-attack FILE` writes one line for each kind that does not attack (747
   kinds from stage 3.4f-D, 789 in stage 3.4f-C: a kind with the basic shot of an archer, a cast, or an area attack attacks). The tool
-  leaves out the spawn points of 50 creature models that the client does not show
-  correctly with this backend (1,541 spawn points: the list is in
+  leaves out the spawn points of 36 creature models that the client does not show
+  correctly with this backend (1,575 entries; 50 models before stage QG5c1: the list is in
   `tools/gamedata/creature_slices.json`), and `--report FILE` writes one line for each entry
-  that is left out. The pak entries that it reads have Oodle data: set
+  that is left out. From stage QG5c1 the file also has the stationary targets (the totems and the scorpion nests of the list
+  `targets`: 100 spawn points; they take hits, die, and come back, and they never move or attack) and the member `keptOut` (the
+  vitals rows and the categories of the entries that the file does not have, with the cause: the support manifest names it); with a
+  file from before there are no totems. A backend from before stage QG5c1 refuses the file of stage QG5c1 (no creature at all): put
+  the backend and the file together. The pak entries that it reads have Oodle data: set
   `SOULWARDEN_OODLE_LIB` to an Oodle library of your computer (a `liboo2core.so`), or
   `SOULWARDEN_OODLE_DLL` to an Oodle library for Windows (the helper of
   `tools/research/oodle_loader.c`). The tool needs about 1 minute.
@@ -679,7 +683,7 @@ button on "Confirm").
   back to its place when you are dead or too far, or at the end of its leash (70 m for a
   wolf), and it has its full health there. The rules are rules of this project (protocol
   notes 4.17): the game files have the values of a creature and not its behavior. 814 of
-  the 3,848 kinds have no attack that the tool can use (stage 3.4f-A): they do not attack you, and a kind
+  the 3,848 kinds have no attack that the tool can use (stage 3.4f-A; 751 of 3,901 kinds in stage QG5c1): they do not attack you, and a kind
   of them with a patrol route or wander values patrols or wanders as each other creature.
 - Paths. With the navigation data of stage 3.4d (protocol notes 4.19) a creature goes around
   walls and rocks, up stairs, on the floors of buildings and ruins, and through shallow

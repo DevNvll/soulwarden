@@ -182,13 +182,15 @@ COMPONENT_CLASSES = {
     "171fa882-c8af-41df-bd19-09cbbfeb1c1c": ("TemporaryAffiliation", 3563),
     # The Projectile component of a projectile slice (stage 3.4f-A, research creature-ranged.md Q2: its state type 16).
     "5637158a-9ae1-41a7-a5c0-d07a76116eaf": ("Projectile", 16),
+    # The PositionInTheWorld component (type 13; spells.py, interactions.py): the place of a stationary target (stage QG5c1).
+    "6c2fc842-f451-4b45-9d7d-a6ee954df025": ("PositionInTheWorld", 13),
 }
 PROJECTILE_CLASS = uuid.UUID("5637158a-9ae1-41a7-a5c0-d07a76116eaf")
 # The slice of the character of a player (stage 3.4f-A: the capsule of the target of a creature shot).
 PLAYER_SLICE = "slices/player.dynamicslice"
 # The sub id of the asset of a slice in the catalog (the slices of a projectile have it).
 SLICE_SUB_ID = 2
-MOVEMENT, VITALS, MARKER = "ActionList", "Vitals", "Marker"
+MOVEMENT, VITALS, MARKER, PLACE = "ActionList", "Vitals", "Marker", "PositionInTheWorld"
 
 # The result of the picture tours of the slices (tools/research/creature_tour.py, stages 3.4a
 # and 3.4c): a file of this folder with two lists.
@@ -199,6 +201,9 @@ MOVEMENT, VITALS, MARKER = "ActionList", "Vitals", "Marker"
 #   "notShown"     Slices that the client does not show correctly with the record of the backend,
 #                  with what the picture shows. A spawn point with only such slices is not in
 #                  the file of the tool, until a later stage sends what the slice needs.
+#   "targets"      Stage QG5c1: the slices of the stationary targets (a totem, a nest) whose record has a live check, with that
+#                  check. Such a slice has a Vitals component and a PositionInTheWorld component and no movement component (no
+#                  action list): the backend sends its place, its vitals, and its marker, and it never moves or attacks.
 # A slice that is in no list shows its body and its name plate with no action of the server.
 SLICE_LISTS_PATH = Path(__file__).resolve().parent / "creature_slices.json"
 
@@ -226,6 +231,31 @@ def read_area_spell_list() -> dict[str, str]:
     except (OSError, ValueError, KeyError) as error:
         raise Failure(f"{SLICE_LISTS_PATH.name} has no correct list areaSpells: {error}") from error
     return {name.lower(): proof for name, proof in listed.items()}
+
+
+NO_FAMILY = "no creature family (a siege object)"
+# Stage QG5c1: the causes of the member keptOut (the entries that are not usual spawn points).
+KEPT_ENCOUNTER = "an entry of an encounter of the level data (IsEncounter: the encounter runner of stage QG5c2 and QG5c3)"
+KEPT_OVERRIDE = "an override entry of the level data (IsOverride)"
+KEPT_NOT_SPAWNED = "an entry that the level data does not spawn (SpawnedByCoatlicue false)"
+
+
+def is_target(body: dict, targets: dict[str, str]) -> bool:
+    """@return True for a slice of a stationary target (stage QG5c1): a slice of the list targets with a vitals component, a
+    PositionInTheWorld component, and no movement component."""
+    return body["path"] in targets and body["movement"] == 0 and body["vitals"] != 0 and body.get("place", 0) != 0
+
+
+def read_target_list() -> dict[str, str]:
+    """@return The slices of the stationary targets whose record has a live check (stage QG5c1, the list targets of the slice lists file:
+    the slice path to its check). A file with no list: none."""
+    try:
+        listed = json.loads(SLICE_LISTS_PATH.read_text(encoding="utf-8")).get("targets", {})
+        if not isinstance(listed, dict) or not all(isinstance(path, str) and isinstance(proof, str) for path, proof in listed.items()):
+            raise ValueError("the list targets does not have its form")
+    except (OSError, ValueError) as error:
+        raise Failure(f"{SLICE_LISTS_PATH.name} has no correct list targets: {error}") from error
+    return dict(listed)
 
 
 def read_status_action_list() -> dict[str, str]:
@@ -273,6 +303,11 @@ ENTRY_FIELDS = {name: field_id(name) for name in ("VitalsId", "VitalsCategoryId"
 SPAWNER_FIELDS = {name: field_id(name) for name in ("m_minRespawnCooldown", "m_maxRespawnCooldown",
                                                     "m_respawnAfterDeath", "m_spawnOnInitialize",
                                                     "m_spawnOnlyOnce")}
+# The respawn values of an area spawner (stage QG5c1; AreaSpawnerComponentServerFacet, the serializer of the client 0x3C32830: two
+# doubles after m_liveCount, before m_ignoreCooldownOverride and the two cooldown flags). A rule of an agent: they are the respawn time
+# in seconds, as the two cooldown values of a point spawner (the area spawners of the scorpion nests have 360 and 360, the point
+# spawners of the same layer 360 and 360). The tool reads them only for a spawner with no point spawner cooldown.
+AREA_RESPAWN_FIELDS = {name: field_id(name) for name in ("m_minRespawnRange", "m_maxRespawnRange")}
 # The time constraint of a spawner (stage 2.2, research world-time-stage.md 5.1): the component TimeOfDayConstraintComponent of the
 # spawner slice, with the flags of its server facet: m_night, m_dawn, m_day, m_dusk (the phases of the day in which the spawner makes
 # its creature) and m_despawnOnTimeEnd (the creature leaves at the end of these phases). The mask of a spawn point has the phase
@@ -347,6 +382,17 @@ def real(element: Element | None) -> float:
     if element is None or element.value is None or len(element.value) != 4:
         return 0.0
     return struct.unpack(">f", element.value)[0]
+
+
+def double(element: Element | None) -> float:
+    """@return The value of a field of 64 bits with a fraction (stage QG5c1: the respawn range of an area spawner). The tool stops for a
+    value that is not finite or is negative: a cut field is a fault of the source, not the value 0."""
+    if element is None or element.value is None:
+        return 0.0
+    value = struct.unpack(">d", element.value)[0] if len(element.value) == 8 else math.nan
+    if not (math.isfinite(value) and value >= 0.0):
+        raise Failure(f"a respawn range of an area spawner is not a finite number of 0 or more ({element.value.hex()})")
+    return round(value, 3)
 
 
 class Sources:
@@ -741,12 +787,19 @@ def read_spawner(roots: list[Element]) -> dict:
                 for name, wanted in COOLDOWN_FIELDS.items():
                     if node.name == wanted:
                         cooldowns.setdefault(name, node)
+                for name, wanted in AREA_RESPAWN_FIELDS.items():
+                    if node.name == wanted:
+                        values.setdefault(name, node)
     patrol, cause = read_patrol(roots)
     phases, leaves, cooldown = read_time_constraint(roots, cooldowns)
+    respawn = (real(values.get("m_minRespawnCooldown")), real(values.get("m_maxRespawnCooldown")))
+    if "m_minRespawnCooldown" not in values and "m_maxRespawnCooldown" not in values:
+        # An area spawner (stage QG5c1): its two respawn values are doubles (AREA_RESPAWN_FIELDS).
+        respawn = (double(values.get("m_minRespawnRange")), double(values.get("m_maxRespawnRange")))
     return {"alias": alias, "slice": direct, "patrol": patrol, "patrolCause": cause, "phases": phases, "leavesAtPhaseEnd": leaves,
             "phaseCooldowns": cooldown,
-            "respawnMin": real(values.get("m_minRespawnCooldown")),
-            "respawnMax": real(values.get("m_maxRespawnCooldown")),
+            "respawnMin": respawn[0],
+            "respawnMax": respawn[1],
             "respawnAfterDeath": number(values.get("m_respawnAfterDeath")) != 0,
             "spawnOnInitialize": number(values.get("m_spawnOnInitialize")) != 0,
             "spawnOnlyOnce": number(values.get("m_spawnOnlyOnce")) != 0}
@@ -1391,6 +1444,9 @@ def read_creature_slice(path: str, asset: tuple[bytes, int], roots: list[Element
              "root": f"{slice_roots[-1]:016X}", "interestRadius": round(radius, 3),
              "movement": by_name.get(MOVEMENT, 0), "vitals": by_name.get(VITALS, 0), "marker": by_name.get(MARKER, 0),
              "slots": slots, "components": components, "gameSpawnAction": spawn_action}
+    # Stage QG5c1: the slot of the PositionInTheWorld component (the place of a stationary target), only for a slice that has one.
+    if by_name.get(PLACE, 0) != 0:
+        entry["place"] = by_name[PLACE]
     capsule = read_capsule(path, roots)
     if capsule is not None:
         entry["capsule"] = capsule
@@ -1510,6 +1566,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     whole_world = radius is None
     center = center or DEFAULT_CENTER
     needs_spawn_action, not_shown = read_slice_lists()
+    # Stage QG5c1: the slices of the stationary targets with a live check of their record (the list targets).
+    targets = read_target_list()
     # The ranged attacks (stage 3.4f-A): the attacks of the ranged attack data with their index on the wire, and the slices of
     # the projectiles.
     ranged_attacks = read_ranged_attacks(sources)
@@ -1562,6 +1620,17 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     route_left_out: dict[str, int] = {}
     # The entry and the layer of the loop below, for the report of an entry that is left out.
     current: dict = {}
+    # Stage QG5c1: the names of the vitals rows and of the spawn categories of the entries that the file does not have, with the cause (the
+    # member keptOut; the support manifest names it in the reason of a kill task). The rank decides between two causes of one name.
+    kept_out: dict[str, tuple[int, str]] = {}
+
+    def keep_out(entry: dict, rank: int, cause: str) -> None:
+        variant = tables["variants"].get(entry["vitals"])
+        base = tables["bases"].get(name_crc(variant["base"])) if variant else tables["bases"].get(entry["vitals"])
+        category = tables["categories"].get(entry["category"])
+        for name in ((variant or {}).get("id"), (base or {}).get("id"), (category or {}).get("id")):
+            if name and (name.lower() not in kept_out or kept_out[name.lower()][0] > rank):
+                kept_out[name.lower()] = (rank, cause)
 
     def leave_out(cause: str, **found) -> None:
         left_out[cause] = left_out.get(cause, 0) + 1
@@ -1636,16 +1705,26 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                     continue
                 counts["inArea"] += 1
                 if not entry["coatlicue"] or entry["override"] or entry["encounter"]:
+                    if entry["encounter"]:
+                        keep_out(entry, 1, KEPT_ENCOUNTER)
+                    elif entry["override"]:
+                        keep_out(entry, 2, KEPT_OVERRIDE)
+                    else:
+                        keep_out(entry, 3, KEPT_NOT_SPAWNED)
                     continue
                 counts["usual"] += 1
                 variant = tables["variants"].get(entry["vitals"])
                 base = tables["bases"].get(name_crc(variant["base"])) if variant else tables["bases"].get(entry["vitals"])
                 current.update(entry=entry, variant=variant, base=base)
-                if base is None or not base["family"]:
-                    leave_out("no creature family (a siege object)")
+                familyless = base is None or not base["family"]
+                if familyless and (base is None or not targets):
+                    leave_out(NO_FAMILY)
                     continue
-                counts["creatures"] += 1
-                selected.append((entry, variant, base))
+                if not familyless:
+                    counts["creatures"] += 1
+                # Stage QG5c1: an entry with no family is a stationary target only when its placement names a slice of the list targets
+                # (below); else it keeps the cause of before.
+                selected.append((entry, variant, base, familyless))
             if not selected:
                 continue
             capitals = sources.read(metadata_path[:-len(".metadata")] + ".capitals.json")
@@ -1655,7 +1734,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 placements = json.loads(capitals.decode("utf-8-sig")).get("Capitals") or []
             except (ValueError, AttributeError) as error:
                 raise Failure(f"{metadata_path}: the placements of the layer did not parse: {error}") from error
-            for entry, variant, base in selected:
+            for entry, variant, base, familyless in selected:
                 current.update(entry=entry, variant=variant, base=base)
                 placement = None
                 nearest = None
@@ -1668,36 +1747,52 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                     if nearest is None or distance < nearest[0]:
                         nearest = (distance, candidate)
                 if placement is None:
+                    if familyless:
+                        leave_out(NO_FAMILY)
+                        continue
                     leave_out("no placement at the position", placements=len(placements),
                               nearest=round(nearest[0], 3) if nearest else None,
                               nearestSlice=str(nearest[1].get("sliceName", "")) if nearest else "")
                     continue
                 path = spawner_path(placement, catalog, sources)
                 if path is None:
-                    leave_out("no spawner slice", placement=str(placement.get("sliceName", "")))
+                    leave_out(NO_FAMILY if familyless else "no spawner slice", placement=str(placement.get("sliceName", "")))
                     continue
                 if path not in spawners:
                     roots = sources.stream(path)
                     spawners[path] = read_spawner(roots) if roots is not None else None
                 spawner = spawners[path]
                 if spawner is None:
+                    if familyless:
+                        leave_out(NO_FAMILY)
                     continue
                 candidates = bodies_of(spawner)
-                bodies = [(body, percent) for body, percent in candidates
-                          if slices[body]["movement"] != 0 and slices[body]["vitals"] != 0]
-                if not bodies:
-                    leave_out("no slice with a movement component and a vitals component", spawner=path,
-                              slices=[slices[body]["path"] for body, _ in candidates],
-                              alias=catalog.path(spawner["alias"]) or "")
+                # Stage QG5c1: the slices of the list targets with a vitals component, a PositionInTheWorld component, and no movement
+                # component: a stationary target (a totem, a nest). Its kind has only such bodies.
+                stationary = [(body, percent) for body, percent in candidates if is_target(slices[body], targets)]
+                if familyless and not stationary:
+                    leave_out(NO_FAMILY)
                     continue
-                shown = [(body, percent) for body, percent in bodies
-                         if all_slices or slices[body]["path"] not in not_shown]
-                if not shown:
-                    leave_out("the client does not show its slice correctly ("
-                              + slices[bodies[0][0]]["path"].rsplit("/", 1)[-1] + ")", spawner=path,
-                              slices=[slices[body]["path"] for body, _ in bodies])
-                    continue
-                bodies = shown
+                if stationary:
+                    bodies = stationary
+                else:
+                    bodies = [(body, percent) for body, percent in candidates
+                              if slices[body]["movement"] != 0 and slices[body]["vitals"] != 0]
+                    if not bodies:
+                        leave_out("no slice with a movement component and a vitals component", spawner=path,
+                                  slices=[slices[body]["path"] for body, _ in candidates],
+                                  alias=catalog.path(spawner["alias"]) or "")
+                        continue
+                    shown = [(body, percent) for body, percent in bodies
+                             if all_slices or slices[body]["path"] not in not_shown]
+                    if not shown:
+                        leave_out("the client does not show its slice correctly ("
+                                  + slices[bodies[0][0]]["path"].rsplit("/", 1)[-1] + ")", spawner=path,
+                                  slices=[slices[body]["path"] for body, _ in bodies])
+                        keep_out(entry, 0, "the client does not show its slice " + slices[bodies[0][0]]["path"].rsplit("/", 1)[-1]
+                                 + " (the list notShown of the picture tours)")
+                        continue
+                    bodies = shown
                 # An entry can have no category id, or an id that the category table of this build does
                 # not have. The client then shows the name of the vitals row on the name plate (live
                 # check of stage 3.4c): the kind has no category name, and the id of the entry.
@@ -1738,9 +1833,10 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                                round(entry["position"][0], 4), round(entry["position"][1], 4),
                                round(entry["position"][2], 4), round(yaw_of(placement.get("rotation") or {}), 2),
                                spawner["respawnMin"], spawner["respawnMax"]])
-                # The patrol route of the spawner, in world coordinates (the transforms of the placement).
-                route, cause = (world_route(spawner["patrol"], placement, entry["position"]) if spawner["patrol"]
-                                else (None, spawner["patrolCause"]))
+                # The patrol route of the spawner, in world coordinates (the transforms of the placement). A stationary target has no
+                # route (stage QG5c1: it never moves).
+                route, cause = (world_route(spawner["patrol"], placement, entry["position"]) if spawner["patrol"] and not stationary
+                                else (None, "" if stationary else spawner["patrolCause"]))
                 if cause:
                     if cause not in RETAIL_ROUTE_CAUSES:
                         raise Failure(f"the patrol of the spawner of placement {placement.get('id', '')} is not complete: {cause}")
@@ -1826,8 +1922,25 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
         return bool(body.get("areas")) or any(body["actions"][attack[0]][0] in creature_behavior.BASIC_RANGED_ACTIONS
                                               for attack in body.get("ranged", []))
 
+    # Stage QG5c1: a stationary target never moves and never attacks. The tool stops for a slice of the list targets with an attack, a
+    # shot, an area, a status action, or a spawn action: the list would name a slice that is not a target.
+    target_slices = [body for body in used if is_target(slices[body], targets)]
+    for body in target_slices:
+        entry = slices[body]
+        for member in ("attacks", "ranged", "areas", "statusActions", "spawnAction", "basicShot"):
+            if entry.get(member):
+                raise Failure(f"{entry['path']} is in the list targets of {SLICE_LISTS_PATH.name}, and it has the member {member}")
+        for member in ("behavior", "serverTrees", "tags", "reactionTable", "additive", "reactions", "reactionLengths"):
+            entry.pop(member, None)
+    target_kinds = [entry for kind, entry in zip(kind_list, document_kinds)
+                    if all(is_target(slices[body], targets) for body, _ in kind["bodies"])]
+    counts["targetSlices"] = len(target_slices)
+    counts["targetKinds"] = len(target_kinds)
+    counts["targetSpawnPoints"] = sum(entry["points"] for entry in target_kinds)
     for kind, entry in zip(kind_list, document_kinds):
         bodies = [slices[body] for body, _ in kind["bodies"]]
+        if entry in target_kinds:
+            continue  # A stationary target is not a creature that does not attack (stage QG5c1).
         if any((body.get("attacks") or shoots(body)) and body.get("behavior", {}).get("speed", [0, 0])[1] > 0 for body in bodies):
             continue
         quiet += 1
@@ -1900,6 +2013,10 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 "routes": routes, "projectiles": projectile_list}
     if player_capsule is not None:
         document["playerCapsule"] = player_capsule
+    # Stage QG5c1: the names of the entries that are not in the file, with their cause (a name of a kind of the file is not kept out).
+    exported = {kind["vitals"].lower() for kind in document_kinds} | {kind["category"].lower() for kind in document_kinds if kind["category"]}
+    document["keptOut"] = {name: cause for name, (_, cause) in sorted(kept_out.items()) if name not in exported}
+    counts["keptOutNames"] = len(document["keptOut"])
     return document
 
 
@@ -2141,6 +2258,8 @@ def main() -> int:
           f"{area}")
     print(f"  entries of the layers: {counts['entries']}; in the area: {counts['inArea']}; usual (not an event): "
           f"{counts['usual']}; with a creature family: {counts['creatures']}")
+    print(f"  stationary targets (the list targets): {counts.get('targetSpawnPoints', 0)} spawn points of "
+          f"{counts.get('targetKinds', 0)} kinds with {counts.get('targetSlices', 0)} slices")
     for cause, count in counts["leftOut"].items():
         print(f"  left out, {cause}: {count}")
     print(f"  in the file with no category row (the name plate has the name of the vitals row): "

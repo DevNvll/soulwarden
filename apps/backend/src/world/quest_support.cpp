@@ -604,6 +604,11 @@ void QuestSupport::build() {
                     if (!made && entry->second.first == gatherable.tradeskill) {
                         entry->second.second = std::min(entry->second.second, gatherable.level);
                     }
+                    // Code review of stage QG5b, finding QG5BR-R3: a ranked row keeps its ItemRequired item too (the runtime checks both
+                    // gates: 1625_0701_AncientCodePillar needs the rank 5 of AzothStaff and one 1625_0601_EyeOfHorus).
+                    if (gatherable.restriction == gamedata::kRestrictionItemRequired && !gatherable.item.empty() && gatherable.itemCount > 0) {
+                        index.gatherEventItems.emplace(lower_text(gatherable.event), lower_text(gatherable.item));
+                    }
                 }
                 return;
             }
@@ -1084,7 +1089,17 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
             } else if (!task.weapon.empty()) {
                 block("KillEnemyWeaponID " + task.weapon + ": the backend has no item of a kill");
             } else if (found.empty()) {
-                block("no creature of a spawn point has a vitals category of the task");
+                // Stage QG5c1: the cause of the creature data for a target whose entries the file does not have (the client does not show
+                // the slice, an encounter entry, an override entry; the member keptOut of the creature tool).
+                std::string cause;
+                for (const std::string& target : task.targets) {
+                    const std::string* kept = options.creatureData != nullptr ? options.creatureData->kept_out(target) : nullptr;
+                    if (kept != nullptr) {
+                        cause = " (" + target + ": " + *kept + ")";
+                        break;
+                    }
+                }
+                block("no creature of a spawn point has a vitals category of the task" + cause);
             } else {
                 fact.supplier = "the kills of the category " + found;
             }
@@ -1119,12 +1134,14 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                                                               : std::string(" (no creature, gatherable, or destructible object of the data gives it)")));
             } else {
                 fact.supplier = found;
+            }
+            if (!task.targets.empty() && (ranked != index.rankEvents.end() || !found.empty())) {
                 // Stage QG5b: a gather with the restriction ItemRequired needs its item in the bag: a source of the world, or a quest give
-                // (the history must have it).
+                // (the history must have it). Finding QG5BR-R3: also the gather of a ranked producer (it needs the rank and the item).
                 const std::string event = task.targets.front();
-                const auto needed = index.gatherEvents.count(event) != 0 && index.gatherEventsFree.count(event) == 0
-                                        ? index.gatherEventItems.find(event)
-                                        : index.gatherEventItems.end();
+                const bool gather = ranked != index.rankEvents.end() || index.gatherEvents.count(event) != 0;
+                const auto needed = gather && index.gatherEventsFree.count(event) == 0 ? index.gatherEventItems.find(event)
+                                                                                       : index.gatherEventItems.end();
                 if (needed != index.gatherEventItems.end()) {
                     if (index.items.count(needed->second) != 0) {
                         fact.supplier += " with the item " + needed->second + " of a source of the world";

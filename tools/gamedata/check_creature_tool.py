@@ -1016,6 +1016,40 @@ def check_server_trees() -> int:
     return failures
 
 
+def check_targets() -> int:
+    """Stage QG5c1: the respawn values of an area spawner (two doubles), and the test of a slice of a stationary target."""
+    failures = 0
+    asset = node(cd.SLICE_FIELD, bytes([0x44]) * 16 + (2).to_bytes(4, "big"))
+    area = [asset, node(cd.AREA_RESPAWN_FIELDS["m_minRespawnRange"], struct.pack(">d", 360.0)),
+            node(cd.AREA_RESPAWN_FIELDS["m_maxRespawnRange"], struct.pack(">d", 360.0))]
+    point = [asset, node(cd.SPAWNER_FIELDS["m_minRespawnCooldown"], struct.pack(">f", 90.0)),
+             node(cd.SPAWNER_FIELDS["m_maxRespawnCooldown"], struct.pack(">f", 90.0)), *area[1:]]
+    read = cd.read_spawner(area)
+    passed = read["respawnMin"] == 360.0 and read["respawnMax"] == 360.0
+    print(f"{'ok  ' if passed else 'FAIL'}  target-area-respawn: the area spawner gives {read['respawnMin']} and {read['respawnMax']}")
+    failures += 0 if passed else 1
+    read = cd.read_spawner(point)
+    passed = read["respawnMin"] == 90.0 and read["respawnMax"] == 90.0
+    print(f"{'ok  ' if passed else 'FAIL'}  target-point-first: the point spawner cooldown wins ({read['respawnMin']})")
+    failures += 0 if passed else 1
+    try:
+        cd.read_spawner([asset, node(cd.AREA_RESPAWN_FIELDS["m_minRespawnRange"], struct.pack(">d", float("nan")))])
+        passed = False
+    except cd.Failure:
+        passed = True
+    print(f"{'ok  ' if passed else 'FAIL'}  target-area-nan: a respawn range that is not finite stops the tool")
+    failures += 0 if passed else 1
+    path = "slices/test/totem.dynamicslice"
+    listed = {path: "a live check"}
+    totem = {"path": path, "movement": 0, "vitals": 1, "place": 3}
+    passed = (cd.is_target(totem, listed) and not cd.is_target({**totem, "movement": 5}, listed)
+              and not cd.is_target({**totem, "place": 0}, listed) and not cd.is_target({**totem, "vitals": 0}, listed)
+              and not cd.is_target(totem, {}))
+    print(f"{'ok  ' if passed else 'FAIL'}  target-slice: a listed slice with a vitals and a place slot and no movement slot is a target")
+    failures += 0 if passed else 1
+    return failures
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
@@ -1078,6 +1112,23 @@ def main() -> int:
                 detail = f"status {status}, file {'kept' if text == MARK else 'replaced'}: {errors.getvalue().strip()}"
             print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
             failures += 0 if passed else 1
+        # Stage QG5c1: an encounter entry of a different vitals row is in the member keptOut with its cause; the name of an exported kind
+        # is not.
+        tables["bases"][2] = {"id": "Check_Encounter", "family": "Wildlife", "creatureType": "Solo", "healthMod": 1.0, "damageMod": 1.0,
+                              "name": ""}
+        entries.append({"vitals": 2, "category": 0, "level": 18, "position": (1010.0, 1000.0, 50.0), "coatlicue": True,
+                        "override": False, "encounter": True})
+        Sources.case = "valid"
+        target = work / "kept-out.json"
+        with patch.object(sys, "argv", ["creature_data.py", str(target)]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            status = cd.main()
+        kept = json.loads(target.read_text(encoding="utf-8")).get("keptOut", {}) if status == 0 else {}
+        passed = status == 0 and kept.get("check_encounter") == cd.KEPT_ENCOUNTER and "check_kind" not in kept
+        print(f"{'ok  ' if passed else 'FAIL'}  kept-out: status {status}, keptOut {kept}")
+        failures += 0 if passed else 1
+        entries.pop()
+    failures += check_targets()
     failures += check_ranged()
     failures += check_review_ranged(work)
     failures += check_areas()

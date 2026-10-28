@@ -392,6 +392,10 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
         return false;
     }
     slice.interestRadius = radius;
+    // Stage QG5c1: the slot of the PositionInTheWorld component of a stationary target. A file of an older tool has no member.
+    if (entry.contains("place") && !read_member(entry, "place", slice.placeSlot)) {
+        return false;
+    }
     for (const json& row : entry["slots"]) {
         CreatureSlice::Slot slot;
         if (!row.is_array() || row.size() != 3 || !read_number(row[0], slot.slot) || !row[1].is_string()
@@ -848,6 +852,12 @@ void CreatureData::clear() {
     m_largestSight = 0.0F;
     m_byId.clear();
     m_searchTexts.clear();
+    m_keptOut.clear();
+}
+
+const std::string* CreatureData::kept_out(std::string_view name) const {
+    const auto found = m_keptOut.find(lower_ascii(name));
+    return found != m_keptOut.end() ? &found->second : nullptr;
 }
 
 bool CreatureData::load(const std::string& path) {
@@ -965,8 +975,27 @@ bool CreatureData::load(const std::string& path) {
         }
         playerCapsule = capsule;
     }
-    return set_full(std::move(slices), std::move(kinds), std::move(points), std::move(levels), std::move(routes), std::move(projectiles),
-                    playerCapsule);
+    // Stage QG5c1: the names of the entries that the file does not have, with their cause (a member of a newer tool; an object of texts).
+    std::unordered_map<std::string, std::string> keptOut;
+    if (document.contains("keptOut")) {
+        if (!document["keptOut"].is_object()) {
+            m_error = "the member keptOut is not an object";
+            return false;
+        }
+        for (const auto& [name, cause] : document["keptOut"].items()) {
+            if (!cause.is_string()) {
+                m_error = "the cause of the kept-out name " + name + " is not a text";
+                return false;
+            }
+            keptOut.emplace(lower_ascii(name), cause.get<std::string>());
+        }
+    }
+    if (!set_full(std::move(slices), std::move(kinds), std::move(points), std::move(levels), std::move(routes), std::move(projectiles),
+                  playerCapsule)) {
+        return false;
+    }
+    m_keptOut = std::move(keptOut);
+    return true;
 }
 
 bool CreatureData::set(std::vector<CreatureSlice> slices,
@@ -1152,21 +1181,31 @@ bool CreatureData::check() {
     }
     for (std::size_t index = 0; index < m_slices.size(); ++index) {
         const CreatureSlice& slice = m_slices[index];
-        // A creature has a position and a health: a slice with no such component is not a creature.
-        if (slice.movementSlot == 0 || slice.vitalsSlot == 0 || slice.movementSlot > kMaxSlot || slice.vitalsSlot > kMaxSlot
-            || slice.markerSlot > kMaxSlot || slice.movementSlot == slice.vitalsSlot
-            || (slice.markerSlot != 0 && (slice.markerSlot == slice.movementSlot || slice.markerSlot == slice.vitalsSlot))
+        // A creature has a position and a health: a slice with no such component is not a creature. A stationary target (stage
+        // QG5c1) has its position in its PositionInTheWorld component (the place slot) and no movement component.
+        const std::uint32_t placed = slice.stationary() ? slice.placeSlot : slice.movementSlot;
+        if (placed == 0 || slice.vitalsSlot == 0 || placed > kMaxSlot || slice.vitalsSlot > kMaxSlot || slice.markerSlot > kMaxSlot
+            || (slice.movementSlot != 0 && slice.placeSlot != 0) || placed == slice.vitalsSlot
+            || (slice.markerSlot != 0 && (slice.markerSlot == placed || slice.markerSlot == slice.vitalsSlot))
             || !(slice.interestRadius >= 0.0F)) {
             m_error = "slice " + std::to_string(index) + " has no movement slot or no vitals slot, or two equal slots";
             return false;
         }
         // The backend sends a state to each of these slots (server/rep/states): the slot list
         // of the slice must have the slot, for a component with the type of that state.
-        if (!has_slot(slice, slice.movementSlot, server::rep::kTypeMovementState)
+        if (!has_slot(slice, placed, slice.stationary() ? server::rep::kTypePositionInTheWorldState : server::rep::kTypeMovementState)
             || !has_slot(slice, slice.vitalsSlot, server::rep::kTypeVitalsState)
             || (slice.markerSlot != 0 && !has_slot(slice, slice.markerSlot, server::rep::kTypeMarkerState))) {
             m_error = "slice " + std::to_string(index)
                       + " has a movement slot, a vitals slot, or a marker slot that is not the slot of that component in its slot list";
+            return false;
+        }
+        // A stationary target never moves and never attacks (stage QG5c1): its slice has no action, no behavior value, no attack, no
+        // shot, no area, no status action, and no spawn action.
+        if (slice.stationary()
+            && (!slice.actions.empty() || slice.behavior || !slice.attacks.empty() || !slice.ranged.empty() || !slice.areas.empty()
+                || !slice.statusActions.empty() || !slice.spawnActionName.empty())) {
+            m_error = "slice " + std::to_string(index) + " is a stationary target with an action, a behavior value, or an attack";
             return false;
         }
         // The backend starts the spawn action of a slice that names one: the action table must

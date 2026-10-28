@@ -2102,7 +2102,9 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
     if (levels) {
         look("level");
     }
-    plan.settle(achievements || !plan.actions.empty() ? subscriptions : nullptr);
+    // Code review of stage QG5b, finding QG5BR-R2: a task change of this refresh (an item, a place, a level) can change an ObjectiveFlow of an
+    // NPA (the task states), thus the indexed achievement waits of the character are settled again too (the fixed point of the plan).
+    plan.settle(achievements || !plan.actions.empty() || !plan.changed.empty() ? subscriptions : nullptr);
     if (plan.changed.empty() && plan.actions.empty()) {
         return;
     }

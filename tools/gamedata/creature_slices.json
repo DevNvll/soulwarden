@@ -29,9 +29,7 @@
   "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_icedryad_frostfang_10305.dynamicslice"
  ],
  "notShown": {
-  "slices/characters/anubianguardian_horus.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a flame",
   "slices/characters/armoreddragon.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
-  "slices/characters/catacombs_underworld/underworld_catacombs_boss_dark_heavy.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a red effect above the place",
   "slices/characters/catacombs_underworld/underworld_catacombs_boss_green_warden.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/catacombs_underworld/underworld_catacombs_boss_purple_warden.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/catacombs_underworld/underworld_catacombs_skeleton_dark_2h_sword.dynamicslice": "a body and no name plate, also with the spawn action (the slice has no marker component)",
@@ -44,10 +42,6 @@
   "slices/characters/corruption_swarmer_dt4.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a red effect",
   "slices/characters/corruption_swarmer_dt5.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a red effect",
   "slices/characters/corruption_swarmer_dt6.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a red effect",
-  "slices/characters/corruptionheavy_dt5.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a weak red light",
-  "slices/characters/corruptionheavy_dt6.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
-  "slices/characters/dynastyheavy.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a weak red light",
-  "slices/characters/evil_knight_heavy.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/halloweenplaguer.dynamicslice": "no body and no name plate; the slice has no spawn action with a fragment",
   "slices/characters/hercyne_boar.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/hercyne_boar_alpha.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
@@ -59,11 +53,6 @@
   "slices/characters/inquisitor_warden.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/inquisitor_warden_noshield.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/lost_undead_naga.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a blue light",
-  "slices/characters/sand_elemental_heavy.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a weak light",
-  "slices/characters/seasons/season_02/season_02_herikai.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
-  "slices/characters/seasons/season_02/season_02_sulfur_elemental_heavy_n1.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
-  "slices/characters/seasons/season_02/sulfur_elemental_heavy.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a weak red light",
-  "slices/characters/seasons/season_04/season_04_frost_king.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/sulfurdragon.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/sulfurlizard.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/upyr_guardian.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
@@ -75,10 +64,7 @@
   "slices/characters/upyr_thrall_meatbag_red.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/characters/wex_levelvariants_named/upyr_mindthief_named_dracul_00.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
   "slices/firstlight/redoubt/base_-_angry_earth_-_hercyne_reindeer_alpha_09fl02.dynamicslice": "no body and no name plate, also with the spawn action of the slice",
-  "slices/pois/wexvariants/r_+02_+02_ebonscalereach/dynastyheavy_towerbeam_08qp08_elite.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a weak red light",
-  "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_anubiuan_horus_10306.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a flame",
-  "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_corrupted_swarmer_10223.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a red effect",
-  "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_corruption_heavy_10223.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a weak red light"
+  "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_corrupted_swarmer_10223.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a red effect"
  },
  "areaSpells": {
   "Dryad_Bomb": "live check L8 of stage 3.4f-C: the metadata and the PositionInTheWorld state at slot 1 show the tell, the cloud at 1 s, and its end at 26 s",
@@ -95,5 +81,11 @@
  "statusActions": {
   "InqCleric_Rekindle_Self": "live check D-L1 of stage 3.4f-D: the action plays on the Inquisitor Cleric, AI_InqCleric_Rekindle shows its icon at the name plate, and the vitals state of the creature moves the health bar of the name plate up",
   "Howl": "live check D-L2 of stage 3.4f-D: the action plays on the Evil Knight hound (the Evil_Knight variant with the mark ApplyHaste), and AI_Evil_Knight_Wolf_Haste shows its icon at the name plate"
+ },
+ "targets": {
+  "slices/characters/totems/totem_pirate_cursed.dynamicslice": "live check I4 of stage QG5c1: the metadata, the PositionInTheWorld state at slot 3, the vitals at slot 1, and the marker at slot 5 show the body (the banners and the cyan aura) and the name plate; the hits move the health bar, the death plays a burst and the client removes the body; the kill counts for Quest_02792, and the point makes a new totem after its respawn time",
+  "slices/characters/wex_levelvariants_elite/totem_pirate_cursed_siren_05wc11.dynamicslice": "live check I4 of stage QG5c1: the same states (place slot 3, vitals 1, marker 5) show the body and the elite name plate",
+  "slices/pois/brimstone/totem_scorpion_nest_sm.dynamicslice": "live check I4 of stage QG5c1: the PositionInTheWorld state at slot 5, the vitals at slot 1, and the marker at slot 8 show the egg clutch and its name plate; the death plays a dust burst and the name plate goes away",
+  "slices/worldevents/shatteredmountain/interact/corruptedtotem/totem_corrupted.dynamicslice": "live check I4 of stage QG5c1: the place at slot 3, the vitals at slot 1, and the marker at slot 5 show the barb, its red area, and the name plate"
  }
 }

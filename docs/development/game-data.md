@@ -569,6 +569,34 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   ([Creature behavior](../systems/creature-behavior.md), section "Behavior trees"); a file with no member works (no creature has a server
   tree), and a member with a wrong form refuses the file (test case BTB1). `tools/release.sh` takes the new file with the game data folder.
 
+- Stage QG5c1 changes `creatures.json` (still format 4, `tools/gamedata/creatures.sh`; [Creatures](../systems/creatures.md), section
+  "The stationary targets of stage QG5c1"): 33,023 spawn points of 3,901 kinds with 521 slices (32,840, 3,848, and 503 before).
+  - The stationary targets: a slice of the new list `targets` of `tools/gamedata/creature_slices.json` (each entry names its live check)
+    with a Vitals component, a PositionInTheWorld component (now a class of the tool: type 13), and no movement component. An entry with no
+    creature family is kept only for such a slice (else the cause of before, "no creature family"). Such a slice has the member `place`
+    (the slot of its PositionInTheWorld component) and `movement` 0, no `behavior`, no reaction member, and no route at its spawn points; the
+    tool stops for a slice of the list with an attack, a shot, an area, a status action, or a spawn action. The supported build: 100 spawn
+    points of 6 kinds with 4 slices (the counts `targetSpawnPoints`, `targetKinds`, `targetSlices`; the line "stationary targets" of the
+    tool). They are not in `kindsWithNoAttack`.
+  - The respawn of an area spawner [agent; client serializer 0x3C32830]: a spawner with no point spawner cooldown takes its two respawn values
+    from `m_minRespawnRange` and `m_maxRespawnRange` of its AreaSpawner (doubles; a value that is not finite or is negative stops the tool).
+    4 points of before change: 3 critter rats of an area spawner 0 to 7 s, the named goat king of Elysian Wilds 0 to 360 s.
+  - The list `notShown` loses 14 slices (the picture tour of stage QG5c1: they show a body and a name plate with the record of now; 36
+    stay): 83 spawn points of these slices are in the file now, for example the named Horus `AnubianGuardian_Horus_Named_00` and Ser
+    Ballard `Corruption_Heavy_Named_MSQ_Ballards`.
+  - The member `keptOut` (an object): the lower-case name of a vitals row (the variant and the base) and of a spawn category of each entry
+    that the file does not have, with its cause (the client does not show the slice; an encounter entry; an override entry; an entry that
+    the level data does not spawn), but not a name of a kind of the file: 736 names. The support manifest names the cause in the reason of a
+    kill task ([Quests](../systems/quests.md)).
+  `tools/gamedata/check_creature_tool.py` checks the area respawn, the target test of a slice, and `keptOut` (cases `target-*`,
+  `kept-out`). A backend of before stage QG5c1 refuses the new file (a slice with no movement slot): the whole file, thus no creature.
+  `tools/release.sh` must take the new file together with the new backend. A backend of stage QG5c1 reads a file of before (no target, no
+  `keptOut`).
+
+- Stage QG5c1 (finding QG5BR-R1 of the review of QG5b): the loader of `gathering-data.json` refuses a row of ItemRequired with an item and
+  no member `itemCount` (the cause "the restriction ItemRequired with an item and no member itemCount"). The tool always writes the
+  member (a blank quantity cell is 0): the file of the supported build does not change.
+
 - Stage QG5b changes `gathering-data.json` (still format 1; its folder `gathering/` has the same bytes): the restriction ItemRequired with
   an item is supported (28 rows lose their cause; the row keeps `item` and `itemCount`: the gather checks the bag), and a direct quest
   gimmick is a quest object (`task_event_form`: no tool, the loot Empty or blank, a GameEventID that a quest task names; the tool reads the

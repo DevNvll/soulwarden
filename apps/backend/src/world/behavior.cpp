@@ -2049,8 +2049,9 @@ void Behavior::bind(Entity& creature) {
     brain.refusal.clear();
     const gamedata::CreatureKind* kind = creature.creature.kind;
     const gamedata::CreatureSlice* body = creature.creature.body;
-    if (!m_default || kind == nullptr || body == nullptr) {
-        brain.binding = m_default ? "no binding" : "no tree";
+    if (!m_default || kind == nullptr || body == nullptr || body->stationary()) {
+        // Stage QG5c1: a stationary target has no tree of its own and no action: it never senses, roams, or attacks.
+        brain.binding = body != nullptr && body->stationary() ? "a stationary target" : m_default ? "no binding" : "no tree";
         attach(creature, m_default, std::vector<std::int32_t>(m_default ? m_default->actions.size() : 0, kMissingAction));
         return;
     }

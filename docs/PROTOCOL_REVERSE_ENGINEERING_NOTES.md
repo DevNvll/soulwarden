@@ -2882,6 +2882,24 @@ chain of one spawn point in the game files:
   animals (93), `armoreddragon` (71). The cause is not known: the record has the same four
   states as the record of a slice that shows. A slice goes
   from one list to the other only with a picture of the live client.
+  Stage QG5c1 [live: a new tour of the 50 slices with the record of stage QG5c1, no spawn action, a wait of 8 s;
+  `~/Games/soulwarden/work/evidence/quests/qg5c1/implement/shots/tour/`]: 14 slices show a body and a name plate now and leave the list
+  (`anubianguardian_horus`, `worldevent_ai_anubiuan_horus_10306`, `corruptionheavy_dt5`, `corruptionheavy_dt6`,
+  `worldevent_ai_corruption_heavy_10223`, `dynastyheavy`, `dynastyheavy_towerbeam_08qp08_elite`, `underworld_catacombs_boss_dark_heavy`,
+  `sulfur_elemental_heavy`, `season_02_sulfur_elemental_heavy_n1`, `sand_elemental_heavy`, `evil_knight_heavy`, `season_02_herikai`,
+  `season_04_frost_king`); 36 stay. The record changed after the tours of stage 3.4c (the idle record, the status state, the target bits,
+  the DLC of stage 1.1b); which change made them show is not proved.
+- **Stationary targets** (stage QG5c1; [Creatures](systems/creatures.md)) [data: the slots of the templates; live I4 of stage QG5c1]: a
+  slice with a PositionInTheWorld component and no ActionList component (a totem, a nest; the list `targets` of
+  `tools/gamedata/creature_slices.json`). Its record is the metadata state (slot 0, the asset of the slice, sub 2), the PositionInTheWorld
+  state at its slot (type 13: `01 03 x:f32 y:f32 height:u16 rotation`; the rotation of the yaw of the spawn point), the vitals state, the
+  marker state, and the status state at their slots; no movement state. The client shows the body and the name plate, a hit moves the
+  health bar, and the death plays a burst; the client removes the body after the DelayedEvent `DestroyDelay` (2.5 s) of the slice.
+
+  | Slice | Vitals | DamageReceiver | PositionInTheWorld | Marker | StatusEffects |
+  | --- | --- | --- | --- | --- | --- |
+  | `totems/totem_pirate_cursed`, `wex_levelvariants_elite/totem_pirate_cursed_siren_05wc11`, `shatteredmountain/interact/corruptedtotem/totem_corrupted` | 1 | 2 | 3 | 5 | 7 |
+  | `pois/brimstone/totem_scorpion_nest_sm` | 1 | 2 | 5 | 8 | 4 |
 - The tool stops with status 1 and one message, and writes no file, when a file that a slice
   or an animation file names is not in the pak files or is not correct XML (the grid file,
   the controller file, the fragment file, a file that a fragment file imports, an action
@@ -7500,6 +7518,97 @@ InteractTeleportComponentClientFacet (vtable 0x82FBDA0) compares the action 0x52
 (0x40620F9 to 0x4062175), and calls a bus method (0x40621C8 to 0x40621F7); the option rows give action 82, not committed; the input block
 is the ordinary interaction block (writer 0x35E67E0); the teleport answer of the server and a gather of the row at action 82: not found].
 The shrine of `99D_MSQ_07_PortalFight` and the lift of `Quest_16008` stay out (a teleport handler of a later stage).
+
+### 4.62 The encounter states: the root record, the manager state, the stage state and 1278, the link of a nearby event, the participant message (live proof of stage QG5c1 with probes; static proof for the client code; the backend has no encounter runner yet: stage QG5c2)
+
+Research: `~/Games/soulwarden/work/research/quest-encounters.md` section 2; the static read A of stage QG5c1
+(`~/Games/soulwarden/work/evidence/quests/qg5c1/implement/static/A/ANSWERS.md`); the live probes of the same folder (`shots/steps/`,
+`shots/I1-*`, `shots/I2-*`; the bytes: `scripts/probe_hex.py`, `scripts/root_objectives.py`; `tools/world probe`, `tools/world fragment`,
+`tools/world message`). Client build 1.400.6031.6004151; all addresses are image-relative.
+
+**The case** [data]: `slices/worldevents/msq2_everfall/enc_quest_04a_side02_obeliskdefenders_01.dynamicslice` (catalog GUID
+`7B52B1B2-898D-5D26-84BD-2DCED94F3321`, sub 2; root entity 137792453816943; the placement of the area spawner at 8732.26 4251.94 181.18
+in the Perseus ruin). Slots: 1 Spawner (4005), 2 EncounterManager (6786), 3 PositionInTheWorld (13), 4 Objectives (3857), 5 `Wave_03 -
+Cleanup`, 6 `Wave_00 - Setup`, 7 `Wave_02 - Objective: Kill AI`, 8 `Wave_01: Interact with IO` (each 2133).
+
+**The root record** [live]: a record with the metadata state (the asset, sub 2, an actor of the allocator), the PositionInTheWorld state at
+slot 3, and the manager state at slot 2 makes the entity group of the root in the client: its ObjectivesComponent (slot 4) takes a state,
+and the link below shows its objective; the stop of the entity takes the objective off the HUD. The Spawner state (4005) is not needed for
+these states [live: not sent; static: the status handlers do not read it]. The root shows no body of its own.
+
+**The manager state 6786** [static: constructor 0x26E6700; one group, field 0 `status:u32`; the apply (vtable 0x80B1730 +0xB0, 0x26F0180,
+0x2A9970) only stores the value at facet +0x28]:
+
+```text
+6786 := 01 01 status:u32
+```
+
+The labels [static: Lua globals of the client, 0x54DF7B4 to 0x54DF8C5; the link to this field is an inference]: 0
+`eEncounterStatus_Uninitialized`, 1 `NotStarted`, 2 `InProgress`, 3 `Succeeded`, 4 `Failed`. [live: the statuses 1, 2, and 3 change
+nothing that the client shows.]
+
+**The stage state 2133 and the message 1278** [static: constructor 0x26E58D0, reader 0x26F7550; the apply 0x26F00C0 takes an entry only
+when signed(sequence) is above the last sequence of the facet (+0x2C), then calls the handler 0x26F64A0 and stores the sequence; 1278
+(`EncounterComponentClientFacet_SyncStateChange`, reader 0x26D52A0) calls the same handler]:
+
+```text
+2133 := 01 01 count:size (sequence:u32 status:u32)*count        count <= 10; the wrap of a sequence: not found
+1278 := target:u64 G:u64 status:u32                              target: the EncounterComponent of the stage (4.2: the stage entity id
+                                                                 XOR K, plus its component id; Kill: 137998612247151, 5006536641863069946)
+```
+
+| New status | Status before was 0 | Status before was not 0 |
+| --- | --- | --- |
+| 0 | no action | store only |
+| 1 | store only | the reset (0x26F56E0: the end actions, then the start actions, backwards) |
+| 2 | the start actions (0x26F72A0) | the start actions |
+| 3, 4 | the start actions, then the end actions (0x26F7170) | the end actions |
+| 5 and above | the start actions, then the end actions | store only |
+
+The handler does not read `m_objectives`, `m_timeLimit`, or `m_userWave`, and it does not change the root Objectives or the manager
+[static]. [live: the statuses 2 and 3 of the interaction stage (2133, sequences 1 and 2), the status 3 of the cleanup stage, and 1278 with
+the status 3 for the kill stage: the session stays, the HUD line does not change, and no change shows at the root (the end actions activate
+and deactivate the child group 137818223620719 with `Object_04A_DevicePerseus_Visual_Healthy`, the glow, the glyphs, and the lights; no
+change of it was seen from two places at the root).]
+
+**The link of a nearby event** [live: proved; static: the apply 0x3A44520 to 0x3A4487D compares the ids with its set, the request +0x210
+through 0x39FE8A0 addresses the Objectives bus by the u64, the add path 0x3A44990 to 0x3A44A76 and 0x3A68FA0]: the player Objectives state
+(slot 22, type 3857) group 1 field 5 is a full container of u64 entity ids (G of the root):
+
+```text
+02 20 00 01 sequence:size64 count:size (G:u64)*count     field 5 only; field 6: 02 40 00 01 sequence count (index:u16)*count
+```
+
+With G of the root the client shows the banner "Objective Started" with the title and the level of the objective of the root, and the
+objective at the top of the tracked list of the HUD with a teal diamond icon (`shots/I2-2-link.png`); an empty list takes it off, and a new
+list brings it back (`shots/steps/g123.png`).
+
+**The objective of the root** [live]: the root Objectives state at slot 4 (type 3857, group 1 fields 3 and 4 with the element forms of
+4.53) with one instance gives the HUD lines of the encounter: the title "Perseus Stellar Research" (the key
+`@04A_Side02_02_ObeliskDefenders_Title` of the stages), the line "Stellar Research", and the task line of the stage of the active task index:
+index 0 the interaction stage ("Examine the Ancient Device", `@Enc_04A_Side02_02_Interact`), index 1 the kill stage with a counter ("0 / 2 -
+Defeat the enforcers", `@Enc_04A_Side02_02_KillAI`; 2 is the m_requiredCount of the stage) (`shots/steps/b12.png`, `d123.png`). The
+indices are the stages with m_userWave in the stage order [static: 0x26F1FD0]. The objectiveId of the element does not select the text (the
+quest id and an unrelated id gave the same title); a new instance id gives a new banner.
+
+**The partial progress** (the N of "N / 2"): not found. N stayed 0 for the progress 0, 1, 2, and 5 of the task element of index 1 and for
+new instances; the stage statuses, 1278, and the manager status do not set it [live]. One earlier sequence showed 1 (after the status 3 of
+the interaction and the cleanup stages, with a progress 4) and is not explained. Not tested: the count of the destroyed members of the stage
+in the client (SliceDestroyedObjective, 0x272FCF0) and the message `ObjectivesComponentClientFacet_OnMilestoneCorrection` (string
+0x8250FA8).
+
+**The participant message 2363** (`ParticipantTrackerComponentClientFacet_SyncParticipantData`) [static: reader 0x27245B0, collection
+reader 0x27265C0; the invoke 0x2724420 copies the first list to facet +0x28 and the second to +0xB8, with no test of the local player and no
+notification]:
+
+```text
+2363 := target:u64 G:u64 first:size (actor:16 G:u64)*first second:size (actor:16 G:u64)*second
+        target: the ParticipantTracker component of the root (component id 11980792288100801750)
+```
+
+[live: both lists with the actor of the character: the session stays, and no change shows.] The meaning of the two lists: not found.
+Message 915 (`EncounterRewardsComponentClientFacet_OnSyncEncounterRewards`, `target:u64 G:u64 rewards:u32`, handler 0x26FEB70: it stores the
+value and notifies) [static only]: the meaning of the value is not found.
 
 ## 5. Open items
 

@@ -76,10 +76,13 @@ std::span<const StateCodec> player_codecs() {
 
 std::span<const StateCodec> creature_codecs() {
     // The slot of each component is a value of the slice of the creature (game data).
-    static constexpr std::array<StateCodec, 6> codecs{{
+    static constexpr std::array<StateCodec, 7> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::movement, 0, kTypeMovementState, nullptr, encode_creature_movement_parts, false,
          [](const world::Entity& entity) { return entity.creature.body->movementSlot; }},
+        // A stationary target (stage QG5c1: a totem, a nest): its place, in the place of a movement state (slot 0 for a creature).
+        {world::ComponentKey::targetPlace, 0, kTypePositionInTheWorldState, encode_target_place_state, nullptr, false,
+         [](const world::Entity& entity) { return entity.creature.body->placeSlot; }},
         {world::ComponentKey::vitals, 0, kTypeVitalsState, nullptr, encode_creature_vitals_state, false,
          [](const world::Entity& entity) { return entity.creature.body->vitalsSlot; }},
         {world::ComponentKey::marker, 0, kTypeMarkerState, encode_marker_state, nullptr, false,

@@ -257,6 +257,11 @@ void write_place_rotation(hub::Writer& writer, std::array<float, 4> rotation);
 [[nodiscard]] std::array<float, 4> yaw_rotation(float yawDegrees);
 /** @return The states of a server child (stage 2.5b, states/object_states.cpp): its place, its BuildableController, its Ownership. */
 [[nodiscard]] hub::Bytes encode_object_place_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The PositionInTheWorld state of a stationary target (stage QG5c1, states/object_states.cpp; a creature whose slice has a place
+ *         slot and no movement component): its place and the rotation of its yaw. Each observer gets it.
+ */
+[[nodiscard]] hub::Bytes encode_target_place_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_buildable_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_ownership_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_player_state(const world::Entity& entity, View view, const world::WorldClock& clock);

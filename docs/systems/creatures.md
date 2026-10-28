@@ -18,6 +18,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 | The heals and the buffs of a creature (stage 3.4f-D): the one path of a status on a creature, the heal of its ticks, the DMG part and the haste, the dispel, the due list of the effects, the status actions and the low-health part of the data | Protocol notes 4.40, `world/creatures.h` (`Creatures::give_status`, `heal`, `end_effects`, `sweep`, `effect_tick`), `world/entity.h` (`CreatureEffect`, `Creature::damage_factor`, `speed_factor`), `gamedata/creature_data.h` (`CreatureStatusAction`, `StatusMark`, `lowHealth`), [Creature behavior](creature-behavior.md), `tools/world creature effect`, `tools/world creature status-action`, test cases CRH1 to CRH9 |
 | The stacks of a status on a creature (stage B2): StackMax, the end of the rule of a character, the count at the name plate, the ApplicationCooldown on the target, the removal window, the one-time damage of a row with no duration | `Creatures::give_status`, `apply_effect`, `application_ready`, `stacks_of`, `remove_statuses`, `server/rep/states/status_state.cpp` (`encode_creature_status_state`), protocol notes 4.47, test cases BC1, BC2, BC6, BC7 |
 | The load of the world: the cost of the spawn rule, the time of a tick | `apps/backend/src/world/creatures.h` (`SpawnGrid`), `world/load_meter.h`, `tools/world list` (the line `load:`), test case WS2 |
+| The stationary targets (stage QG5c1: a totem, a nest): the place slot, the record with no movement state, the hit with no reaction, the kill and the respawn; the kept-out causes of the creature data | Protocol notes 4.14, `gamedata/creature_data.h` (`CreatureSlice::placeSlot`, `stationary`, `CreatureData::kept_out`), `server/rep/states/object_states.cpp` (`encode_target_place_state`), `world/creatures.cpp` (`hurt`, `knock`), `world/forced_motion.cpp`, `world/behavior.cpp` (`bind`), `tools/gamedata/creature_data.py` (`is_target`, `read_target_list`, `keep_out`), the list `targets` of `tools/gamedata/creature_slices.json`, test cases QG5C1A to QG5C1C |
 
 ## Rules
 
@@ -358,7 +359,49 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   GroupVitalsCategoryId of `javelindata_vitalscategories`). A kind of the creature data is one vitals row, one spawn category, and one set of
   bodies: two spawn points of one vitals row with two spawn categories are two kinds (`Dryad_Archer_31` and `Dryad_Archer_31:2`).
 
+### The stationary targets of stage QG5c1
+
+The evidence is in `~/Games/soulwarden/work/evidence/quests/qg5c1/implement/` (`RESULT.md`, the pictures `shots/I4-*`, the videos
+`videos/I4-*`).
+
+- A stationary target is a creature of the same table whose slice has a PositionInTheWorld component and no movement component
+  (`CreatureSlice::stationary`: `movementSlot` 0 and `placeSlot` not 0) [data: the slots of the template; live I4]. The tool takes only
+  the slices of the list `targets` of `tools/gamedata/creature_slices.json` (each entry names its live check) [project rule: the record of
+  each slice needs a picture, as the list `notShown`]: the cursed pirate banners (`totems/totem_pirate_cursed`, the siren variant), the
+  scorpion egg clutch (`pois/brimstone/totem_scorpion_nest_sm`), and the corruption barb (`totem_corrupted`). The supported build has 100
+  spawn points of 6 kinds. The kind keeps the family of its base row (no family for a totem, Wildlife for the nest) [data]; the backend gives
+  it no family, no roam, and no attack.
+- The record [live I4]: the metadata state (the asset of the slice), the PositionInTheWorld state at the place slot (type 13: the place of
+  the spawn point and the rotation of its yaw; `encode_target_place_state`, `ComponentKey::targetPlace`), the vitals state, the marker
+  state, and the status state at their slots; no movement state. The client shows the body and the name plate with this record
+  ("Mistywater Cursed Banner" level 70, "Putrid Egg Clutch", "Sirensong Harmonic Resonator", "Corruption Barb").
+- The hits and the kill [live I4; tests QG5C1B]: a hit goes through `Creatures::hurt` (the credit entry of `Rewards::hit`, the death at
+  health 0, one `Rewards::killed`): the quest kills, the experience, and the loot of the vitals row are the rules of a kill of a creature
+  (the kind category of the spawn point counts: `Corrupted_Totem_07SM05` of the kind `Lost_Totem_60`). The target takes no reaction, no
+  target, no push (`ForcedMotion::impact` refuses it), and no knockdown or stagger (`Creatures::knock` refuses it) [project rule: the slice
+  has no action table]. Its behavior binding is "a stationary target" (no tree): it never senses, roams, or attacks. A status effect can
+  come on it (the icons of its StatusEffects slot, the ticks of a damage over time).
+- The respawn [data; live I4]: the death gives its spawn point the respawn time of its spawner, as for a creature; the respawn removes the
+  body and makes a new target (a new entity). The point spawners of the totems have 90 or 360 s; the area spawner of the nest has
+  `m_minRespawnRange` and `m_maxRespawnRange` 360 [agent: the two values of an area spawner are its respawn time, the tool reads them for a
+  spawner with no point spawner cooldown; client serializer 0x3C32830].
+- The picture tour of stage QG5c1 (`tools/research/creature_tour.py`, 50 slices of the list `notShown`, the current record and the DLC of
+  stage 1.1b): 14 slices show a body and a name plate now and leave the list [live: `shots/tour/sheet-00.jpg`, `sheet-01.jpg`]: for example
+  `anubianguardian_horus` (the named Horus of `1605_0701_brokenkey`, live I3: the kill counts for its task, and its loot table gives an item),
+  `corruptionheavy_dt5` (Ser Ballard of `99B_MSQ_02_meetgalahad`), `dynastyheavy`, `sand_elemental_heavy`, `evil_knight_heavy`, the season
+  slices `season_02_herikai`, `season_04_frost_king`, `season_02_sulfur_elemental_heavy_n1`. The cause of the change is not proved (the
+  stages after the tours of stage 3.4c changed the record: the idle record of user test 2, the status state, the target bits). 36 slices stay
+  (the chameleon, the armored dragon, the hercyne creatures, the upyr creatures, the swarmers, the wardens, and others).
+- The kept-out causes (the member `keptOut` of the tool, `CreatureData::kept_out`): the names of the vitals rows and of the spawn
+  categories of the entries that the file does not have, with the cause (the slice that the client does not show, an encounter entry, an
+  override entry, an entry that the level data does not spawn). The support manifest names the cause in the reason of a kill task. 736
+  names in the supported build.
+
 ## Open points
+
+- Stage QG5c1: a stationary target has no server part of its slice: the area status of a corruption barb on the players near it
+  (`Player_Status_Effect`), its self heal, and the scorpion child spawner of the nest are not applied; the placement tilt of a totem is not in
+  the creature data (the place state has only its yaw).
 
 These rules of the data have no code yet (protocol notes 4.40, "Not known, not done"; the code review of stage 3.4f-D). The status-action start rules
 (the heal at the low-health part, the buff when the creature does not have it, at most each 20 s) and the speed rule (the strongest haste)
@@ -391,8 +434,9 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
 ```
 
 - `tools/gamedata/creatures.sh` writes `creatures.json` to the game data folder: the spawn
-  points of the whole world (32,840 spawn points, 3,848 kinds, 503 slices, 25 regions; a file
-  of 13.1 MB with the 19,814 patrol routes of format 3 and the time constraints of format 4 (stage 2.2: 405 points); 60 s with
+  points of the whole world (stage QG5c1: 33,023 spawn points, 3,901 kinds, 521 slices, 25 regions, with 100 spawn points of stationary
+  targets and 736 kept-out names; 32,840, 3,848, and 503 before; a file
+  of 15 MB with the 19,814 patrol routes of format 3 and the time constraints of format 4 (stage 2.2: 405 points); 60 s with
   `SOULWARDEN_OODLE_LIB`). The
   tool prints the counts of the routes, the policies, the waypoints, the tasks, and the kinds
   that wander. `--radius METERS` (with `--center X Y`) writes a
@@ -461,6 +505,14 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
   OUT` puts 25 pictures on one sheet. A person must look at each sheet.
 
 ## Traps
+
+- Stage QG5c1: a totem has no CharacterComponent: the server tests a shot against the default capsule (`projectile_rules`), and an arrow that
+  the client aims at the side of a banner passes it (live: 0.6 m to the right at 5 m). Aim at the middle of the totem.
+- Stage QG5c1: the client removes the body of a dead totem itself (its DelayedEvent `DestroyDelay`, 2.5 s, and a DestroyGDE component): the
+  burst plays and the body goes away, while the entity stays in the world of the backend until the respawn or the distance rule.
+- Stage QG5c1, a live kill with the behavior on: `tools/world ignore NAME on` after a hit makes the creature lose its target, go back to its
+  anchor, and get its full health. Keep the ignore value off for the whole fight of a test that needs the credit, or start the run with
+  `SOULWARDEN_CREATURE_BEHAVIOR=0`.
 
 - The homing values of the data are not small: TurnRate 900400 and a clip duration of 66329 s (clips with no end), MoveToDuration 75 s,
   clips that start after the end of the attack, and TurnRate 1080 or 3.0 with UseExponential (a rate for each frame above 1 in 169

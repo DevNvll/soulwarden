@@ -44,6 +44,7 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage QG3: the places (the area shapes, the origins of each layer and region, the causes of the tags with no shape, the trigger volumes of the capitals, the instance volumes, the place view) | `tools/gamedata/pois.py` (`origin_of`, `read_plots`, `unshaped_tags`), `tools/gamedata/triggers.py` (`Walk`), `check_pois_tool.py`, `check_triggers_tool.py`; `gamedata/poi_data.h` (`PoiData::cause`, `at`), `gamedata/trigger_data.h` (`TriggerData::elsewhere`, `at`); the reasons of `QuestSupport::evaluate`; the command `quest_places` (`server/http/quest_commands.cpp`, `tools/world quest places`); `tests/quest_places_tests.cpp` (QG3A to QG3E); the review of QG2a: `tests/review_qg2a_tests.cpp` (QGR2A1 to QGR2A5); the second computation `~/Games/soulwarden/work/evidence/quests/qg3/implement/scripts/support_check.py` |
 | Stage QG4: the quest givers (the artifact grant at the equip, the item level, the causes of an NPC with no slot, the rows with no source; the corrections of the review of QG3) | `Quests::item_equipped`, `Quests::equip_grant` (`world/quests.h`), `ProgressionTables::item_level`, `InteractionData::persons_apart`, the grant `equip` and `apart_cause` of `world/quest_support.cpp`; cases QG4A to QG4D, QGR3A1 to QGR3A4 |
 | Stage QG5b: the ObjectiveFlow of an NPA, the restriction ItemRequired of a gather, the categorical progression reward (the AzothStaff rank), the quest gimmicks; the corrections of the review of QG5a | `gamedata::parse_objective_flow`, `QuestNpa::flowClauses` (`gamedata/quest_data.h`), `flow_passes` (`world/quests.cpp`); `Gathering::check_gates`, `GatherRefusal::missingItem`, `Inventory::bag_count`; `QuestGameEvent::progression` (`gamedata/game_event.h`), `RewardJoin::progression`, `Skills::add_experience(Plan&)`; `tools/gamedata/gathering.py` (`task_event_form`, `Tables.task_events`), `quest_objects.py` (`destructible_form`), `interactions.py` (the slice conditional); `QuestSupport` (`rankEvents`, `gatherEventItems`, the running trees of a history); `tests/quest_flow_gap_tests.cpp` (QG5BA to QG5BD), `tests/quest_object_gap_tests.cpp` (QGR5A1, QGR5A2); the second computation `~/Games/soulwarden/work/evidence/quests/qg5b/implement/scripts/support_check.py` |
+| Stage QG5c1: the stationary targets and the named creatures of the kill tasks, the kept-out cause of a kill target in the manifest, the encounter states (the wire proof for QG5c2); the corrections of the review of QG5b | [Creatures](creatures.md) (the stationary targets), protocol notes 4.62 (the encounter states), `QuestSupport` (the kill branch: `CreatureData::kept_out`; the ranked producer with an item), `Quests::refresh` (the settle of the waits), `gamedata/gathering_data.cpp` (itemCount); `tests/target_tests.cpp` (QG5C1A to QG5C1C), `tests/review_qg5b_tests.cpp` (QGR5B1 to QGR5B3); the second computation `~/Games/soulwarden/work/evidence/quests/qg5c1/implement/scripts/support_check.py` |
 | Stage QG5a: the quest chest drops, the proximity objects, the per-character state of a gathered quest object, the glyph locks, the new quest objects of the data tools; the corrections of the review of QG4 | `Quests::plan_chest_drops`, `roll_drop` (`world/quests.h`), `Chests::complete`; `QuestObjects::moved`, `tick`, `look` (`world/quest_objects.h`), `QuestObjectData` (member `proximity`); `Gathering::quest_object_due`, `GatherRefusal::gatheredQuestObject`, `GatheringType::azothStaff`; `tools/gamedata/gathering.py` (`QUEST_TABLES`, `quest_form`, `children`), `quest_objects.py` (`proximity`), `interactions.py` (`varied_bounds`, `quest_children`, `read_flow_npas`); `QuestSupport` (the chest source, `refusedEvents`); `tests/quest_object_gap_tests.cpp` (QG5A to QG5E), `tests/quest_event_tests.cpp` (QG5F), `tests/review_qg4_tests.cpp` (QGR4A1 to QGR4A3); the second computation `~/Games/soulwarden/work/evidence/quests/qg5a/implement/scripts/support_check.py` |
 | The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`; stage QG2a: `research/quest-gaps.md`, `research/quest-gaps-qg2b.md`, the static read of the category rule `evidence/quests/qg2a/implement/static/category/CATEGORY.md` |
 
@@ -929,6 +930,39 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   evidence of the stage: its own flow parser and evaluator with the node states of the play, its own rank loop, its own reward rule) gives
   the same counts: 2,147 rows, 519 supported, 0 row differences, 0 of 6,760 own facts differ, 306 histories with 0 differences, 25 groups,
   the new Soldier completes 66; on the manifest of before with the new data it finds 135 row differences and 29 own fact differences.
+
+- The counts of stage QG5c1 (the same quest data, with `creatures.json` of stage QG5c1 and the corrections of the review of QG5b): 527
+  supported objectives (519 before; 8 new, none lost). The first reasons before of the 8 new rows: 6 no creature of a spawn point (the
+  stationary targets: `0716_0101_malevolentofferings`, `99G_MSQ_SM_PlantBombs`, `16_Side_17_HuntScorpion`, `Quest_02792`; the named
+  creatures of the slices that show now: `1605_0701_brokenkey`, `99B_MSQ_02_meetgalahad`) and 2 an item with no source (the quest drops of
+  creatures of those slices: `16_Side_28_LightsOut`, `99F_MSQ_ER_StealBoat`). A new character of each archetype completes 66 (no change); 49
+  of the 306 histories have a new played list; the 25 groups stay (3 have new counts). The first reasons of the 500 objectives that are not
+  supported: 118 an item with no source, 102 a point of interest with no shape, 48 TaskGameMode, 36 no creature of the categories, 36 no
+  producer of a game event, 35 TaskQuickCourse, 20 TaskHaveLevel of a faction progression, 15 the location rule with no shape, 10 a
+  ProgressionReward, 8 no grant source that the backend runs, 7 an item that the catalog does not have, 6 a person with no slot, and the
+  smaller groups. The reason of a kill task with no creature names the kept-out cause of the creature data when it has one (the member
+  `keptOut` of `creatures.json`: "(fl_chameleon_elite_named_09fl01: the client does not show its slice chameleon.dynamicslice ...)", "an
+  entry of an encounter of the level data (IsEncounter ...)"); the kind of the reason stays "no creature of its categories". The kill tasks
+  that stay blocked (`manifest/kept-out.txt` of the result): 109 tasks of 68 objectives an encounter member (QG5c2 and QG5c3), 103 tasks
+  of 66 objectives with no entry of the open world (an instance, another world), 21 tasks of 17 objectives a slice that the client does not
+  show, 3 tasks an entry that the level data does not spawn. The second computation (a copy of `support_check.py` with the rule of
+  QG5BR-R3 in the evidence of the stage: a ranked producer with an item needs the rank, then the item fact) gives the same counts: 2,147
+  rows, 527 supported, 0 row differences, 0 of 6,759 own facts differ, 306 histories with 0 differences, 25 groups, the new Soldier completes
+  66; on the manifest of before with the new data it finds 5 row differences and 10 own fact differences.
+
+### The corrections of the code review of stage QG5b (in stage QG5c1)
+
+The findings QG5BR-R1 to QG5BR-R3 (`~/Games/soulwarden/work/evidence/quests/qg5b/code-review/FINDINGS.md`) are corrected in stage QG5c1;
+each case fails on the tree of stage QG5b and passes now (`tests/review_qg5b_tests.cpp`).
+
+- QG5BR-R1 (QGR5B1): the loader of the gathering data refuses a row of ItemRequired with an item and no member `itemCount` (a count of 0
+  would need nothing): the empty bag gets no gather. A blank quantity cell of a table stays the count 0 of the tool (no item gate).
+- QG5BR-R2 (QGR5B2): a refresh of the quests that changes a task (an item, a place, a level) settles the indexed achievement waits of the
+  character again: a TaskAchievement whose NPA has an ObjectiveFlow of that task follows it (no bit changes). The wait of a second
+  character stays (MP-10).
+- QG5BR-R3 (QGR5B3): the manifest keeps the ItemRequired item of a producer with a rank gate (AzothStaff): the task needs the rank and the
+  item. In the supported build `1625_0701_challengingpharaoh` task 43 (the Code Pillar) now needs `1625_0601_eyeofhorus` (a quest item): no
+  count changes.
 
 ### The corrections of the code review of stage QG5a (in stage QG5b)
 

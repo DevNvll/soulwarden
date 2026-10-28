@@ -99,6 +99,17 @@ hub::Bytes encode_object_place_state(const world::Entity& entity, View view, con
     return position_in_the_world_state(entity.position, entity.object.rotation);
 }
 
+hub::Bytes encode_target_place_state(const world::Entity& entity, View view, const world::WorldClock& clock) {
+    (void)view;
+    (void)clock;
+    if (entity.kind != world::EntityKind::creature || entity.creature.body == nullptr || !entity.creature.body->stationary()) {
+        return {};
+    }
+    // A stationary target (stage QG5c1): the place of its spawn point and the rotation of its yaw (the tilt of a placement is not in the
+    // creature data).
+    return position_in_the_world_state(entity.position, yaw_rotation(entity.creature.yaw));
+}
+
 hub::Bytes encode_buildable_state(const world::Entity& entity, View view, const world::WorldClock& clock) {
     (void)view;
     (void)clock;

@@ -89,6 +89,11 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
   lost (a full bag, with no loot bag data) writes no award row and keeps its misses: the next kill can drop it again (code review of stage
   1.8c, finding QR8C-R9; case QRW9).
   The removal of a body by the distance keeps the respawn time.
+- The kill of a stationary target (stage QG5c1, [Creatures](creatures.md): a totem, a nest) is the kill of a creature: the same credit
+  entries, one `Rewards::killed`, the quest kills with the categories of its vitals row and of its spawn point, the experience of its
+  creature type (a nest row has NoExpNoCoin: 0 experience), and the respawn time of its spawner (an area spawner: its two respawn ranges
+  [agent]). Live I4: the kill of a "Shoreside Cursed Banner" counts 1 of 8 for `Quest_02792` and gives 79 experience; test case QG5C1B: two
+  characters with the credit each get the kill one time.
 - The loot file is complete as a whole (finding F2, case RL2). The backend refuses the file
   (and gives no reward) when a base row names a creature type that the reward modifiers do
   not have or an event that the events do not have, or when the credit data has fewer credit

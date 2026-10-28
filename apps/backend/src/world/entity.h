@@ -200,6 +200,11 @@ enum class ComponentKey {
      * on the HUD only after it (live check L1 of stage 1.8a). Only the owner gets it, after the first message 2709 of its session.
      */
     seasons,
+    /**
+     * The PositionInTheWorld state of a stationary target (stage QG5c1, type 13, the place slot of its slice: a totem, a nest): its place and
+     * its rotation. It has no movement state; each observer gets the place in its first record.
+     */
+    targetPlace,
 };
 
 /**
