@@ -249,6 +249,12 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   of the slice [agent: the client rule for a blank cell is not proved; no such case in this build: `variationBlankTagKept` 0]. The build:
   2,208 bounds with a tag of a variation (for example `IO_99F_MSQ_07_EmpressPoetry` of a PlayCinematicVideo object: the presentation handler
   accepts its use, and the start and the completion count for TaskInteract), 81 with a required achievement (11 conditionals).
+- Code review of stage QG5a, finding QG5AR-R1 (in stage QG5b): a required achievement of the Interact component of the slice
+  (m_requiredAchievementOverride) that is an expression is the member `requires.conditional` too (the common bound writer of
+  `interactions.py`, the count `sliceConditional`: 50 bounds of the build, among them the Morgen gravestones A to C of
+  `99B_MSQ_06_lostcathedral` with `!99B_MSQ_06_MorgenGraves_Toggle` and the spyglasses of Dunwood). Before, the writer took the whole text
+  as one achievement id and marked the bound unresolved (each use refused). The unresolved bounds go from 80 to 30. The tool case
+  `person-slice-expression` of NC1.
 - Stage QG5a, the quest children: a child of a PrefabSpawner of a level placement (not client-authoritative, m_spawnOnInitialize true)
   whose slice is a quest object of a gather (a variation table of the quest tables, or a direct binding with a row of the quest form, and a
   GatherOption bound) is an object of the file with the key "UUID/ENTITY", the client id of a child of a level placement (`child_groups`,

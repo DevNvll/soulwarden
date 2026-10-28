@@ -139,8 +139,22 @@ QuestGameEvent read_game_event(const std::string& key, const EventCells& cells) 
             event.unpaid.push_back("AzothReward " + text);
         }
     }
+    // Stage QG5b: CategoricalProgressionReward is the experience of the progression CategoricalProgressionId (the payer decides its owner).
+    // A reward with no id, and an amount that is not a whole number of 0 to 1e9, stay unpaid.
+    if (const std::string text = trimmed(cell(cells, "CategoricalProgressionReward")); !text.empty()) {
+        const std::optional<double> value = whole_number(text);
+        const std::string id = trimmed(cell(cells, "CategoricalProgressionId"));
+        if (value && *value == 0.0) {
+            // No experience: no reward.
+        } else if (!id.empty() && value && *value > 0.0 && std::floor(*value) == *value && *value <= 1e9) {
+            event.progression = id;
+            event.progressionAmount = static_cast<std::uint64_t>(*value);
+        } else {
+            event.unpaid.push_back("CategoricalProgressionReward " + text + (id.empty() ? std::string{} : " (" + id + ")"));
+        }
+    }
     // The rewards with no owner in the backend yet (research quest-engine.md Q6; stage 1.8d and later).
-    for (const char* column : {"FactionReputation", "FactionTokens", "CategoricalProgressionReward", "UmbralCurrency", "PvpXp", "PVPXP",
+    for (const char* column : {"FactionReputation", "FactionTokens", "UmbralCurrency", "PvpXp", "PVPXP",
                                "SeasonsXp", "AzothSalt", "CursedSilvers", "CursedCrowns"}) {
         const std::string text = trimmed(cell(cells, column));
         const std::optional<double> value = number(text);

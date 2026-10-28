@@ -501,7 +501,7 @@ backend. The tool of each system is also in the document of that system.
   of a variation, 81 with a required achievement); a required achievement that is an expression is `requires.conditional` (a text; 11);
   the quest children of the spawners of the placements (`questChild`, the key "UUID/ENTITY": 81 objects; 452 with m_spawnOnInitialize false
   in `excluded`); a person whose presence names an NPA with an ObjectiveFlow is not resolved (code review of QG4, finding QG4R-R2: 211
-  persons, the count `personsObjectiveFlow`). The build: 44,617 objects (44,536 before), 0 objects removed. A backend of before stage QG5a
+  persons, the count `personsObjectiveFlow`; stage QG5b: resolved, the backend has the rule of the flow). The build: 44,617 objects (44,536 before), 0 objects removed. A backend of before stage QG5a
   reads the file (it does not know `conditional` and `questChild`: such a bound has no conditional check there, and a child object has no
   capital node of its gathering data). `check_interactions_tool.py --persons` has the case `person-flow`.
   Write the file again with `tools/gamedata/interactions.sh`. `check_interactions_tool.py --persons` (case NC1) checks the id rule against an independent
@@ -568,6 +568,22 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   stage 2.2 (a compare of the two files of the supported build). The backend reads the member as a binding key of the behavior trees
   ([Creature behavior](../systems/creature-behavior.md), section "Behavior trees"); a file with no member works (no creature has a server
   tree), and a member with a wrong form refuses the file (test case BTB1). `tools/release.sh` takes the new file with the game data folder.
+
+- Stage QG5b changes `gathering-data.json` (still format 1; its folder `gathering/` has the same bytes): the restriction ItemRequired with
+  an item is supported (28 rows lose their cause; the row keeps `item` and `itemCount`: the gather checks the bag), and a direct quest
+  gimmick is a quest object (`task_event_form`: no tool, the loot Empty or blank, a GameEventID that a quest task names; the tool reads the
+  KillEnemyType of the task tables: the 6 cannons of Gimmick_BreakingWallsCannon_Vignette, 1,208 rows, 35,124 capitals, 367 templates;
+  no capital and no template of before changes: the template indexes of 127 capitals move), `quest-objects.json` (still format 1: the
+  direct destructible rows with no loot and an event of a quest task, with the tag and InteractOnlyOnQuest of the Interact component of the
+  slice: the 5 crates of MB_MSQ2_Crate_interact; 201 destructible objects, 241 rows; the 196 objects of before and the 284 proximity
+  objects keep their values), and `interaction-data.json` (still format 4: the persons with a flow presence are resolved, 219 person objects
+  change; a required achievement of a slice that is an expression is `requires.conditional`, 50 bounds (`sliceConditional`), the unresolved
+  bounds 80 to 30). `quest-data.json` does not change (it has the column ObjectiveFlow since stage QG5a and the columns of the categorical
+  reward since stage 1.8a). Write the three again (`tools/gamedata/gathering.sh`, `quest-objects.sh`, `interactions.sh`). With the files of
+  before the backend refuses the ItemRequired rows (their cause), and the flow persons and the slice expressions stay unresolved. A backend of
+  before stage QG5b reads the three new files: it refuses the ItemRequired rows with an item (the cause of its loader), the flow persons are
+  never there (an NPA with a flow is false there), and it evaluates the new conditional bounds (it knows `requires.conditional` since stage
+  QG5a). `tools/release.sh` takes them with the game data folder.
 
 - Stage QG5a changes `gathering-data.json` and its folder `gathering/` (still format 1: the quest tables Gatherables_NPCRescue_01 and
   Gatherable_Quest_AncientGlyph, a quest placement of any slice path with the variant of the placement or of the slice, the direct

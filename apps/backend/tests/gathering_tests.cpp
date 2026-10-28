@@ -220,7 +220,7 @@ void data_rules(const Options& options) {
         passed += line.rfind("ok  ", 0) == 0 ? 1 : 0;
         failed += line.rfind("FAIL", 0) == 0 ? 1 : 0;
     }
-    check(status == 0 && failed == 0 && passed == 9, "each case of the check of the gathering tool passes (" + std::to_string(passed) + " of 9)");
+    check(status == 0 && failed == 0 && passed == 10, "each case of the check of the gathering tool passes (" + std::to_string(passed) + " of 10)");
 }
 
 service::HttpResponse set_node_respawn_reply(GatherShop& shop, const service::HttpRequest& request) {

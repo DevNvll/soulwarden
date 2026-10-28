@@ -290,6 +290,7 @@ void loader_gates(const Options&) {
         const char* cause;
     };
     const std::vector<Variant> variants{
+        // Stage QG5b: ItemRequired with an item is a gate of the gather (the bag check); the 2 gatherers stay a cause of the loader.
         {"ItemRequired with the item TestKey and 2 gatherers",
          [](json& row) {
              row["restriction"] = "ItemRequired";
@@ -297,7 +298,7 @@ void loader_gates(const Options&) {
              row["itemCount"] = 1;
              row["required"] = 2;
          },
-         false, "TestKey"},
+         false, "gatherer"},
         {"ItemRequired with no item member", [](json& row) { row["restriction"] = "ItemRequired"; }, false, "ItemRequired"},
         {"the restriction WhisperRequired", [](json& row) { row["restriction"] = "WhisperRequired"; }, false, "WhisperRequired"},
         {"2 gatherers", [](json& row) { row["required"] = 2; }, false, "gatherer"},

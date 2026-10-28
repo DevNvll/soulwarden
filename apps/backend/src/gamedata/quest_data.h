@@ -278,6 +278,29 @@ struct QuestWhisper {
     std::string achievement;
 };
 
+/**
+ * Stage QG5b: one clause of an ObjectiveFlow (the record of 12 bytes of the client parser 0x43BD930: the unlock byte, the modifier byte,
+ * the objective hash, the task hash).
+ */
+struct QuestFlowClause {
+    /** `u` (true: the clause unlocks) or `l` (false: it locks). */
+    bool unlock{true};
+    /**
+     * The modifier: 'a' (no suffix, or a modifier that the parser does not know), 'c' (complete), 'r' (ready for completion; only with no
+     * task: a task takes only a and c, 0x43BDB6C).
+     */
+    char modifier{'a'};
+    /** The objective id and the task id (empty: the clause names the objective only), as the text of the data. */
+    std::string objective;
+    std::string task;
+};
+
+/**
+ * Stage QG5b: @return The clauses of an ObjectiveFlow text in their order (the client parser 0x43BD930: the clauses are split at ",", a
+ * clause is `u:` or `l:`, then OBJECTIVE, `/TASK`, and `:MODIFIER`; a clause with another prefix is left out, 0x43BE66E).
+ */
+[[nodiscard]] std::vector<QuestFlowClause> parse_objective_flow(const std::string& text);
+
 /** One non-persisted achievement (NPAData): the client computes it from other bits; the server does not store it. */
 struct QuestNpa {
     /** ReqAchievementConditional: an expression of achievement ids. */
@@ -286,10 +309,11 @@ struct QuestNpa {
     std::string status;
     /**
      * Code review of stage QG4, finding QG4R-R2: ObjectiveFlow, the rule of the quest state of the NPA ("u:Quest_18018,l:Quest_18018/
-     * Quest_18018_Task_5:c"; client: loader 0x43B57F3, parser 0x43B5827, evaluator 0x318A5F0, predicate 0x3189E83 and 0x3189F5F). The
-     * backend has no rule for it yet: an NPA with a flow is false, also when it has a conditional (its gate must not go).
+     * Quest_18018_Task_5:c"). Stage QG5b: its clauses (`flowClauses`) with the rule of the client (evaluator 0x318A4F0, clause matcher
+     * 0x3189DA0; Quests::flow_passes): the NPA is true when its conditional (if any), its flow (if any), and its status (if any) pass.
      */
     std::string flow;
+    std::vector<QuestFlowClause> flowClauses;
 };
 
 /** One row of the backstory table with an override (a template of the developers, or an archetype row of the creation). */

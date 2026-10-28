@@ -203,6 +203,56 @@ const char* quest_error_text(QuestError error) {
 namespace {
 
 /**
+ * Stage QG5b: @return True when the ObjectiveFlow of an NPA passes for a character (static read A2 of stage QG5b: the evaluator 0x318A4F0 and
+ * the clause matcher 0x3189DA0 of ObjectivesComponentRequestBus). The clauses are ordered overrides: from the last clause to the first, the
+ * first clause that matches decides (a `u` passes, an `l` fails, 0x318A5B1 to 0x318A6A6); no match fails, and a flow with no clause passes.
+ * A clause matches when its objective is complete (IsObjectiveComplete 0x3A48A30: the completion achievement of the row), else: OBJECTIVE
+ * and OBJECTIVE:a when the character has an instance of it (HasObjective 0x3A46DB0), OBJECTIVE:c never, OBJECTIVE:r when the instance is ready
+ * for completion (0x3A48D50: the root is done), OBJECTIVE/TASK and OBJECTIVE/TASK:a when the task element is Active, Complete, or
+ * CompleteActive (0x3A49520, 0x3A49640: states 1, 2, 3), OBJECTIVE/TASK:c when it is Complete or CompleteActive (2, 3). An objective that
+ * the data does not have matches nothing (0x3189DCA).
+ * @param completed `completed(objective)`: the completion achievement of the objective is set for the character.
+ * @param instance_of `instance_of(crc)`: the active instance of the objective of the character, or null.
+ */
+template <class Completed, class InstanceOf>
+bool flow_passes(const gamedata::QuestData& data, const std::vector<gamedata::QuestFlowClause>& clauses, Completed&& completed,
+                 InstanceOf&& instance_of) {
+    if (clauses.empty()) {
+        return true;
+    }
+    for (auto clause = clauses.rbegin(); clause != clauses.rend(); ++clause) {
+        const QuestObjective* objective = data.objective(clause->objective);
+        if (objective == nullptr) {
+            continue;
+        }
+        bool match = completed(*objective);
+        if (!match) {
+            const QuestInstance* quest = instance_of(objective->crc);
+            if (quest != nullptr && clause->task.empty()) {
+                match = clause->modifier == 'a'
+                        || (clause->modifier == 'r' && objective->root < quest->tasks.size() && (quest->tasks[objective->root].state == quest_state::kComplete
+                                                                                            || quest->tasks[objective->root].state == quest_state::kCompleteActive));
+            } else if (quest != nullptr) {
+                const std::string wanted = lower_text(clause->task);
+                for (std::size_t index = 0; index < objective->nodes.size() && index < quest->tasks.size(); ++index) {
+                    if (objective->nodes[index].task == gamedata::kNoTask || lower_text(data.task(objective->nodes[index].task).id) != wanted) {
+                        continue;
+                    }
+                    const std::uint8_t state = quest->tasks[index].state;
+                    const bool complete = state == quest_state::kComplete || state == quest_state::kCompleteActive;
+                    match = clause->modifier == 'c' ? complete : complete || state == quest_state::kActive;
+                    break;
+                }
+            }
+        }
+        if (match) {
+            return clause->unlock;
+        }
+    }
+    return false;
+}
+
+/**
  * The value of an achievement conditional (client 0x31898D0, 0x3A8C640): ids with !, &&, ||, and parentheses. `value(id)` gives the value of
  * one id (no value: the id is malformed, an NPA with a malformed expression). One reader for the quest plans and for the persons (stage
  * 2.5c). Code review of stage 2.5c, finding PR5C-R7: an expression that the reader cannot read to its end (a missing operand, a missing
@@ -448,6 +498,8 @@ struct Quests::Plan {
     /** Stage 1.8e: the points of the Azoth balance of the plan (AzothReward) and the cap of the balance. */
     std::uint64_t azoth{0};
     std::uint64_t azothCap{0};
+    /** Stage QG5b: the categorical progression experience of the plan (a trade skill id of the tables and the experience). */
+    std::vector<std::pair<std::string, std::uint64_t>> progressions;
     /** Stage 1.8d: the repeat rows that the plan writes (a completion of a repeatable objective with a schedule) and removes (a reset). */
     std::vector<state::QuestRepeatRow> repeatWrites;
     std::vector<std::string> repeatDeletes;
@@ -532,13 +584,45 @@ struct Quests::Plan {
             return has_bit(*bit);
         }
         if (const gamedata::QuestNpa* npa = data.npa(id)) {
-            // No rule for a status requirement in stage 1.8a, and none for an ObjectiveFlow (code review of stage QG4, finding QG4R-R2).
-            if (depth >= kNpaDepth || !npa->status.empty() || !npa->flow.empty() || npa->conditional.empty()) {
+            // Stage QG5b (static read A3: the three gates of 0x318A4F0 with AND): the conditional (if any), the ObjectiveFlow (if any) with
+            // the quests of the plan, the status (if any; no rule in the backend: false).
+            if (depth >= kNpaDepth || !npa->status.empty()) {
                 return false;
             }
-            return evaluate_conditional(npa->conditional, [this, depth](const std::string& inner) { return id_value(inner, depth + 1); });
+            if (!npa->conditional.empty()) {
+                const std::optional<bool> gate =
+                    evaluate_conditional(npa->conditional, [this, depth](const std::string& inner) { return id_value(inner, depth + 1); });
+                if (!gate || !*gate) {
+                    return gate;
+                }
+            }
+            return npa->flow.empty() || flow_passes(data, npa->flowClauses, [this](const QuestObjective& objective) { return objective_done(objective); },
+                                                    [this](std::uint32_t crc) { return instance_of_objective(crc); });
         }
         return false;
+    }
+
+    /** Stage QG5b: @return True when the plan has the completion achievement of an objective (IsObjectiveComplete 0x3A48A30). */
+    bool objective_done(const QuestObjective& objective) const {
+        const std::optional<std::uint32_t> bit = objective.achievement.empty() ? std::nullopt : ownership.achievement_bit(objective.achievement);
+        return bit && has_bit(*bit);
+    }
+    /** Stage QG5b: @return The instance of an objective as the plan sees it, or null. */
+    const QuestInstance* instance_of_objective(std::uint32_t crc) const {
+        for (const QuestInstance& quest : entity.quests.active) {
+            if (quest.objectiveCrc == crc) {
+                if (const QuestInstance* seen = peek(quest.instance)) {
+                    return seen;
+                }
+            }
+        }
+        for (const std::uint64_t instance : added) {
+            const QuestInstance* seen = peek(instance);
+            if (seen != nullptr && seen->objectiveCrc == crc) {
+                return seen;
+            }
+        }
+        return nullptr;
     }
 
     bool evaluate(const std::string& conditional) {
@@ -664,6 +748,10 @@ struct Quests::Plan {
             coin += event->coin;
             if (!event->unpaid.empty()) {
                 notes.push_back("the game event " + eventId + " has a reward that the backend cannot pay yet (" + event->unpaid.front() + "): not paid");
+            } else if (!event->progression.empty() && event->progressionAmount > 0) {
+                // Stage QG5b: only the hand-in pays a categorical progression (the success event of an objective).
+                notes.push_back("the game event " + eventId + " has the categorical progression reward " + event->progression
+                                + " (only a hand-in pays it): not paid");
             }
         }
         ++counts.gameEventsApplied;
@@ -1431,7 +1519,7 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     }
     // The territory standing (stage 1.8d): one plan of the skill system (the owner of the categorical progressions).
     std::optional<Skills::Plan> standing;
-    if (!plan.standing.empty() || plan.azoth > 0) {
+    if (!plan.standing.empty() || plan.azoth > 0 || !plan.progressions.empty()) {
         standing = m_world.skills().plan_none(entity.characterId);
         // Stage 1.8e: AzothReward goes into the same plan (the Azoth balance is a categorical progression too); a gain stops at the cap.
         if (plan.azoth > 0) {
@@ -1447,6 +1535,15 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
                 log::write("quests: the standing %llu of the territory %u for character %s cannot be given (%s): no change",
                            static_cast<unsigned long long>(amount), static_cast<unsigned>(territory), entity.characterId.c_str(),
                            progress_error_text(error));
+                return QuestError::cannotPay;
+            }
+        }
+        // Stage QG5b: the categorical progression reward (the AzothStaff rank) in the same plan: the experience rule of the trade skills
+        // (Skills::add_experience: AutoRankUp, the cap of the rank table; at the cap the experience is 0).
+        for (const auto& [id, amount] : plan.progressions) {
+            if (const ProgressError error = m_world.skills().add_experience(*standing, id, amount); error != ProgressError::none) {
+                log::write("quests: the experience %llu of %s for character %s cannot be given (%s): no change",
+                           static_cast<unsigned long long>(amount), id.c_str(), entity.characterId.c_str(), progress_error_text(error));
                 return QuestError::cannotPay;
             }
         }
@@ -1864,11 +1961,27 @@ bool Quests::conditional(const Entity& entity, const std::string& text) const {
         }
         if (m_data != nullptr && m_data->loaded()) {
             if (const gamedata::QuestNpa* npa = m_data->npa(id)) {
-                // No rule for a status requirement, and none for an ObjectiveFlow (finding QG4R-R2): false.
-                if (depth >= kNpaDepth || !npa->status.empty() || !npa->flow.empty() || npa->conditional.empty()) {
+                // Stage QG5b: the three gates of the client (0x318A4F0): the conditional, the ObjectiveFlow with the quests of the character,
+                // the status (no rule: false).
+                if (depth >= kNpaDepth || !npa->status.empty()) {
                     return false;
                 }
-                return evaluate_conditional(npa->conditional, [&](const std::string& inner) { return value(inner, depth + 1); });
+                if (!npa->conditional.empty()) {
+                    const std::optional<bool> gate =
+                        evaluate_conditional(npa->conditional, [&](const std::string& inner) { return value(inner, depth + 1); });
+                    if (!gate || !*gate) {
+                        return gate;
+                    }
+                }
+                return npa->flow.empty()
+                       || flow_passes(
+                           *m_data, npa->flowClauses,
+                           [&](const QuestObjective& objective) {
+                               const std::optional<std::uint32_t> bit =
+                                   objective.achievement.empty() ? std::nullopt : ownership.achievement_bit(objective.achievement);
+                               return bit && std::binary_search(entity.achievements.begin(), entity.achievements.end(), *bit);
+                           },
+                           [&](std::uint32_t crc) { return active_of(entity, crc); });
             }
         }
         return false;
@@ -3244,6 +3357,20 @@ QuestError Quests::reward_join_of(const std::string& characterId, const SkillSet
             join.azothCap = currency->cap;
             join.azothGain = have >= currency->cap ? 0 : std::min(event->azoth, currency->cap - have);
         }
+        // Stage QG5b: CategoricalProgressionReward goes to its progression when the skill system owns it: a trade skill of the progression
+        // tables (AzothStaff of 10 main story events: 1 experience, and each rank of its table needs 1). A faction, an event, or a riding
+        // track that the tables do not have as a trade skill stays refused (their owners are later stages).
+        if (!event->progression.empty() && event->progressionAmount > 0) {
+            const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+            const gamedata::ProgressionRow* row = tables != nullptr && tables->loaded() ? tables->progression(event->progression) : nullptr;
+            if (row == nullptr || row->kind != gamedata::ProgressionKind::tradeSkill) {
+                return refuse(QuestError::cannotPay, "the reward CategoricalProgressionReward " + std::to_string(event->progressionAmount) + " of "
+                                                         + event->id + " names the progression " + event->progression
+                                                         + ", which is not a trade skill of the progression tables (no owner in the backend)");
+            }
+            join.progression = row->id;
+            join.progressionAmount = event->progressionAmount;
+        }
     }
     if (const std::optional<QuestError> error = add_item(objective.itemReward, objective.itemRewardQty, std::nullopt)) {
         return *error;
@@ -3351,6 +3478,11 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
         plan.azothCap = join.azothCap;
         result.azoth = join.azothGain;
     }
+    if (!join.progression.empty()) {
+        plan.progressions.emplace_back(join.progression, join.progressionAmount);
+        result.progression = join.progression;
+        result.progressionAmount = join.progressionAmount;
+    }
     plan.experience += objective->experienceReward;
     result.experience = plan.experience;
     result.coin = plan.coin;
@@ -3403,12 +3535,19 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
     for (const std::string& item : result.items) {
         items += (items.empty() ? "" : ", ") + item;
     }
+    std::string progression;
+    if (!result.progression.empty()) {
+        result.progressionRank = entity.skills.rank(gamedata::progression_id(result.progression));
+        progression = ", " + std::to_string(result.progressionAmount) + " " + result.progression + " experience (rank "
+                      + std::to_string(result.progressionRank) + ")";
+    }
     log::write("quests: character %s handed in %s (instance %016llx): %llu experience, %llu coin units, items [%s], standing %llu of the "
-               "territory %u, Azoth %llu%s%s",
+               "territory %u, Azoth %llu%s%s%s",
                entity.characterId.c_str(), objective->id.c_str(), static_cast<unsigned long long>(instance),
                static_cast<unsigned long long>(result.experience), static_cast<unsigned long long>(result.coin), items.c_str(),
                static_cast<unsigned long long>(result.standing), static_cast<unsigned>(result.standingTerritory),
-               static_cast<unsigned long long>(result.azoth), result.next.empty() ? "" : ", next objective ", result.next.c_str());
+               static_cast<unsigned long long>(result.azoth), progression.c_str(), result.next.empty() ? "" : ", next objective ",
+               result.next.c_str());
     return result;
 }
 

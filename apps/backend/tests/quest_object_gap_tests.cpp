@@ -15,6 +15,12 @@
 //         requirement conditional of the interaction data
 //   QG5E  the manifest: the item of a chest task has the source "the quest drop of the chests of TAG" when an ordinary chest is in the
 //         point of interest of its tag, and no source for a tag with no chest; the event of a proximity object has a producer
+//
+// The cases of the code review of stage QG5a (in stage QG5b; the findings: evidence/quests/qg5a/code-review/FINDINGS.md):
+//   QGR5A1  QG5AR-R2: A stands in the sphere of a trail with an accepted position and no task; the task activates while A stands there;
+//           accepted reports with the same position find the object (no new coordinate); B gets no entry (MP-10)
+//   QGR5A2  QG5AR-R2: a task of two finds; A finds the trail, stays in the sphere, and the object respawns: an accepted report with the
+//           same position finds it again (the progress 2)
 
 #include <sqlite3.h>
 
@@ -293,6 +299,66 @@ void manifest(const Options&) {
           "the event of a proximity object has a producer (a proximity quest object)");
 }
 
+json review_trail_quests(unsigned target) {
+    json document = questfix::quest_document();
+    document["tasks"]["qgr5_trail"] = questfix::task("QgR5_Trail", "taskgameevent", 14,
+                                                     {{"KillEnemyType", kTrailEvent}, {"InteractTag", kTrailTag}, {"TargetQty", std::to_string(target)}});
+    document["tasks"]["qgr5_wait"] = questfix::task("QgR5_Wait", "taskachievement", 18, {{"ItemName", "Test_Never"}});
+    document["tasks"]["qgr5_root"] = questfix::task("QgR5_Root", "simpletaskcontainer", 0);
+    document["objectives"].push_back({{"id", "QgR5_TrailQuest"}, {"cells", {{"Type", "Journey"}}},
+                                      {"tree", json::array({json::array({0, "qgr5_trail", json::array()}), json::array({1, "qgr5_wait", json::array()}),
+                                                            json::array({2, "qgr5_root", json::array({0, 1})})})}});
+    return document;
+}
+
+// Code review of stage QG5a, finding QG5AR-R2 (the case QG5ARV1 of the review): a task that activates while the character stands in the sphere.
+void review_stationary_activation(const Options&) {
+    questperson::QuestShop shop;
+    check(shop.host.quests.load_text(review_trail_quests(1).dump()) && shop.host.questObjects.load_text(proximity_objects().dump()),
+          "setup: the quest and the sphere load");
+    shop.enter();
+    world::Entity& a = *shop.entity(kCharacterA);
+    world::Entity& b = *shop.entity(kCharacterB);
+    shop.walk(kCharacterA, {100.0F, 201.5F, 30.0F});
+    check(!a.positionEstimated && a.questObjects.empty(), "setup: A has an accepted position in the sphere and no task");
+    check(shop.host.world.quests().grant(a, "QgR5_TrailQuest", "command", 0).ok(), "setup: the task activates while A stands in the sphere");
+    for (int report = 0; report < 4; ++report) {
+        shop.walk(kCharacterA, a.position);
+    }
+    const world::QuestInstance* quest = questfix::quest_of(a, "QgR5_TrailQuest");
+    note("QGR5A1: progress " + std::to_string(quest != nullptr ? quest->tasks[0].progress : 0) + ", finds "
+         + std::to_string(shop.host.world.quest_objects().counts().proximityFound));
+    check(quest != nullptr && quest->tasks[0].progress == 1, "accepted reports with the same position find the object of the new task");
+    check(b.questObjects.empty(), "B gets no entry (MP-10)");
+}
+
+// Code review of stage QG5a, finding QG5AR-R2 (the case QG5ARV2 of the review): an object that respawns while the character stands in it.
+void review_stationary_respawn(const Options&) {
+    questperson::QuestShop shop;
+    json objects = proximity_objects();
+    objects["rows"][0]["respawn"] = {2.0, 2.0};
+    check(shop.host.quests.load_text(review_trail_quests(2).dump()) && shop.host.questObjects.load_text(objects.dump()),
+          "setup: a task of two finds and a respawn of 2 s");
+    shop.enter();
+    world::Entity& a = *shop.entity(kCharacterA);
+    check(shop.host.world.quests().grant(a, "QgR5_TrailQuest", "command", 0).ok(), "setup: A has the task");
+    shop.walk(kCharacterA, {100.0F, 201.5F, 30.0F});
+    check(questfix::quest_of(a, "QgR5_TrailQuest")->tasks[0].progress == 1 && !a.questObjects.empty(), "setup: the first find");
+    for (int second = 0; second < 5; ++second) {
+        shop.report(shop.clientA, std::nullopt);
+        shop.report(shop.clientB, std::nullopt);
+        shop.host.advance(std::chrono::seconds(1));
+        shop.host.steps(1, {&shop.clientA, &shop.clientB});
+        shop.walk(kCharacterA, a.position);
+    }
+    const world::QuestInstance* quest = questfix::quest_of(a, "QgR5_TrailQuest");
+    note("QGR5A2: progress " + std::to_string(quest != nullptr ? quest->tasks[0].progress : 0) + ", respawns "
+         + std::to_string(shop.host.world.quest_objects().counts().respawns));
+    check(shop.host.world.quest_objects().counts().respawns >= 1, "setup: the object respawned");
+    check(quest != nullptr && quest->tasks[0].progress == 2, "an accepted report with the same position finds the respawned object");
+    check(shop.entity(kCharacterB)->questObjects.empty(), "B gets no entry (MP-10)");
+}
+
 } // namespace
 
 std::vector<Case> quest_object_gap_cases() {
@@ -300,7 +366,9 @@ std::vector<Case> quest_object_gap_cases() {
             {"QG5B", "quests QG5a (I1): one transaction of the open of a chest and the quest award", chest_drop_transaction},
             {"QG5C", "quests QG5a (I2, MP-10): the proximity objects: the sphere, the task, the LootTracker of A only, the respawn", proximity_objects_case},
             {"QG5D", "quests QG5a: the loaders of the members proximity, children, and conditional", loaders},
-            {"QG5E", "quests QG5a (I1, I2): the manifest: the chest source of an item, the producer of a proximity event", manifest}};
+            {"QG5E", "quests QG5a (I1, I2): the manifest: the chest source of an item, the producer of a proximity event", manifest},
+            {"QGR5A1", "review of QG5a (QG5AR-R2, MP-10): a task that activates while the character stands in the sphere", review_stationary_activation},
+            {"QGR5A2", "review of QG5a (QG5AR-R2): an object that respawns while the character stands in its sphere", review_stationary_respawn}};
 }
 
 } // namespace soulwarden::backend::tests

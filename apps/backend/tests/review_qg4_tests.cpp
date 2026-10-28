@@ -4,7 +4,8 @@
 //   QGR4A1  QG4R-R1: a perk edit of an equipped artifact (the slot keeps the action ItemEquipped of its equip) is no equip: after an
 //           abandon of the artifact quest the edit grants nothing; a new equip of the item (unequip, equip) grants it again (control);
 //           the other character gets nothing (MP-10)
-//   QGR4A2  QG4R-R2: a non-persisted achievement with an ObjectiveFlow is false, also when it has a bit conditional that is true (its
+//   QGR4A2  QG4R-R2 (stage QG5b: the flow has its rule, QG5BA): a non-persisted achievement with an ObjectiveFlow whose clauses match
+//           nothing (the character has no instance of the objective) is false, also when it has a bit conditional that is true (its
 //           gate does not go); an NPA with only a bit conditional keeps its rule (control); the presence of a person with such a
 //           condition: no character sees it
 //   QGR4A3  QG4R-R3: a trigger box whose center is far outside the coordinates of the grid (1e30 m: the span of its cells looks like one
@@ -64,9 +65,9 @@ void objective_flow_is_false(const Options&) {
     check(shop.host.world.ownership().unlock_achievement(*a, "Test_Swap_Pirate", kSwapPirateBit), "setup: A has the bit of the conditional");
     const bool both = shop.quests().conditional(*a, "*Review_Both");
     note("QGR4A2 the NPA with a bit conditional and an ObjectiveFlow: " + std::to_string(both));
-    check(!both, "an NPA with an ObjectiveFlow is false also when its bit conditional is true (its gate does not go)");
+    check(!both, "an NPA with an ObjectiveFlow that matches nothing is false also when its bit conditional is true (the gates with AND)");
     check(!shop.quests().conditional(*a, "*Review_Flow") && !shop.quests().conditional(*b, "*Review_Flow"),
-          "an NPA with only an ObjectiveFlow is false for each character");
+          "an NPA with only an ObjectiveFlow that matches nothing is false for each character");
     check(shop.quests().conditional(*a, "*Review_Bit") && !shop.quests().conditional(*b, "*Review_Bit"),
           "control: an NPA with only a bit conditional keeps its rule (A has the bit, B does not)");
     gamedata::PersonBinding binding = *shop.host.interactions.objects()[1].person;

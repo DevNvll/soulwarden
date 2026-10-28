@@ -7441,6 +7441,66 @@ component of the entity of each action. A blank cell of the row: not proved (no 
 **RequireControllingFaction** [static: the gatherable loader 0x440D2A0 reads it with the flag converter 0x5BF6BC0 at 0x440DC07, as
 IsLootContainer (0x440E41C) and ResetGatherTimeOnEndInteraction (0x440E3D4)]: a flag; the cell "0" of 557 rows is no rule.
 
+### 4.61 The ObjectiveFlow of a non-persisted achievement, the restriction ItemRequired, the categorical progression reward of a success event, the quest gimmicks (live proof of stage QG5b; static proof for the client code and the game data; no removal of the item of a gather, the trade skills that a reward pays, and the form of a quest gimmick are project rules)
+
+Research: the static reads of stage QG5b (`~/Games/soulwarden/work/evidence/quests/qg5b/implement/static/A/ANSWERS.md` and
+`static/B/ANSWERS.md`), the live run of stage QG5b (`~/Games/soulwarden/work/evidence/quests/qg5b/implement/RESULT.md`). The addresses are
+image-relative (client build 1.400.6031.6004151). No new message or state: the backend uses the Objectives state (4.53), the bag, the
+categorical progression state (type 911, slot 65), and the LootTracker state (4.41).
+
+**ObjectiveFlow** [static: the NPA loader 0x43B5510 reads the column at 0x43B57F3 and calls the parser 0x43BD930 at 0x43B5827; the split at
+"," 0x43BDBBF; the prefix 0x43BDF9F, only `u` (0x833DEB4) and `l` (0x833DEB8) (0x43BDFCC to 0x43BE049), another prefix leaves the clause out
+(0x43BE66E); "/" and ":" split the objective, the task, and the modifier; the ids are CRC-32 of the lower case text (0x12F4730); a record of
+12 bytes: +0 unlock (u 1, l 0), +1 modifier, +4 the objective hash, +8 the task hash or 0 (0x43BDF75, 0x43BE5FC); the objective modifiers
+a 0, c 1, r 2 (0x43BD9DD), the task modifiers a 0, c 1 (0x43BDB6C); the evaluator 0x318A4F0 with the clause matcher 0x3189DA0 through
+ObjectivesComponentRequestBus (table 0x8256158): each clause first calls IsObjectiveComplete (slot +0x20, 0x3A48A30: the completion
+achievement of the row +0x28); else OBJECTIVE and OBJECTIVE:a HasObjective (0x3A46DB0), OBJECTIVE:c false, OBJECTIVE:r
+IsObjectiveReadyForCompletion (0x3A48D50), OBJECTIVE/TASK and :a the task complete (+0x370, 0x3A49640: states 2, 3) or active (+0x368,
+0x3A49520: states 1, 3), OBJECTIVE/TASK:c the task complete; the clauses from the last to the first, the first match decides (0x318A5B1 to
+0x318A618): a `u` passes, an `l` fails (0x318A6A0); no match fails; no clause passes; the three gates of an NPA with AND: the conditional
+(0x318A533 to 0x318A582), the flow, the status (0x318A6EE to 0x318A734); a starred NPA id in any achievement conditional (the token scanner
+0x3A8AEB0, the hash 0x3A8AF47, the NPA path 0x318D5E0 by the tag 0x5E1621EB); the presence of a person child: the swap controller callback
+0x33737C0 calls 0x3369430, and the refresh-all path 0x316EBE0 to 0x31882D0 broadcasts a changed NPA; the event that starts it at a quest
+change is not found]. Live I1: at the cage of `NPC_18007` (Nighthaven) the cage is empty with no Quest_18018 (`shots/I1-01-before-cage.png`)
+and the caged Cecilia shows after the grant of Quest_18018 (`shots/I1-04-after-grant-side.png`): the client applies the clause
+`u:Quest_18018` of `*SwapActive_18007_Cecilia` from its own Objectives state; the server rule gives the same presence ("not there", then
+"there").
+
+**ItemRequired** [static: the gatherable loader 0x440D2A0 reads ItemRestrictionQuantity at 0x440D9D2 (the integer converter 0x5BF6D50; a
+blank cell is 0) and ItemRestrictionId at 0x440D9F4 (CRC 0x12F4730; the descriptor +0x10 item, +0x14 quantity: 0x440DA25 to 0x440DA34);
+the restriction enum NoToolNecessary 1, ToolRequired 2, ItemRequired 4 (0x337A333, 0x337A348, 0x337A372); the gather validation 0x35C26E0:
+the early branch for 1 and 3 (0x35C2A18), the tool branch for 2 (0x35C2BDD), the item branch for 4 (0x35C2C8E): the ContainerComponent
+(UUID {91B8850B-3BDF-1D1F-16BB-4B7CB8DDC4E1}) method +0x68 (0x48D63E0) with the quantity, then 0x48D6200: the sum of the stacks of the
+slots of the container at least the quantity (no paperdoll, no storage); 0 accepts (0x48D626D); the item and the count of the prompt:
+`gatheringtooladditionalinfo.luac` (RefreshHasRequiredItem, IsRestrictionMet); a removal path of the item: not found]. Live I2: the client
+sends no gather with no Blossoming Flower in the bag (the prompt "1/1 Blossoming Flower" stays); after the flower comes back and a new
+focus of the object (a walk out and back), the gather of the Altar of the Departed runs 3 s and completes `08a04_08a04_d_03_TaskGameEvent_shrine`
+(`shots/I2-01-altar-no-flower.png`, `shots/I2-05d-altar-again.png`, `shots/I2-06-altar-after.png`); the flower stays in the bag.
+
+**The categorical progression reward of a success event** [static: the event loader 0x31E70B0 reads CategoricalProgressionId at
+0x31E8126 (its hash at 0x31E8154, row +0x40) and CategoricalProgressionReward at 0x31E8182 (the integer converter 0x5BF6D50, row +0x3C);
+the receiver of the state 911 0x3CB7170 (ids u32, ranks u16, points u64), the progression map 0x3CC0D50, GetRank 0x3CB6330; the id of
+AzothStaff is the CRC-32 of the lower case text 0xC92581E4; a rank change dispatches the notification 0x3CC12E2 (OnCategoricalProgression
+RankChanged 0x53C5E27); AzothStaff has ShowAsObjectiveReward false (+0xAA, 0x3CA5DB9); the grant path of the original server and the value
+of the global progression modifier (0x3CB6BC0) are not found]. The backend adds the reward as experience of the trade skill (the rank table
+AzothStaff: 1 for each rank) in the plan of the hand-in, and the state 911 of the character goes to its owner. Live I3: the hand-in of
+`99G_MSQ_SM_PrepareWarfare` at Father Russo: the reward notice (+12,000 XP, coin, +100 Azoth, the Azoth Staff, the legwear; no rank line,
+`shots/I3-08-russo-sheet.png`), the log "1 AzothStaff experience (rank 5)"; before it the glyph of rank 5 shows "E UNSEAL ANCIENT GLYPH" and
+the server refuses the gather (rank 4 of 5, `shots/I3-05-glyph-rank4.png`); after it the gather runs (`shots/I3-10-glyph-unseal.png`,
+`shots/I3-11-glyph-after.png`).
+
+**A quest gimmick** [static: the cannon slice has its GatherOption (action 14) on its Healthy state and a server timeline of the shot
+(`timelines/gimmicks/cannon_destruction/gimmick_breakingwallscannon_01.timeline`: the fuse, the muzzle flash, the projectile, the debris);
+static read B5]: the gather of Gimmick_BreakingWallsCannon_Vignette (2 s) completes `12A_MSQ_08_DestroyRune_UseCannon` (live I4,
+`videos/I4-cannon-fire.mp4`, `videos/I4-cannon-fire-sheet.png`: the ring of the work, then the task; the shot does not play: the backend runs
+no timeline).
+
+**Action 82** (InteractTeleporter, InteractWereravenLift; not done) [static: the client handler 0x4062020 of the
+InteractTeleportComponentClientFacet (vtable 0x82FBDA0) compares the action 0x52 at 0x4062046, writes the loading screen category
+(0x40620F9 to 0x4062175), and calls a bus method (0x40621C8 to 0x40621F7); the option rows give action 82, not committed; the input block
+is the ordinary interaction block (writer 0x35E67E0); the teleport answer of the server and a gather of the row at action 82: not found].
+The shrine of `99D_MSQ_07_PortalFight` and the lift of `Quest_16008` stay out (a teleport handler of a later stage).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

@@ -148,8 +148,8 @@ std::string blank_item(const std::string& kind) {
 }
 
 /**
- * Stage QG5a: the trade skills of a gather (their ranks rise with the gathers: the manifest takes their rank gates as reachable). A rank gate of
- * another trade skill (AzothStaff) has no source in a history.
+ * Stage QG5a: the trade skills of a gather (their ranks rise with the gathers: the manifest takes their rank gates as reachable). Stage QG5b: a
+ * rank gate of another trade skill (AzothStaff) needs the rank in the history (the categorical progression reward of its hand-ins).
  */
 constexpr std::array<const char*, 4> kGatheringSkills{"Mining", "Logging", "Harvesting", "Skinning"};
 
@@ -344,6 +344,17 @@ struct QuestSupport::Index {
      */
     std::unordered_map<std::string, std::string> refusedEvents;
     /**
+     * Stage QG5b: the game events whose gatherable rows of the world need a rank of a trade skill that only a hand-in gives (AzothStaff: the
+     * categorical progression reward of 10 main story events): the skill and the smallest rank of these rows (lower case event id).
+     */
+    std::unordered_map<std::string, std::pair<std::string, std::uint32_t>> rankEvents;
+    /**
+     * Stage QG5b: the item (lower case) of the restriction ItemRequired of the gatherable rows of a game event (a row with an item and a
+     * count above 0), and the events with a row of no item need (lower case event id).
+     */
+    std::unordered_map<std::string, std::string> gatherEventItems;
+    std::unordered_set<std::string> gatherEventsFree;
+    /**
      * Stage QG5a: the tags of the points of interest of the ordinary chests (each tag, and each tag with the territory of its point of interest),
      * for the quest drops of a chest (ChestDropProbability; Quests::plan_chest_drops); `anyChest` with no tag.
      */
@@ -381,6 +392,12 @@ struct TaskFact {
     std::string supplier;
     /** Stage 1.8f (finding QR8E-R5): the item (lower case) of a task that only a quest gives: the history must have it. Empty: none. */
     std::string questItem;
+    /**
+     * Stage QG5b: the rank of a trade skill that the producer of the game event of the task needs (a gatherable row with a rank gate of a
+     * skill that only a hand-in gives: AzothStaff): the history must have it. An empty skill: none.
+     */
+    std::string rankSkill;
+    std::uint32_t rankLevel{0};
 };
 
 /** The evaluation of one objective row (no history). */
@@ -573,16 +590,22 @@ void QuestSupport::build() {
             }
             const gamedata::GatherableRow& gatherable = gathering->rows()[row];
             // Stage QG5a: only a row that the backend gathers is a source (Gathering::begin): no refusal cause of the row, and a rank gate of
-            // a trade skill whose ranks a history can reach. The gathering trade skills rise with the gathers; another one (AzothStaff of the
-            // glyph locks: its ranks come only from the ProgressionReward of 11 game events, which the backend does not pay) gives no rank
-            // [agent: the manifest does not model the ranks of the gathering skills].
+            // a trade skill whose ranks a history can reach. The gathering trade skills rise with the gathers [agent: the manifest does not
+            // model the ranks of the gathering skills]. Stage QG5b: the ranks of another trade skill (AzothStaff of the glyph locks) come from
+            // the categorical progression reward of a hand-in: the history must have the rank (TaskFact::rankSkill).
             std::string cause;
             if (!gatherable.unsupported.empty()) {
                 cause = "its gatherable row " + gatherable.id + " is refused (" + gatherable.unsupported.front() + ")";
             } else if (gatherable.level > 0 && !gatherable.tradeskill.empty()
                        && std::find(kGatheringSkills.begin(), kGatheringSkills.end(), gatherable.tradeskill) == kGatheringSkills.end()) {
-                cause = "its gatherable row " + gatherable.id + " needs the rank " + std::to_string(gatherable.level) + " of the trade skill "
-                        + gatherable.tradeskill + " (no source of its ranks in the backend: ProgressionReward has no owner)";
+                if (!gatherable.event.empty()) {
+                    const auto [entry, made] = index.rankEvents.emplace(lower_text(gatherable.event),
+                                                                        std::make_pair(gatherable.tradeskill, gatherable.level));
+                    if (!made && entry->second.first == gatherable.tradeskill) {
+                        entry->second.second = std::min(entry->second.second, gatherable.level);
+                    }
+                }
+                return;
             }
             if (!cause.empty()) {
                 if (!gatherable.event.empty()) {
@@ -593,6 +616,12 @@ void QuestSupport::build() {
             index.gatherRows.insert(lower_text(gatherable.id));
             if (!gatherable.event.empty()) {
                 index.gatherEvents.emplace(lower_text(gatherable.event), kind);
+                // Stage QG5b: the item of the restriction ItemRequired (Gathering::check_gates: the bag needs it; 0 needs nothing).
+                if (gatherable.restriction == gamedata::kRestrictionItemRequired && !gatherable.item.empty() && gatherable.itemCount > 0) {
+                    index.gatherEventItems.emplace(lower_text(gatherable.event), lower_text(gatherable.item));
+                } else {
+                    index.gatherEventsFree.insert(lower_text(gatherable.event));
+                }
             }
             if (options.lootTables != nullptr && !gatherable.loot.empty()) {
                 roots.emplace_back(gatherable.loot, std::string("the loot of ") + kind + " (" + gatherable.id + ")");
@@ -1073,9 +1102,16 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                     found = gather->second + " (" + target + ")";
                 }
             }
+            // Stage QG5b: a gather with the rank gate of a trade skill that a hand-in gives (AzothStaff): the history must have the rank.
+            const auto ranked = task.targets.empty() || !found.empty() ? index.rankEvents.end() : index.rankEvents.find(task.targets.front());
             if (task.targets.empty()) {
                 // Stage QG2a: a pin or a map task of the data (PinTask, Dummy_WorldPin): no event, it never completes.
                 block("the task names no game event: a pin or a map task of the data (it never completes)");
+            } else if (ranked != index.rankEvents.end()) {
+                fact.supplier = "a gather with the rank " + std::to_string(ranked->second.second) + " of the trade skill " + ranked->second.first
+                                + " (" + task.targets.front() + ")";
+                fact.rankSkill = ranked->second.first;
+                fact.rankLevel = ranked->second.second;
             } else if (found.empty()) {
                 const auto refused = index.refusedEvents.find(task.targets.front());
                 block("no producer of the game event " + task.targets.front()
@@ -1083,6 +1119,23 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                                                               : std::string(" (no creature, gatherable, or destructible object of the data gives it)")));
             } else {
                 fact.supplier = found;
+                // Stage QG5b: a gather with the restriction ItemRequired needs its item in the bag: a source of the world, or a quest give
+                // (the history must have it).
+                const std::string event = task.targets.front();
+                const auto needed = index.gatherEvents.count(event) != 0 && index.gatherEventsFree.count(event) == 0
+                                        ? index.gatherEventItems.find(event)
+                                        : index.gatherEventItems.end();
+                if (needed != index.gatherEventItems.end()) {
+                    if (index.items.count(needed->second) != 0) {
+                        fact.supplier += " with the item " + needed->second + " of a source of the world";
+                    } else if (index.questItems.count(needed->second) != 0) {
+                        fact.supplier += " with the item " + needed->second + " of a quest (the history decides)";
+                        fact.questItem = needed->second;
+                    } else {
+                        block("the gather of the game event " + event + " needs the item " + needed->second
+                              + " (the restriction ItemRequired), and no supported source gives it");
+                    }
+                }
             }
             break;
         }
@@ -1311,6 +1364,7 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                           {"items", items},
                           {"standing", join.standing},
                           {"azoth", join.azoth},
+                          {"progression", join.progression.empty() ? std::string{} : join.progression + " " + std::to_string(join.progressionAmount)},
                           {"next", join.next != nullptr ? join.next->id : ""},
                           {"repeat", repeat_text(data, objective)}};
     if (!row.rewards) {
@@ -1410,7 +1464,31 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
     }
     history.items.clear();
     history.items.insert(profile.items.begin(), profile.items.end());
-    const auto sync = [&]() { history.scratch.achievements.assign(history.bits.begin(), history.bits.end()); };
+    // The rules of the engine (Quests::Plan::activate) in the run below: the state of each node of a tree that runs.
+    enum class Node : std::uint8_t { inactive, active, done };
+    // Stage QG5b: the trees that run now and the states of their nodes, for the ObjectiveFlow of an NPA (Quests::conditional reads the
+    // instances of the character: HasObjective and the task states). Each running tree is an instance of the scratch entity.
+    std::vector<std::pair<std::uint32_t, const std::vector<Node>*>> runningStates;
+    const auto quests_now = [&]() {
+        history.scratch.quests.active.clear();
+        for (const auto& [objectiveAt, nodes] : runningStates) {
+            QuestInstance quest;
+            quest.instance = objectiveAt + 1;
+            quest.objective = objectives[objectiveAt].id;
+            quest.objectiveCrc = objectives[objectiveAt].crc;
+            quest.tasks.resize(nodes->size());
+            for (std::size_t node = 0; node < nodes->size(); ++node) {
+                quest.tasks[node].state = (*nodes)[node] == Node::done     ? quest_state::kComplete
+                                          : (*nodes)[node] == Node::active ? quest_state::kActive
+                                                                           : quest_state::kNew;
+            }
+            history.scratch.quests.active.push_back(std::move(quest));
+        }
+    };
+    const auto sync = [&]() {
+        history.scratch.achievements.assign(history.bits.begin(), history.bits.end());
+        quests_now();
+    };
     std::set<std::string> starts;
     for (const std::string& start : profile.starts) {
         starts.insert(lower_text(start));
@@ -1439,6 +1517,7 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
             return "the hand-in: the NPC " + objective.destination + " has no person slot in the interaction data";
         }
         history.scratch.achievements.assign(bits.begin(), bits.end());
+        quests_now();
         for (const gamedata::InteractionObject* object : slots->second) {
             if (object->person->unresolved.empty() && persons.present(history.scratch, *object->person)) {
                 const gamedata::PoiData* pois = m_world.options().poiData;
@@ -1483,14 +1562,28 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         // or a partial container each child; an achievement action runs at its activation and completes; a partial container completes
         // with its first done child. The player does each supported task of the world (a place, a kill, a gather, a cutscene, a timer) when
         // it is Active; an achievement wait completes when its conditional is true (with a lore page that the player reads then).
-        enum class Node : std::uint8_t { inactive, active, done };
         std::vector<Node> state(objective.nodes.size(), Node::inactive);
+        runningStates.emplace_back(at, &state);
+        struct LeaveStates {
+            std::vector<std::pair<std::uint32_t, const std::vector<Node>*>>& states;
+            ~LeaveStates() {
+                states.pop_back();
+            }
+        } leaveStates{runningStates};
         std::vector<bool> supported(objective.nodes.size(), true);
         std::vector<std::string> needs(objective.nodes.size());
+        std::vector<const TaskFact*> ranks(objective.nodes.size(), nullptr);
         for (const TaskFact& item : fact.tasks) {
             supported[item.index] = item.supported;
             needs[item.index] = item.questItem;
+            if (!item.rankSkill.empty()) {
+                ranks[item.index] = &item;
+            }
         }
+        // Stage QG5b: the rank of the history for the rank gate of a producer (TaskFact::rankSkill).
+        const auto rank_below = [&](std::uint8_t node) {
+            return ranks[node] != nullptr && skills.rank(gamedata::progression_id(ranks[node]->rankSkill)) < ranks[node]->rankLevel;
+        };
         std::string stop;
         std::function<void(std::uint8_t)> activate;
         std::function<void(std::uint8_t)> complete;
@@ -1630,6 +1723,7 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                 }
                 if (task.type == task_type::kAchievement) {
                     history.scratch.achievements.assign(bits.begin(), bits.end());
+                    quests_now();
                     if (quests.conditional(history.scratch, task.itemName)) {
                         complete(node);
                         progress = true;
@@ -1645,6 +1739,7 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                         }
                     }
                     history.scratch.achievements.assign(withPages.begin(), withPages.end());
+                    quests_now();
                     if (page && quests.conditional(history.scratch, task.itemName)) {
                         bits = std::move(withPages);
                         complete(node);
@@ -1655,6 +1750,9 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                 if (supported[node] && task.type != task_type::kObjective) {
                     if (!needs[node].empty() && !has_item(needs[node])) {
                         continue; // Only a quest gives the item, and the history does not have it (finding QR8E-R5).
+                    }
+                    if (rank_below(node)) {
+                        continue; // Stage QG5b: the history does not have the rank of the producer (AzothStaff).
                     }
                     // Stage QG2a: TaskHaveLevel of the level of the character: the level of the history (Quests::Plan::predicate).
                     if (task.type == task_type::kHaveLevel
@@ -1693,7 +1791,9 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                                         + std::to_string(task.targetQty.value_or(0))
                               : reason != fact.tasks.end() && !reason->reason.empty() ? reason->reason
                               : !needs[node].empty() ? "the history has no " + needs[node] + " (only a quest gives it: " + reason->supplier + ")"
-                                                     : std::string("no step completes it"));
+                              : rank_below(node) ? "the history has the rank " + std::to_string(skills.rank(gamedata::progression_id(ranks[node]->rankSkill)))
+                                                       + " of " + ranks[node]->rankSkill + ", and " + reason->supplier + " needs it"
+                                                 : std::string("no step completes it"));
                 }
             }
             return "the root task does not complete";
@@ -1715,6 +1815,14 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
             Skills::Plan plan;
             plan.skills = skills;
             if (m_world.skills().add_standing(plan, join.standingTerritory, join.standing) == ProgressError::none) {
+                skills = plan.skills;
+            }
+        }
+        // Stage QG5b: the categorical progression reward (the AzothStaff rank of the main story) goes into the skills of the history.
+        if (!join.progression.empty()) {
+            Skills::Plan plan;
+            plan.skills = skills;
+            if (m_world.skills().add_experience(plan, join.progression, join.progressionAmount) == ProgressError::none) {
                 skills = plan.skills;
             }
         }

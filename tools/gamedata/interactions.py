@@ -74,7 +74,9 @@ member "person":
   NPC of its slice ("template" true); the mode of a swap person is the state child above its NPC entity (presence_rule; the client shows
   the child Depleted for a true conditional and Healthy for a false one), also for a direct person; "personsApart" lists each person that
   is not an object with its cause (APART_CAUSES): a placement of another world, a dungeon level script, a nested spawner, a spawner with
-  no init, an alias, a taken id.
+  no init, an alias, a taken id. Stage QG5b: a presence that names an NPA with an ObjectiveFlow is resolved (the backend has the rule of
+  the flow; the count personsObjectiveFlow), and a required achievement of a slice that is an expression is requires.conditional (the
+  count sliceConditional; code review of stage QG5a, finding QG5AR-R1).
 What the file does not have, with the count of each cause in "excluded" (a later stage reads them):
   - The other children of a PrefabSpawner (a trading post, a building), a person child with m_spawnOnInitialize false (the client does
     not make it), and the second slot of a client id that an earlier person slot has: a later stage.
@@ -656,8 +658,8 @@ def read_variation_tables(sources: Sources) -> dict[str, dict[str, dict]]:
 def read_flow_npas(sources: Sources) -> set[str]:
     """@return The ids (lower case) of the non-persisted achievements (NPAData) with an ObjectiveFlow (code review of stage QG4, finding
     QG4R-R2): the rule of the quest state of the NPA (`u:Quest_18018,l:Quest_18018/Quest_18018_Task_5:c`; client: loader 0x43B57F3, parser
-    0x43B5827, evaluator 0x318A5F0). The backend has no rule for it yet: such an NPA is false, and a presence rule that names it is not
-    resolved."""
+    0x43B5827, evaluator 0x318A5F0). Stage QG5b: the backend has the rule of the flow; the tool counts the presence rules that name such an
+    NPA (personsObjectiveFlow)."""
     ids: set[str] = set()
     for path in sources.paths(TABLES_FOLDER, ".datasheet"):
         if "achievement" not in path.rsplit("/", 1)[-1]:
@@ -1379,6 +1381,12 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 unresolved_texts.append(f"lore {bound['lore']}")
             else:
                 lore = index
+        # Code review of stage QG5a, finding QG5AR-R1: a requirement of the slice (m_requiredAchievementOverride) that is an expression
+        # (!, &&, ||, parentheses) is a conditional of the client (0x35C2E60 through 0x2ED8BB0), as the one of a variation: the member
+        # "conditional", not one achievement id.
+        if "achievement" in requires and re.search(r"[!&|()\s]", requires["achievement"]):
+            requires["conditional"] = requires.pop("achievement")
+            counts["sliceConditional"] = counts.get("sliceConditional", 0) + 1
         if "achievement" in requires:
             index = achievement(requires["achievement"], what)
             if index is None:
@@ -1438,11 +1446,11 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 binding["unresolved"] = f"the row of the variant {variant!r} has no NPCId"
                 return binding
             presence, cause = presence_rule(slice_path, template, row)
-        # Code review of stage QG4, finding QG4R-R2: a condition that names an NPA with an ObjectiveFlow has no rule of the backend (the
-        # persons of Nighthaven: `*SwapActive_18007_Cecilia`). The binding stays unresolved with that cause.
+        # Code review of stage QG4, finding QG4R-R2: a condition that names an NPA with an ObjectiveFlow (the persons of Nighthaven:
+        # `*SwapActive_18007_Cecilia`) was unresolved. Stage QG5b: the backend has the rule of the flow (Quests::conditional, the clauses of
+        # the client evaluator 0x318A4F0): the binding is resolved; the count stays.
         flows = [word for word in condition_ids(presence["condition"]) if word.lower() in flow_npas] if presence is not None else []
         if not cause and flows:
-            cause = f"the presence condition names the NPA {flows[0]} with an ObjectiveFlow (no rule of the backend for it)"
             counts["personsObjectiveFlow"] += 1
         if cause:
             binding["unresolved"] = cause

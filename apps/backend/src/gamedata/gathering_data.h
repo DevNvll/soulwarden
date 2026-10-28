@@ -57,16 +57,20 @@ enum class GatheringType : std::uint8_t {
  */
 [[nodiscard]] std::uint32_t tool_slot(GatheringType type);
 
+/** The restriction of a row that needs an item in the bag (GatherableData Restriction; the client enum value 4, 0x337A372). */
+inline constexpr std::string_view kRestrictionItemRequired = "ItemRequired";
+
 /** A gatherable row (GatherableData of the game). */
 struct GatherableRow {
     std::string id;
     std::string table;
     GatheringType type{GatheringType::none};
-    /** Restriction: NoToolNecessary, ToolRequired, or ItemRequired with no item (an other value is in `unsupported`). */
+    /** Restriction: NoToolNecessary, ToolRequired, or ItemRequired (an other value is in `unsupported`). */
     std::string restriction;
     /**
-     * ItemRestrictionId and ItemRestrictionQuantity: the item that the restriction ItemRequired names (empty: no item). The loader keeps
-     * them and refuses a row with an item (code review of stage 3.6a, finding GA-R5: the backend has no rule of the client for an item).
+     * ItemRestrictionId and ItemRestrictionQuantity: the item that the restriction ItemRequired names (empty: no item). Code review of stage
+     * 3.6a, finding GA-R5: the loader refused a row with an item. Stage QG5b: the gather checks the item in the bag (Gathering::check_gates,
+     * the rule of the client: at least `itemCount`; 0 needs nothing) and does not take it.
      */
     std::string item;
     std::uint32_t itemCount{0};

@@ -253,6 +253,11 @@ public:
      * rules of add_experience, and no write: the craft job writes the rows in its transaction (write) and finishes the plan after the commit.
      */
     [[nodiscard]] Plan plan_experience(const std::string& characterId, std::string_view id, std::uint64_t amount);
+    /**
+     * Stage QG5b: adds a gain of experience of a weapon mastery or a trade skill to a plan (the rules of add_experience; the categorical
+     * progression reward of a hand-in: the AzothStaff rank). No write.
+     */
+    [[nodiscard]] ProgressError add_experience(Plan& plan, std::string_view id, std::uint64_t amount) const;
     /** @return A plan of a character with no change (stage 3.7c: a craft job with a cost of Azoth and no experience adds its balance). */
     [[nodiscard]] Plan plan_none(const std::string& characterId);
     /**

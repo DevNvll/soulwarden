@@ -26,7 +26,10 @@ Stage QG5a adds (research quest-gaps.md section 4; the census of evidence/quests
      The server finds a character in the sphere (the client sends nothing: its handler of 5078 only sets a value of the HUD; static read
      ANSWERS.md B3).
   5. The direct destructible objects: a GatherableController with m_isDamageableGatherable, no variation table, and a gatherable row
-     (quest_instanced_damageable_monarchs_crate of 12A_MSQ_13_StormBeach).
+     (quest_instanced_damageable_monarchs_crate of 12A_MSQ_13_StormBeach). Stage QG5b: the row of a direct destructible object has the
+     form of a destructible quest row (the loot table Empty or blank and a GameEventID that a quest task names; no IsLootContainer: the
+     crate row is Kicking), and
+     the object has the m_interactTagString and the m_interactOnlyOnQuest of the one Interact component of its slice.
   6. The children: a PrefabSpawner of a placed slice that the client makes at the init (m_isClientAuthoratative false, m_spawnOnInitialize
      true) with a slice of 1, 4, or 5: its key "UUID/ENTITY" of the spawner, its place (the placement times the transform of the spawner
      entity), its variant (m_sliceVariant, else the slice), and the client id of a child of a level placement (interactions.py
@@ -65,8 +68,8 @@ from appearance_tables import Failure, field_id  # noqa: E402
 from creature_data import CATALOG_PATH, REGIONS_FOLDER, Catalog, Sources  # noqa: E402
 from gathering import (CONTROLLER_CLASS, DAMAGEABLE_TABLES, ENTRY_FIELD, PROXIMITY_TABLES, SELECTED_FIELD, SLOT_FIELD,  # noqa: E402
                        TABLE_FIELD, WANTED, Tables, quest_form, row_entry, slice_path_of)
-from interactions import (IDENTITY, SPAWNER_CLASS, Template, actor_of, child_groups, multiply, placement_matrix, walk,  # noqa: E402
-                          yaw_of)
+from interactions import (IDENTITY, INTERACT_CLASS, ONLY_ON_QUEST, SPAWNER_CLASS, TAG, Template, actor_of, child_groups,  # noqa: E402
+                          multiply, placement_matrix, walk, yaw_of)
 from slice_ids import find_field  # noqa: E402
 
 OUTPUT_NAME = "quest-objects.json"
@@ -81,6 +84,14 @@ SPHERE_RADIUS_FIELD = field_id("m_Radius")
 def flag_in(element, name: int) -> bool:
     """@return True when a field of the name in the element (any depth: a field of the server facet) has a value that is not 0."""
     return any(node.name == name and node.value is not None and any(node.value) for node in walk(element))
+
+
+def destructible_form(cells: dict, task_events: set[str]) -> bool:
+    """@return True for the row of a direct destructible quest object (stage QG5b): the loot table Empty or blank (no roll) and a GameEventID
+    that a quest task names (gathering.Tables.task_events; the gongs of a world event are no quest objects). A destructible row is no loot
+    container (the crate MB_MSQ2_Crate_interact is Kicking with WaitForImpact)."""
+    return (cells.get("FinalLootTable", "").strip() in ("", "Empty")
+            and cells.get("GameEventID", "").strip().lower() in task_events)
 
 
 def slice_facts(sources: Sources, path: str, cache: dict) -> dict | None:
@@ -98,9 +109,15 @@ def slice_facts(sources: Sources, path: str, cache: dict) -> dict | None:
     controllers = []
     tables = []
     selected = []
+    interacts = []
     sphere = None
     for root in sources.stream(path) or []:
         for element in walk(root):
+            if element.type_id == INTERACT_CLASS:
+                # Stage QG5b: the tag and the flag of the Interact component (the quest gate of a direct object).
+                tag = find_field(element, TAG)
+                interacts.append({"tag": tag.value.decode("utf-8", "replace").rstrip("\0").strip() if tag is not None and tag.value else "",
+                                  "onlyOnQuest": flag_in(element, ONLY_ON_QUEST)})
             if element.type_id == CONTROLLER_CLASS:
                 slot = find_field(element, SLOT_FIELD)
                 entry = find_field(element, ENTRY_FIELD)
@@ -126,8 +143,10 @@ def slice_facts(sources: Sources, path: str, cache: dict) -> dict | None:
         kind = "proximity"
     else:
         return None
+    interact = interacts[0] if len(interacts) == 1 else {"tag": "", "onlyOnQuest": False}
     cache[path] = {"slot": controller["slot"], "table": table, "kind": kind, "entry": controller["entry"],
-                   "selected": selected[0] if selected else "", "sphere": sphere}
+                   "selected": selected[0] if selected else "", "sphere": sphere, "tag": interact["tag"],
+                   "onlyOnQuest": interact["onlyOnQuest"]}
     return cache[path]
 
 
@@ -182,10 +201,16 @@ def build(sources: Sources) -> dict:
             if facts["entry"].lower() not in tables.rows:
                 counts["directNoRow"] = counts.get("directNoRow", 0) + 1
                 return
-            if not quest_form(tables.rows[facts["entry"].lower()][1], f"the direct gatherable row {facts['entry']}"):
+            cells = tables.rows[facts["entry"].lower()][1]
+            destructible = facts["kind"] == "destructible" and destructible_form(cells, tables.task_events)
+            if not destructible and not quest_form(cells, f"the direct gatherable row {facts['entry']}"):
                 counts["directNotQuest"] = counts.get("directNotQuest", 0) + 1
                 return
             gatherable, tag, only_on_quest, radius = facts["entry"], "", False, facts["sphere"] or 0.0
+            if destructible:
+                # Stage QG5b: the tag and the flag of the Interact component of the slice (the crate: IO_MB_MSQ2_Crate_interact, true).
+                tag, only_on_quest = facts["tag"], facts["onlyOnQuest"]
+                counts["directDestructible"] = counts.get("directDestructible", 0) + 1
             counts["direct"] = counts.get("direct", 0) + 1
         if gatherable.lower() not in tables.rows:
             # A variation row of the data names a gatherable row that no table has (99A_IsabellaWhisper_02 of the build): no object.

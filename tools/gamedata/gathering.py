@@ -10,7 +10,9 @@ The sources (all in the pak files of the game copy; research gathering-stage.md 
   1. The gatherable rows: each table of the type GatherableData (Gatherables, QuestGatherables, GatherablesDunwood,
      GatherablesCatacombs, Gatherables_IsleOfNight). A row has the gathering type (the tool family), the restriction, the trade skill
      and its rank gate, BaseGatherTime (the work amount), the respawn bounds, the loot root (FinalLootTable), the game event (the
-     trade skill experience), and the flags. The first row of an id in the byte order of the paths is the row.
+     trade skill experience), and the flags. The first row of an id in the byte order of the paths is the row. Stage QG5b: the
+     restriction ItemRequired with an item is supported (the backend checks ItemRestrictionQuantity of the item in the bag); the
+     KillEnemyType cells of the task tables (ObjectiveTasks) name the events of the quest tasks (a direct quest gimmick: task_event_form).
   2. The variation rows: the variation table of a gathering slice (m_variationTableUniqueName of its VariationDataComponent) has a
      row for each variant (VariantID) with its gatherable row (GatherableEntryID).
   3. The gathering slices: a slice with a GatherableController component (class 0b382af4-...; m_replicationIndex: the slot of the
@@ -131,6 +133,8 @@ RANK_TYPE = "TradeskillRankData"
 EVENT_TYPE = "GameEventData"
 ITEM_TYPE = "MasterItemDefinitions"
 WEAPON_TYPE = "WeaponItemDefinitions"
+# Stage QG5b: the task tables of the quests (their KillEnemyType names the game event of a task: the rule of a direct quest gimmick).
+TASK_TYPE = "ObjectiveTasks"
 GATHERING_SKILLS = ("Mining", "Logging", "Harvesting", "Skinning")
 GATHER_OPTION = "GatherOption"
 CONTROLLER_CLASS = uuid.UUID("0b382af4-7946-4698-9223-206d1187b612")
@@ -187,7 +191,7 @@ FLAG_TEXTS = {"": False, "0": False, "1": True, "false": False, "true": True}
 # The columns of a game event of a gatherable row (finding GA-R4: a missing reward column is not an experience of 0).
 EVENT_COLUMNS = ("EventID", "CategoricalProgressionId", "CategoricalProgressionReward")
 SUPPORTED_RESTRICTIONS = ("NoToolNecessary", "ToolRequired")
-# The restriction of an item: supported only when the row names no item (nothing to check).
+# The restriction of an item (stage QG5b: the backend checks the item in the bag; before, only a row with no item was supported).
 ITEM_RESTRICTION = "ItemRequired"
 # The gathering types of the four tools (GatheringTypes of the weapon rows; the paperdoll slots 33 to 36 of protocol notes 4.11). A row of
 # a different type (AzothStaff: an encounter of a later stage; fishing: stage 3.6b) is refused.
@@ -262,15 +266,24 @@ class Tables:
         self.events: dict[str, list] = {}
         self.items: dict[str, dict] = {}
         self.weapons: dict[str, dict] = {}
+        # Stage QG5b: the game events (lower case) that a quest task names (KillEnemyType of the task tables).
+        self.task_events: set[str] = set()
         found = set()
         for path in sources.paths(TABLES_FOLDER, ".datasheet"):
             data = sources.read(path)
             if data is None:
                 continue
             kind = sheet_type(data)
-            if kind not in (GATHERABLE_TYPE, VARIATION_TYPE, RANK_TYPE, EVENT_TYPE, ITEM_TYPE, WEAPON_TYPE):
+            if kind not in (GATHERABLE_TYPE, VARIATION_TYPE, RANK_TYPE, EVENT_TYPE, ITEM_TYPE, WEAPON_TYPE, TASK_TYPE):
                 continue
             sheet = Sheet(data)
+            if kind == TASK_TYPE:
+                if "KillEnemyType" in sheet.columns:
+                    for row in range(sheet.row_count):
+                        for event in str(sheet.cell(row, "KillEnemyType")).split(","):
+                            if event.strip():
+                                self.task_events.add(event.strip().lower())
+                continue
             found.add(kind)
             if kind == GATHERABLE_TYPE:
                 self._gatherables(sheet, path)
@@ -395,6 +408,14 @@ def quest_form(cells: dict, what: str) -> bool:
             and bool(cells.get("GameEventID", "").strip()))
 
 
+def task_event_form(cells: dict, task_events: set[str]) -> bool:
+    """@return True for a gatherable row of a quest gimmick (stage QG5b, the direct bindings): the loot table Empty or blank, no tool
+    (GatheringType None or blank), and a GameEventID that a quest task names (the cannon Gimmick_BreakingWallsCannon_Vignette of
+    12A_MSQ_08_DestroyRune: Handcrafting, the event IO_Gimmick_BreakingWallsCannon_interact). Its result is the event of the task."""
+    return (cells.get("FinalLootTable", "").strip() in ("", "Empty") and cells.get("GatheringType", "").strip() in ("", "None")
+            and cells.get("GameEventID", "").strip().lower() in task_events)
+
+
 def row_entry(identifier: str, table: str, cells: dict) -> dict:
     """@return A gatherable row of the file. A value with a wrong form stops the tool."""
     what = f"the gatherable row {identifier}"
@@ -416,8 +437,9 @@ def row_entry(identifier: str, table: str, cells: dict) -> dict:
     item = cells.get("ItemRestrictionId", "").strip()
     unsupported = []
     # ItemRequired with no item names nothing to check (BushSmall, BushWithered of the game data): the client shows the prompt and sends
-    # the request (the stage run of 3.6a). With an item it needs a rule of the items: refused.
-    if restriction not in SUPPORTED_RESTRICTIONS and not (restriction == ITEM_RESTRICTION and not item):
+    # the request (the stage run of 3.6a). Stage QG5b: with an item the gather checks ItemRestrictionQuantity of the item in the bag (the
+    # client: 0x35C2C8E and the Container check 0x48D6200; a blank or 0 quantity needs nothing): the backend has the rule.
+    if restriction not in SUPPORTED_RESTRICTIONS and restriction != ITEM_RESTRICTION:
         unsupported.append(f"the restriction {restriction or '(none)'}")
     for column, cause in UNSUPPORTED_COLUMNS:
         if cells.get(column, "").strip() and cause not in unsupported:
@@ -777,14 +799,20 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
             return None
         # A direct binding (stage QG5a): a gathering slice with no variation table names its gatherable row itself. Its row is a quest
         # object when it has the form of a row of the quest tables (quest_form: a loot container with the loot table Empty or blank and a
-        # game event; its result is the quest drops and its game event); its tag and InteractOnlyOnQuest are the ones of its own GatherOption
-        # bound. A different direct row (a body of a creature, a door with no event, a hazard, a fishing spot) is no quest object.
+        # game event; its result is the quest drops and its game event), or (stage QG5b) the form of a quest gimmick (task_event_form: no
+        # tool, no loot, and an event that a quest task names); its tag and InteractOnlyOnQuest are the ones of its own GatherOption bound.
+        # A different direct row (a body of a creature, a door with no event, a hazard, a fishing spot) is no quest object.
         if identifier.lower() not in tables.rows:
             counts["directNoRow"] = counts.get("directNoRow", 0) + 1
             return None
-        if not quest_form(tables.rows[identifier.lower()][1], f"the direct gatherable row {identifier}"):
+        cells = tables.rows[identifier.lower()][1]
+        gimmick = not quest_form(cells, f"the direct gatherable row {identifier}") and task_event_form(cells, tables.task_events)
+        if not gimmick and not quest_form(cells, f"the direct gatherable row {identifier}"):
             counts["directNotQuest"] = counts.get("directNotQuest", 0) + 1
             return None
+        if gimmick:
+            # Stage QG5b: a quest gimmick (the cannon): a direct row whose game event a quest task names [agent: the result is the event].
+            counts["directGimmick"] = counts.get("directGimmick", 0) + 1
         row = row_of(identifier, f"{what}: the direct gatherable row")
         rows[row]["quest"] = True
         rows[row]["unsupported"] = [cause for cause in rows[row]["unsupported"] if cause != LOOT_CONTAINER_CAUSE]

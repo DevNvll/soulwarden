@@ -116,6 +116,47 @@ std::uint32_t quest_crc(std::string_view text) {
     return server::hub::crc32(std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(lower.data()), lower.size()));
 }
 
+std::vector<QuestFlowClause> parse_objective_flow(const std::string& text) {
+    // The client parser 0x43BD930 (static read A1 of stage QG5b): the split at "," (0x43BDBBF), the prefix before the first ":" (0x43BDF9F;
+    // only "u" and "l", 0x833DEB4 and 0x833DEB8; another prefix leaves the clause out, 0x43BE66E), then OBJECTIVE, "/TASK", ":MODIFIER".
+    // The objective modifiers are a, c, r (0x43BD9DD); the task modifiers a and c (0x43BDB6C); no modifier and an unknown modifier keep the
+    // flag of a (0x43BE551).
+    std::vector<QuestFlowClause> clauses;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = std::min(text.find(',', start), text.size());
+        const std::string part = trimmed(text.substr(start, end - start));
+        start = end + 1;
+        const std::size_t colon = part.find(':');
+        if (colon == std::string::npos) {
+            continue;
+        }
+        const std::string prefix = lower_text(trimmed(part.substr(0, colon)));
+        if (prefix != "u" && prefix != "l") {
+            continue;
+        }
+        QuestFlowClause clause;
+        clause.unlock = prefix == "u";
+        std::string target = part.substr(colon + 1);
+        std::string modifier;
+        if (const std::size_t second = target.find(':'); second != std::string::npos) {
+            modifier = lower_text(trimmed(target.substr(second + 1)));
+            target = target.substr(0, second);
+        }
+        if (const std::size_t slash = target.find('/'); slash != std::string::npos) {
+            clause.objective = trimmed(target.substr(0, slash));
+            clause.task = trimmed(target.substr(slash + 1));
+        } else {
+            clause.objective = trimmed(target);
+        }
+        if (modifier == "c" || (modifier == "r" && clause.task.empty())) {
+            clause.modifier = modifier[0];
+        }
+        clauses.push_back(std::move(clause));
+    }
+    return clauses;
+}
+
 bool QuestData::fail(std::string cause) {
     *this = QuestData{};
     m_error = std::move(cause);
@@ -392,6 +433,7 @@ bool QuestData::load_text(const std::string& text) {
                 npa.conditional = row[1].get<std::string>();
                 if (row.size() >= 3 && row[2].is_string()) {
                     npa.flow = trimmed(row[2].get<std::string>()); // Finding QG4R-R2.
+                    npa.flowClauses = parse_objective_flow(npa.flow);
                 }
                 if (row.size() >= 4 && row[3].is_string()) {
                     npa.status = row[3].get<std::string>();

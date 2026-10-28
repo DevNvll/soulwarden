@@ -555,6 +555,8 @@ public:
                                         std::vector<std::uint32_t>* taken);
     /** @return The quantity of an item id (any case) in the bag and in the paperdoll of a character (stage 1.8c: a possession task). */
     [[nodiscard]] static std::uint64_t count(const Entity& entity, std::string_view itemId);
+    /** Stage QG5b: @return The quantity of an item id (any case) in the slots of the bag only (the item restriction of a gather). */
+    [[nodiscard]] static std::uint64_t bag_count(const Entity& entity, std::string_view itemId);
     /** @return True when an item of the paperdoll has this id (any case) and a gear score of `minGearScore` or more (TaskEquipItem). */
     [[nodiscard]] static bool equipped(const Entity& entity, std::string_view itemId, std::uint32_t minGearScore);
     /** @return True for an item that the catalog marks as a quest item (Nonremovable: the quest items of the data have it). */

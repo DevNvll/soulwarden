@@ -182,6 +182,8 @@ WorldCommand quest_rewards(const std::string& character, const Arguments& argume
                                     {"standingTerritory", join.standingTerritory},
                                     {"azoth", join.azoth},
                                     {"azothGain", join.azothGain},
+                                    {"progression", join.progression},
+                                    {"progressionAmount", join.progressionAmount},
                                     {"next", join.next != nullptr ? join.next->id : ""},
                                     {"repeat", join.schedule == gamedata::ScheduleKind::none ? "none"
                                                : join.schedule == gamedata::ScheduleKind::hourly ? "hourly"

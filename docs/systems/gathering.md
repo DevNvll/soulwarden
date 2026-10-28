@@ -45,14 +45,21 @@ The source of each rule is in brackets: game data, client code, live check (the 
 - The capacity of a bound (MaxInteractors) does not apply to GatherResource (action 14) [client code 0x35C2E60: the capacity check at
   0x35C3858 skips the action]. Two characters can work on one node.
 - The restriction ItemRequired with no item (the rows BushSmall and BushWithered) names nothing to check: the backend accepts it as a
-  row with no tool [game data; the stage run: the client shows the prompt "E BUSH" of a small bush and sends the request]. With an
-  item it is refused (below).
+  row with no tool [game data; the stage run: the client shows the prompt "E BUSH" of a small bush and sends the request].
+- Stage QG5b: the restriction ItemRequired with an item [client: the gather validation 0x35C26E0 takes only the restriction 4 to its item
+  branch 0x35C2C8E, the Container check 0x48D6200; static read B1, B2 of stage QG5b; live I2]: the bag must have ItemRestrictionQuantity
+  of ItemRestrictionId (the sum of the stacks of the bag slots; no paperdoll, no storage); a blank or 0 quantity needs nothing
+  (0x48D626D: 1435_0101_HerbSpot, 1602_0301_Forge). NoToolNecessary and ToolRequired with an item (1104_MedallionChest,
+  95_s01_03_HeroesPoster1) do not check it (0x35C2A18). The begin and the completion check it (`check_gates`, the refusal `missingItem`;
+  the key that goes during the work ends the work with no result). The gather does not take the item [agent: no removal path in the client,
+  static read B4; the data does not decide; a decision for the user]. 28 rows of the build are supported now. Case QG5BB.
 - A gatherable row that the backend cannot check is refused [decision of an agent: no predicate]: a restriction that is not
-  `NoToolNecessary` or `ToolRequired` (an item, a key), a song, a whisper, an emote, a status effect, a faction, a cost,
+  `NoToolNecessary`, `ToolRequired`, or (stage QG5b) `ItemRequired`, a song, a whisper, an emote, a status effect, a faction, a cost,
   `IsLootContainer`, `OpenAfterGathering`, `RequireLootItems`, `IsFFARestricted`, more than one gatherer, and a gathering type that is
   not a tool type of this stage (AzothStaff, fishing). The tool writes the causes of each row; the first one is in the log line.
 - The loader checks the mark "supported" (no cause) against the gates of the row [code review of stage 3.6a, finding GA-R5]: a row with
-  no cause and the restriction ItemRequired with an item (or with no member `item`: a file of before), a restriction that is not
+  no cause and the restriction ItemRequired with no member `item` (a file of before the review; stage QG5b: an item is a gate of the
+  gather, no cause), a restriction that is not
   `NoToolNecessary`, `ToolRequired`, or `ItemRequired`, or more than one gatherer gets a cause of the loader ("... (the file marks the row
   supported)"), and each gather of it is refused. The row keeps its item and its count (`GatherableRow::item`, `itemCount`). A member
   `item` that is not a text, or a count that is not a whole number of 0 to 1,000,000, refuses the file. ItemRequired with an empty item
@@ -189,7 +196,10 @@ The source of each rule is in brackets: game data, client code, live check (the 
     slices/gatherables/ [agent: no change of the ordinary gathering];
   - a direct binding (a gathering slice with no variation table) is a quest object when its row has the form of a row of the quest tables:
     a loot container with the loot table Empty or blank and a GameEventID (`quest_form`); its tag and InteractOnlyOnQuest are the ones of
-    its own GatherOption bound [agent];
+    its own GatherOption bound [agent]. Stage QG5b: also a quest gimmick (`task_event_form`): no tool (GatheringType None), the loot table
+    Empty or blank, and a GameEventID that a quest task names (KillEnemyType of the task tables, `Tables.task_events`) [agent: the form of
+    the rows; the cannon Gimmick_BreakingWallsCannon_Vignette (Handcrafting, 2 s) of 12A_MSQ_08_DestroyRune, 6 placements; live I4 of stage
+    QG5b: the gather completes the task, and the shot of the server timeline of the slice does not play];
   - a quest child of a PrefabSpawner of a placement (not client-authoritative, made at the init) is the member `children` of the file, with
     the key "UUID/ENTITY" of its object of the interaction data [agent: the key of the person children];
   - the gathering type AzothStaff is a tool type: the Azoth Staff in the paperdoll slot 38 [client 0x5CAB873, the tool query 0x48FF240], the
@@ -214,8 +224,12 @@ The admin interface has the member `gathering` of the state of a character (the 
 
 ## Traps
 
-- Stage QG5a: a glyph lock needs the Azoth Staff in slot 38 and the rank 5 of the trade skill AzothStaff. The backend pays no
-  ProgressionReward (the source of these ranks): give the rank with `tools/world tradeskill CHARACTER AzothStaff 5` for a test.
+- Stage QG5a: a glyph lock needs the Azoth Staff in slot 38 and the rank 5 of the trade skill AzothStaff. Stage QG5b: the hand-ins of the
+  main story give the ranks (the categorical progression reward, [Quests](quests.md)); for a test `tools/world tradeskill CHARACTER
+  AzothStaff 5` gives the rank at once.
+- Stage QG5b: the client checks the item of ItemRequired itself and sends no request with no item (live I2). After the item comes into the
+  bag, the client sends the gather only after a new focus of the object: walk out of its range and back (a turn of the camera is not
+  enough). Read the log line "gathers the capital node" of the request.
 - Stage QG5a: a gathering file of before stage QG5a refuses the quest rows with RequireControllingFaction "0" ("a faction"): write the file
   again with `tools/gamedata/gathering.sh`.
 

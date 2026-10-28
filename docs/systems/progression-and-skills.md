@@ -99,6 +99,16 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   and `Skills::balance` reads them. A craft takes the Azoth of its perk upgrade and of its currency ingredients in the transaction of each
   job. The command `set_currency` (the tool window, `tools/world azoth`) sets it. Stage 1.8e ([Quests](quests.md)): the AzothReward of a
   quest (with AzothRewardChance 1) adds to it in the skills plan of the hand-in; a gain stops at the cap.
+- The categorical progression reward of a quest (stage QG5b, [Quests](quests.md)) [client: the event loader 0x31E70B0, the id at row +0x40
+  and the integer reward at row +0x3C; data: CategoricalProgressionId and CategoricalProgressionReward of the success event; the rank
+  table AzothStaff: 1 experience for each rank 0 to 4, rank 5 the largest]: when the id is a trade skill of the progression tables
+  (AzothStaff, Riding, Fishing, the gathering and crafting skills), the hand-in adds the reward as its experience in the skills plan of the
+  hand-in (`Skills::add_experience(Plan&, ...)`: the rules of `add_experience`: AutoRankUp, the cap of the row, the experience 0 at the
+  largest rank); the categorical state (911, slot 65) of the character goes to the owner. The ranks of AzothStaff (the gate of the glyph
+  locks) come from the hand-ins of 5 main story quests (`99A_MSQ_11_ForgeStaff`, `99B_MSQ_10_cleansefort`, `99C_MSQ_12_Vector`,
+  `99E_MSQ_09_TheMotherwell`, `99G_MSQ_SM_PrepareWarfare`; the data has 5 more events with this reward that no objective of the build names). The id on the wire is the CRC-32
+  of the lower case text (AzothStaff: 0xC92581E4, static read A7 of stage QG5b). The global progression modifier of the row
+  (UsesGlobalProgressionMod) is not applied [agent: its value is not found]. A faction or an event progression stays refused (later stages).
 - The territory standing (stage 1.8d, [Quests](quests.md)) [data: the rows of the territories in CategoricalProgressionData, the rank
   table `Territory_Standing`; live I0 of stage 1.8d]: the standing of a territory is the entry of the categorical progression whose
   name is the territory number ("6": CRC-32 `1DB87A14`) in the state 911, with its rank and its points in the rank (MaximumInfluence

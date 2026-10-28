@@ -44,13 +44,21 @@ struct QuestGameEvent {
      * and the journal show the amount with no chance; a project rule of the orchestrator: the hand-in pays what the client shows).
      */
     std::uint64_t azoth{0};
+    /**
+     * Stage QG5b: CategoricalProgressionId and CategoricalProgressionReward: the experience of a categorical progression (the AzothStaff rank
+     * of 10 main story success events: reward 1, and the rank table AzothStaff has 1 experience for each rank). The reader keeps the id and the
+     * amount; the payer decides the owner (Quests::reward_join: a trade skill of the progression tables; a faction or an event progression is
+     * refused). An empty id: none.
+     */
+    std::string progression;
+    std::uint64_t progressionAmount{0};
     /** AchievementId: an achievement of the event. */
     std::string achievement;
     /** WhisperId or WhisperID: the whisper of the event (166 of 170 TaskTriggerGameEvent rows name an event with one). */
     std::string whisper;
     /**
      * The rewards of the event that the backend cannot pay yet (stage 1.8d and later: FactionReputation, FactionTokens, a categorical
-     * progression, the other currencies, an entitlement, a status effect, a TerritoryStanding, a GearScoreRange, or a CurrencyReward that is
+     * progression reward with no id or with an amount that is not a whole number of 0 to 1e9, the other currencies, an entitlement, a status effect, a TerritoryStanding, a GearScoreRange, or a CurrencyReward that is
      * not a whole number, a negative AzothReward, a loot limit of LootTags or LootLimitId): "COLUMN VALUE" for each cell with a value that
      * is not 0.
      */

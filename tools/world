@@ -770,6 +770,9 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             print(f"  item {item['quantity']} x {item['item']}{extra}")
         if document["standing"]:
             print(f"  standing {document['standing']} of the territory {document['standingTerritory']}")
+        if document.get("progression"):
+            # Stage QG5b: the categorical progression reward of the success event (a trade skill: the AzothStaff rank).
+            print(f"  {document['progressionAmount']} experience of the trade skill {document['progression']}")
         achievements = document["achievements"] + ([document["completionAchievement"]] if document["completionAchievement"] else [])
         print(f"  achievements {', '.join(achievements) or '-'}; next objective {document['next'] or '-'}; repeat {document['repeat']}")
     elif isinstance(document, dict) and "items" in document:

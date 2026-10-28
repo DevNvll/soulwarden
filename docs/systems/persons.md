@@ -101,7 +101,7 @@ the stage (with the cause), [review] a finding of the code review of stage 2.5c 
   system checks the same rule at the key E with the bits of the character (`Quests::conditional`): a person that is not there for the
   character gives the verdict `notPresent` (3743 result 2) [agent: the client of that character does not show it]. Live A2: with the bit
   the person goes for the client, and without it the person comes back (`A2-02-bit-off-return.mp4`).
-- A change of the bits of a character with a person conversation: the next tick checks its person again; when the person is not there for
+- A change of the bits of a character with a person conversation (stage QG5b: or of its Objectives state): the next tick checks its person again; when the person is not there for
   that character any more, its use ends (3746) and its service grant ends. The persons of the other characters do not change (no shared
   state) [rule MP-2; agent]. A topic request that finds the person not there (before that tick) ends the use and the grant in the same
   way (`Persons::lost_presence`) [review PR5C-R2; case QRP2].
@@ -209,11 +209,14 @@ the stage (with the cause), [review] a finding of the code review of stage 2.5c 
   requests: the same 20,000 lookups and 32,000 state visits, 0.06 s and 0.05 s.
 
 - Code review of stage QG4, finding QG4R-R2 (in stage QG5a): a presence condition that names a non-persisted achievement with an
-  ObjectiveFlow (the quest state rule of the NPA: `*SwapActive_18007_Cecilia` is `u:Quest_18018,l:Quest_18018/Quest_18018_Task_5:c`; client:
-  loader 0x43B57F3, parser 0x43B5827, evaluator 0x318A5F0) is not resolved: the binding has the cause "the presence condition names the NPA
-  ... with an ObjectiveFlow" (211 persons of Nighthaven, all `showWhen`; `personsObjectiveFlow`), and the backend refuses its use. The
-  backend has no rule for an ObjectiveFlow: such an NPA is false, also when it has a bit conditional (its gate does not go). Before the
-  correction these persons were never there either (the NPA was false); the manifest counted their slots. Cases QGR4A2, NC1 (`person-flow`).
+  ObjectiveFlow (the quest state rule of the NPA: `*SwapActive_18007_Cecilia` is `u:Quest_18018,l:Quest_18018/Quest_18018_Task_5:c`) was not
+  resolved in stage QG5a. Stage QG5b [client: the evaluator 0x318A4F0, the clause matcher 0x3189DA0; static read A of stage QG5b; live I1]:
+  the backend has the rule of the flow ([Quests](quests.md), the rules of stage QG5b: the last matching clause decides; HasObjective, the task
+  states, the objective completion), and the tool resolves these bindings (211 persons of Nighthaven, all `showWhen`; the count
+  `personsObjectiveFlow` stays). The presence is the rule of the client for its own character: the caged Cecilia is there while the
+  character has Quest_18018 and its task 5 is not Complete, for that character only (MP-10). A change of the Objectives state of a character
+  with a person conversation checks the presence of its person at the next tick, as a change of its bits (`World::touch`) [agent: the
+  refresh event of the client (static read A4) is not found]. Cases QG5BA, QGR4A2, NC1 (`person-flow`).
 
 ## Commands
 
@@ -267,3 +270,6 @@ tools/world persons NAME [METERS]                  # the person conversation of 
 - Stage QG4: the presence of a person child is the rule of the client, also for a direct person with a swap controller: a direct person
   that was always there before stage QG4 can be gone for a character now (21 direct persons, for example `1225_Giacomo_*` while
   `SwapActive_1225_GiacomoStart_Off` is set). Compare `tools/world persons` with the screen.
+- Stage QG5b: a person with a flow presence can be there with no topic for the state of the character (the caged Cecilia of
+  `Quest_18018_Task_19`): the client shows no prompt then. The live check of the presence is the picture and `tools/world persons`
+  ("there"), not a conversation.

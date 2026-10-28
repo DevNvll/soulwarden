@@ -601,6 +601,11 @@ class PersonSources(MadeUpSources):
                  "person-two-controllers": PERSON_CAGE_ASSET, "person-nested": PERSON_HOLDER_ASSET}.get(mode, PERSON_CHILD_ASSET)
         self.slices[PERSON_SPAWNER_SLICE] = person_spawner_slice(child, variant, mode == "person-client", mode != "person-not-init")
         self.slices[PERSON_CHILD_SLICE] = person_child_slice(bound_actions=mode == "person-variation")
+        if mode == "person-slice-expression":
+            # Code review of stage QG5a, finding QG5AR-R1: the required achievement of the Interact component of the slice is an expression.
+            for component in tool.walk(self.slices[PERSON_CHILD_SLICE][0]):
+                if component.type_id == tool.INTERACT_CLASS:
+                    component.children.append(text("m_requiredAchievementOverride", "!Lore_unlock_00_Test_Title_01"))
         self.slices[PERSON_UNKNOWN_SLICE] = person_child_slice(state=6)
         self.slices[PERSON_DIRECT_SLICE] = person_child_slice(swap=False, npc_key="Test_Direct_Npc")
         self.slices[PERSON_TEMPLATE_SLICE] = person_child_slice(swap=False, npc_key="Test_Template_Npc", variation_table=False)
@@ -653,7 +658,10 @@ PERSON_CASES = [
     ("person-nested", "stage QG4: a person below a nested PrefabSpawner: no object, in personsApart (nested)"),
     ("person-level-script", "stage QG4: a person of a dungeon level script: in personsApart (levelScript)"),
     ("person-other-world", "stage QG4: a person of a placement of another world: in personsApart (otherWorld, its world)"),
-    ("person-flow", "review of QG4 (QG4R-R2): a presence condition that names an NPA with an ObjectiveFlow: a binding with that cause"),
+    ("person-flow", "review of QG4 (QG4R-R2), stage QG5b: a presence condition that names an NPA with an ObjectiveFlow: a resolved binding"
+                    " (the backend has the rule of the flow), counted in personsObjectiveFlow"),
+    ("person-slice-expression", "review of QG5a (QG5AR-R1): a required achievement of the slice that is an expression: the member "
+                                "conditional of the bound, not an unresolved id"),
     ("person-variation", "stage QG5a: the variation of the slice sets the tag, InteractOnlyOnQuest, and the conditional of the bound"),
 ]
 
@@ -708,8 +716,11 @@ def check_person(mode: str, document: dict) -> bool:
         return (bound.get("tag") == "IO_Test_Person" and bound.get("requires") == {"onlyOnQuest": True, "conditional": "Test_A || Test_B"}
                 and document["counts"].get("variationTags") == 1 and document["counts"].get("variationConditional") == 1)
     if mode == "person-flow":
-        return ("ObjectiveFlow" in binding.get("unresolved", "") and "*Test_Flow" in binding.get("unresolved", "") and "presence" not in binding
-                and document["counts"]["personsUnresolved"] == 1 and document["counts"].get("personsObjectiveFlow") == 1)
+        return ("unresolved" not in binding and binding.get("presence") == {"mode": "hideWhen", "condition": "*Test_Flow"}
+                and document["counts"]["personsUnresolved"] == 0 and document["counts"].get("personsObjectiveFlow") == 1)
+    if mode == "person-slice-expression":
+        requires = person["bounds"][0]["requires"]
+        return requires == {"conditional": "!Lore_unlock_00_Test_Title_01"} and document["counts"].get("sliceConditional") == 1
     bound = person["bounds"][0]
     k = PERSON_ROOT ^ expected
     target = ((PERSON_INTERACT_ENTITY ^ k) + PERSON_INTERACT) & 0xFFFFFFFFFFFFFFFF

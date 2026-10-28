@@ -38,6 +38,10 @@ std::string unpaid_reward(const gamedata::QuestGameEvent& event) {
     if (event.standing > 0) {
         return "TerritoryStanding " + std::to_string(event.standing);
     }
+    // Stage QG5b: only the hand-in of a quest pays a categorical progression (Award_SeasonalAzothStaffBox: AzothStaff 5 stays refused).
+    if (!event.progression.empty() && event.progressionAmount > 0) {
+        return "CategoricalProgressionReward " + std::to_string(event.progressionAmount) + " (" + event.progression + ")";
+    }
     if (!event.achievement.empty()) {
         return "AchievementId " + event.achievement;
     }

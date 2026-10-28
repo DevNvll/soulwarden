@@ -230,6 +230,10 @@ struct HandInResult {
     std::uint16_t standingTerritory{0};
     /** Stage 1.8e: the points of the Azoth balance that the hand-in gave (after the cap of the balance). */
     std::uint64_t azoth{0};
+    /** Stage QG5b: the categorical progression of the success event (a trade skill: AzothStaff), its experience, and its rank after it. */
+    std::string progression;
+    std::uint64_t progressionAmount{0};
+    std::uint32_t progressionRank{0};
     /** Stage 1.8d: the reset of a repeatable objective (Unix nanoseconds of the world clock; 0: no repeat). */
     std::uint64_t resetNs{0};
     [[nodiscard]] bool ok() const {
@@ -270,6 +274,13 @@ struct RewardJoin {
     std::uint64_t azoth{0};
     std::uint64_t azothGain{0};
     std::uint64_t azothCap{0};
+    /**
+     * Stage QG5b: CategoricalProgressionId and CategoricalProgressionReward of the success event: the experience of a trade skill of the
+     * progression tables (AzothStaff: 1 experience is 1 rank; the rule of Skills::add_experience: AutoRankUp, the cap of the rank table).
+     * Empty: none.
+     */
+    std::string progression;
+    std::uint64_t progressionAmount{0};
     /** ObjectiveReward (null: none). */
     const gamedata::QuestObjective* next{nullptr};
     /** A repeatable row: the kind of its schedule (none: not repeated, decision D4 of the user is open for a row with no schedule). */

@@ -1502,6 +1502,14 @@ std::uint64_t Inventory::count(const Entity& entity, std::string_view itemId) {
     return total;
 }
 
+std::uint64_t Inventory::bag_count(const Entity& entity, std::string_view itemId) {
+    std::uint64_t total = 0;
+    for (const BagSlot& slot : entity.bag.slots) {
+        total += slot.item && same_id(slot.item->itemId, itemId) ? slot.item->quantity : 0;
+    }
+    return total;
+}
+
 bool Inventory::equipped(const Entity& entity, std::string_view itemId, std::uint32_t minGearScore) {
     return std::any_of(entity.equipment.slots.begin(), entity.equipment.slots.end(), [&](const auto& entry) {
         return entry.second.item && same_id(entry.second.item->itemId, itemId) && entry.second.item->gearScore >= minGearScore;

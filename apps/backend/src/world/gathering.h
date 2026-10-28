@@ -180,8 +180,13 @@ enum class GatherRefusal : std::uint8_t {
      * per-character state of the quest objects of stage 1.8e; its LootTracker entry Looted).
      */
     gatheredQuestObject,
+    /**
+     * Stage QG5b: the restriction ItemRequired, and the bag has fewer than ItemRestrictionQuantity of ItemRestrictionId (client 0x35C2C8E,
+     * the Container check 0x48D6200: the bag slots only).
+     */
+    missingItem,
 };
-inline constexpr std::size_t kGatherRefusalCount = 12;
+inline constexpr std::size_t kGatherRefusalCount = 13;
 
 [[nodiscard]] const char* gather_refusal_text(GatherRefusal refusal);
 
@@ -366,8 +371,11 @@ private:
 
     [[nodiscard]] std::optional<Target> target_of(const InteractionContext& context) const;
     [[nodiscard]] InteractionVerdict refuse(GatherRefusal refusal, const Entity& character, const std::string& key, const std::string& detail);
-    /** @return The refusal of the tool rule of a row for a character, or no value (and the parts). */
-    [[nodiscard]] std::optional<GatherRefusal> check_tool_and_rank(const Entity& character, const gamedata::GatherableRow& row,
+    /**
+     * @return The refusal of the gates of a row for a character (the tool, the rank, and from stage QG5b the item of the restriction
+     *         ItemRequired), or no value. The begin and the completion check them.
+     */
+    [[nodiscard]] std::optional<GatherRefusal> check_gates(const Entity& character, const gamedata::GatherableRow& row,
                                                                    std::string& detail) const;
     void set_gather(Entity& character, std::uint8_t status, float remaining, float speed, bool active, std::uint64_t target);
     void fail_work(Entity& character);

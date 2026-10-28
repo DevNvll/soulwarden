@@ -377,6 +377,16 @@ Skills::Plan Skills::plan_experience(const std::string& characterId, std::string
     });
 }
 
+ProgressError Skills::add_experience(Plan& plan, std::string_view id, std::uint64_t amount) const {
+    if (!plan.ok()) {
+        return plan.error;
+    }
+    if (tables() == nullptr) {
+        return ProgressError::noTables;
+    }
+    return experience_into(plan.skills, plan.touched, plan.result, id, amount);
+}
+
 Skills::Plan Skills::plan_none(const std::string& characterId) {
     return stage(characterId, [](SkillSet&, Touched&, SkillResult&) { return ProgressError::none; });
 }

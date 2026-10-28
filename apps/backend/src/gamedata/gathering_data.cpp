@@ -34,7 +34,7 @@ constexpr std::uint64_t kLargestItemCount = 1000000;
 /** The restrictions of a row (GatherableData: Restriction) that the backend can check, and the restriction of an item. */
 constexpr std::string_view kNoToolNecessary = "NoToolNecessary";
 constexpr std::string_view kToolRequired = "ToolRequired";
-constexpr std::string_view kItemRequired = "ItemRequired";
+constexpr std::string_view kItemRequired = kRestrictionItemRequired;
 
 /** @return The first 16 hexadecimal digits (lower case) of the SHA-256 of the data, or an empty text when the hash failed. */
 std::string sha256_prefix(const std::string& data) {
@@ -336,13 +336,12 @@ bool GatheringData::parse(const std::string& text) {
             row.unsupported.push_back("the gathering type " + type);
         }
         // The mark "supported" (no cause) must agree with the gates of the row (finding GA-R5): an empty list of causes does not remove
-        // a restriction that the backend cannot check, an item, or more than one gatherer. Such a row is refused, with the cause of the
-        // loader. ItemRequired with an empty item is the one exception (BushSmall, BushWithered: the item names nothing to check).
+        // a restriction that the backend cannot check or more than one gatherer. Such a row is refused, with the cause of the loader.
+        // Stage QG5b: ItemRequired with an item is a gate of the gather (the item in the bag); a file with no member `item` (a file of before
+        // the review) cannot name it: refused.
         if (row.unsupported.empty()) {
             if (row.restriction == kItemRequired && !itemKnown) {
                 row.unsupported.push_back("the restriction ItemRequired with no item member (the file marks the row supported)");
-            } else if (row.restriction == kItemRequired && !row.item.empty()) {
-                row.unsupported.push_back("the restriction ItemRequired with the item " + row.item + " (the file marks the row supported)");
             } else if (row.restriction != kNoToolNecessary && row.restriction != kToolRequired && row.restriction != kItemRequired) {
                 row.unsupported.push_back("the restriction " + (row.restriction.empty() ? std::string("(none)") : row.restriction)
                                           + " (the file marks the row supported)");

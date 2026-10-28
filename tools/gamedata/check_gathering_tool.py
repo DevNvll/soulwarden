@@ -9,14 +9,18 @@ functions of the tool made-up tables, rows, and distribution files, and compares
   region-name        the place of a region name; a name that is not r_+XX_+YY stops the tool
   row                a gatherable row: its values, the type None for an empty cell, the trade skill "None" as no trade skill,
                      ItemRequired with no item (nothing to check: supported)
-  row-unsupported    the causes of a row that the backend refuses: ItemRequired with an item, a song, a loot container, two
-                     gatherers, fishing; stage QG5a: AzothStaff is a tool type, RequireControllingFaction a flag (0: no rule)
+  row-unsupported    the causes of a row that the backend refuses: a restriction that the backend does not know, a song, a loot
+                     container, two gatherers, fishing; stage QG5a: AzothStaff is a tool type, RequireControllingFaction a flag (0: no
+                     rule); stage QG5b: ItemRequired with an item is supported (the item and its count stay in the row)
   row-stops          BaseGatherTime 0 or not a number, the respawn bounds 120 to 60, a rank 1.5: each one stops the tool
   tables             the tables of each type: the rows, the variations, the ranks, the events, the tools (only weapon rows with a type)
   table-stops        a rank table with a gap, a table with no needed column, a tool range 3 to 2, two variation rows of one id with
                      different content, no table of a type, no rank table of a trade skill: each one stops the tool
   distribution       a distribution file: the slices, the variants, the records, the height modes, the tails
   distribution-stops a cut file, a file with more bytes, a record that names a slice outside the list: each one stops the tool
+  quest-gimmick      stage QG5b: a direct quest gimmick (task_event_form: no tool, no loot, an event of a quest task; the cannon) and a
+                     direct destructible quest row (quest_objects.destructible_form: no loot and an event of a quest task; the crate);
+                     an event that no task names, a loot table, or a tool type is no quest object (the gongs of a world event)
 
 The cases of the code review of stage 3.6a run the main writer of the tool with a made-up game copy (tables, one region, one slice).
 They run only when a name is given (the case GR4 and GR6 of the test program give them; GAT1 runs the cases above):
@@ -63,7 +67,7 @@ from appearance_tables import Failure  # noqa: E402
 from check_ability_tool import FakeSheet  # noqa: E402
 
 CASES = ("offline-id", "region-name", "row", "row-unsupported", "row-stops", "tables", "table-stops", "distribution",
-         "distribution-stops")
+         "distribution-stops", "quest-gimmick")
 REVIEW_CASES = ("gate-columns", "flag-texts", "event-reward", "export-publish", "held-manifest", "prune")
 # The made-up game copy of the review cases: one region with one record of one gathering slice (variant Ore_A: Test_OreSmall).
 REGION = "r_+00_+00"
@@ -401,7 +405,10 @@ def check(case: str) -> tuple[bool, str]:
                         f"ItemRequired with no item: {no_item['unsupported']}")
     if case == "row-unsupported":
         causes = {
-            "restriction": tool.row_entry("A", "T", good_row(Restriction="ItemRequired", ItemRestrictionId="Test_Key"))["unsupported"],
+            # Stage QG5b: ItemRequired with an item is a gate of the gather (the item in the bag): supported, with the item and its count.
+            "restriction": tool.row_entry("A", "T", good_row(Restriction="ItemRequired", ItemRestrictionId="Test_Key",
+                                                             ItemRestrictionQuantity="2"))["unsupported"],
+            "unknown": tool.row_entry("A2", "T", good_row(Restriction="KeyRequired"))["unsupported"],
             "song": tool.row_entry("B", "T", good_row(RequiredSongId="Song1"))["unsupported"],
             "container": tool.row_entry("C", "T", good_row(IsLootContainer="1"))["unsupported"],
             "gatherers": tool.row_entry("D", "T", good_row(NumRequiredToGather="2"))["unsupported"],
@@ -411,12 +418,29 @@ def check(case: str) -> tuple[bool, str]:
             "faction0": tool.row_entry("G", "T", good_row(RequireControllingFaction="0"))["unsupported"],
             "faction1": tool.row_entry("H", "T", good_row(RequireControllingFaction="1"))["unsupported"],
         }
-        passed = (causes["restriction"] == ["the restriction ItemRequired"] and causes["song"] == ["a song"]
+        item = tool.row_entry("A", "T", good_row(Restriction="ItemRequired", ItemRestrictionId="Test_Key", ItemRestrictionQuantity="2"))
+        passed = (causes["restriction"] == [] and item["item"] == "Test_Key" and item["itemCount"] == 2
+                  and causes["unknown"] == ["the restriction KeyRequired"] and causes["song"] == ["a song"]
                   and causes["container"] == ["a loot container (a chest: stage 3.5b)"]
                   and causes["gatherers"] == ["more than one gatherer (NumRequiredToGather)"]
                   and causes["fishing"] == ["the gathering type Fishing"] and causes["azoth"] == []
                   and causes["faction0"] == [] and causes["faction1"] == ["a faction"])
         return passed, "; ".join(f"{name}: {value}" for name, value in causes.items())
+    if case == "quest-gimmick":
+        import quest_objects  # noqa: PLC0415 (the tool of the destructible objects; only this case needs it)
+        events = {"test_cannon_interact", "test_crate_interact"}
+        cannon = {"FinalLootTable": "Empty", "GatheringType": "None", "GameEventID": "Test_Cannon_Interact", "GatheringAction": "Handcrafting"}
+        crate = {"FinalLootTable": "", "GameEventID": "Test_Crate_Interact", "GatheringAction": "Kicking"}
+        results = {
+            "cannon": tool.task_event_form(cannon, events),
+            "cannon, no task": not tool.task_event_form(dict(cannon, GameEventID="Test_Gong_Interact"), events),
+            "cannon, a loot table": not tool.task_event_form(dict(cannon, FinalLootTable="Test_GatherOre"), events),
+            "cannon, a tool": not tool.task_event_form(dict(cannon, GatheringType="Mining"), events),
+            "crate": quest_objects.destructible_form(crate, events),
+            "crate, no task": not quest_objects.destructible_form(dict(crate, GameEventID="Test_Gong_Interact"), events),
+            "crate, a loot table": not quest_objects.destructible_form(dict(crate, FinalLootTable="Test_GatherOre"), events),
+        }
+        return all(results.values()), "; ".join(f"{name}: {'ok' if value else 'wrong'}" for name, value in results.items())
     if case == "row-stops":
         messages = [stops(lambda cells=cells: tool.row_entry("X", "T", good_row(**cells))) for cells in
                     ({"BaseGatherTime": "0"}, {"BaseGatherTime": "nan"}, {"BaseGatherTime": "fast"},

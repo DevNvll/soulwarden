@@ -157,6 +157,8 @@ const char* gather_refusal_text(GatherRefusal refusal) {
         return "the object is a quest object, and no active quest task of the character has its tag";
     case GatherRefusal::gatheredQuestObject:
         return "the character gathered the quest object: it is back after the respawn of its row";
+    case GatherRefusal::missingItem:
+        return "the bag does not have the item of the restriction ItemRequired";
     }
     return "?";
 }
@@ -517,7 +519,7 @@ GatherParts Gathering::parts_of(const Entity& character, const gamedata::Gathera
     return parts;
 }
 
-std::optional<GatherRefusal> Gathering::check_tool_and_rank(const Entity& character, const gamedata::GatherableRow& row,
+std::optional<GatherRefusal> Gathering::check_gates(const Entity& character, const gamedata::GatherableRow& row,
                                                             std::string& detail) const {
     const std::uint32_t slot = gamedata::tool_slot(row.type);
     if (slot != 0) {
@@ -540,6 +542,17 @@ std::optional<GatherRefusal> Gathering::check_tool_and_rank(const Entity& charac
         if (rank < row.level) {
             detail = row.tradeskill + " " + std::to_string(rank) + " of " + std::to_string(row.level);
             return GatherRefusal::rank;
+        }
+    }
+    // Stage QG5b (static read B1 and B2 of stage QG5b): the restriction ItemRequired (enum 4; only it reaches the item branch of the gather
+    // validation 0x35C2C8E) needs ItemRestrictionQuantity of ItemRestrictionId in the slots of the bag (the Container check 0x48D6200: the sum
+    // of the stacks, at least the quantity; no paperdoll, no storage). A blank or 0 quantity needs nothing (0x48D626D). NoToolNecessary and
+    // ToolRequired with an item do not check it (0x35C2A18).
+    if (row.restriction == gamedata::kRestrictionItemRequired && !row.item.empty() && row.itemCount > 0) {
+        const std::uint64_t have = Inventory::bag_count(character, row.item);
+        if (have < row.itemCount) {
+            detail = row.item + " " + std::to_string(have) + " of " + std::to_string(row.itemCount) + " in the bag";
+            return GatherRefusal::missingItem;
         }
     }
     return std::nullopt;
@@ -600,7 +613,7 @@ InteractionVerdict Gathering::begin(Entity& character, const InteractionContext&
         return refuse(GatherRefusal::depleted, character, key, row.id);
     }
     std::string detail;
-    if (const std::optional<GatherRefusal> refusal = check_tool_and_rank(character, row, detail)) {
+    if (const std::optional<GatherRefusal> refusal = check_gates(character, row, detail)) {
         return refuse(*refusal, character, key, row.id + ": " + detail);
     }
     const gamedata::LootTables* tables = m_world.rewards().tables();
@@ -756,7 +769,7 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
         return false;
     }
     std::string detail;
-    if (const std::optional<GatherRefusal> refusal = check_tool_and_rank(character, row, detail)) {
+    if (const std::optional<GatherRefusal> refusal = check_gates(character, row, detail)) {
         ++m_counts.cancels;
         log::write("world: gathering: the gather of %s by character %s ends with no reward: %s (%s)", work.node.c_str(), characterId.c_str(),
                    gather_refusal_text(*refusal), detail.c_str());

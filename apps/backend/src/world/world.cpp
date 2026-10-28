@@ -1019,6 +1019,10 @@ PositionVerdict World::report_position(SessionId session, const PositionReport& 
         // A character at rest sends the same position 30 times each second.
         entity->positionEstimated = false;
         entity->moving = false;
+        // Code review of stage QG5a, finding QG5AR-R2: an accepted report with no movement is a look of the proximity objects too (a task
+        // that becomes Active, or an object that respawns, while the character stands in the sphere). The set of the marks makes one look
+        // for each character at a tick (the cells of the grid near it, as for a move).
+        m_questObjects.moved(*entity);
         return verdict;
     }
     place(*entity, position, false, moved >= kReportMoveDistance);
@@ -1084,8 +1088,9 @@ Revision World::touch(EntityId id, ComponentKey key) {
     if (entity->kind == EntityKind::player && (key == ComponentKey::container || key == ComponentKey::paperdoll)) {
         m_quests.items_touched(*entity);
     }
-    // Stage 2.5c: a change of the bits of a character with a person conversation: the presence of the person at the next tick.
-    if (entity->kind == EntityKind::player && key == ComponentKey::achievements) {
+    // Stage 2.5c: a change of the bits of a character with a person conversation: the presence of the person at the next tick. Stage QG5b:
+    // also a change of its quests (the Objectives state): the ObjectiveFlow of a non-persisted achievement reads the quest state.
+    if (entity->kind == EntityKind::player && (key == ComponentKey::achievements || key == ComponentKey::objectives)) {
         m_persons.achievements_touched(*entity);
     }
     return m_revision;
