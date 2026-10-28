@@ -676,8 +676,11 @@ int main(int argc, char** argv) {
     const std::string poiDataPath = (gameDataDirectory / gamedata::kPoiDataFile).string();
     gamedata::PoiData poiData;
     if (poiData.load(poiDataPath)) {
-        log::write("backend: point of interest data %s: %zu points of interest with a shape, the bounds of %zu territories", poiDataPath.c_str(),
-                   poiData.pois().size(), poiData.territories().size());
+        const std::size_t areas = static_cast<std::size_t>(
+            std::count_if(poiData.pois().begin(), poiData.pois().end(), [](const gamedata::Poi& poi) { return poi.area; }));
+        log::write("backend: point of interest data %s: %zu points of interest with a shape (%zu areas), the bounds of %zu territories; %zu of "
+                   "another world not used",
+                   poiDataPath.c_str(), poiData.pois().size(), areas, poiData.territories().size(), poiData.other_world());
     } else {
         log::write("backend: no point of interest data at %s (%s): no quest task of a place progresses. Make the file with "
                    "tools/gamedata/pois.sh",
@@ -700,8 +703,8 @@ int main(int argc, char** argv) {
     const std::string triggerDataPath = (gameDataDirectory / gamedata::kTriggerDataFile).string();
     gamedata::TriggerData triggerData;
     if (triggerData.load(triggerDataPath)) {
-        log::write("backend: trigger data %s: %zu trigger volumes with %zu tags", triggerDataPath.c_str(), triggerData.volume_count(),
-                   triggerData.tag_count());
+        log::write("backend: trigger data %s: %zu trigger volumes with %zu tags; %zu tags of another world (an instance: not tested)",
+                   triggerDataPath.c_str(), triggerData.volume_count(), triggerData.tag_count(), triggerData.elsewhere_tags());
     } else {
         log::write("backend: no trigger data at %s (%s): no quest task of a trigger area progresses. Make the file with "
                    "tools/gamedata/triggers.sh",

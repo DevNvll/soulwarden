@@ -374,7 +374,15 @@ backend. The tool of each system is also in the document of that system.
   the tags of the volumes. The build: 849 volumes with 790 tags in 751 of the 186,850 chunks of 49 regions (88 with the shape component;
   2 entities with no tag, 1 with no shape); 657 of the 700 tags of the tasks have a volume (each one of the beach chain); 0.2 MB, 22 s
   with the index of the pak files of the navigation tool. The tool stops for a query shape that it does not know and for a number that is
-  not finite. Without the file the backend starts, and a task of a trigger area waits.
+  not finite. Without the file the backend starts, and a task of a trigger area waits. Stage QG3 (still format 1; the loader of 1.8b
+  reads only `volumes`): the tool also walks the capitals placements of each region and the slices that a chunk or a slice spawns at its
+  start (the placement rule of the collision tool: `collision_data.py`); each volume has `source` (its slice), `via` (the chunk, or the
+  capitals file and its row), and `world`. The member `notAtStart` has the volumes below a spawner with no start, and `elsewhere` the
+  volumes of the other worlds (an instance: a dungeon, a trial, ftue_v2, climaxftue_02) with their world; `tasks` names the instance of a
+  missing tag (`elsewhere`). The build: 860 volumes with 791 tags of the open world (11 new: the outpost slices of 85,430 capitals
+  placements), 0 below a spawner, 0 in `notAtStart` (13,475 spawners with no start), 48 volumes of 7 of the 39 other worlds; 657 of the
+  700 tags of the tasks have a volume of the open world, and 35 of the other 43 have a volume of an instance; 74 s. The backend never
+  tests a volume of another world (`TriggerData::elsewhere` keeps only its tag and world).
 - `poi-data.json` (stage 1.8c, `tools/gamedata/pois.sh`, `check_pois_tool.py` (case QE-TOOL), [Quests](../systems/quests.md)): format 1. The
   points of interest with a shape: the shape files `objects/worldprisms/pois/REGION/poi_ID_NAME.vshapec` (points relative to an origin, not
   turned; a tail of 20 bytes), the origin of each one (the POI placement of the layer "pois" of its region for which the entries of the
@@ -388,7 +396,19 @@ backend. The tool of each system is also in the document of that system.
   entry of the region metadata with one territory id is in the bounds of that territory or within 6 m of their border (counts
   `boundsEntries`, `boundsWrong`; the build: 16 territories, 266,696 entries, 1 outside). The tool stops with no bounds file or a bounds
   file of a wrong form. The loader takes the formats 1 and 2 (a file of the format 1 has no territory: no card acts, and the standing of a
-  hand-in goes to the origin territory). The tool needs the Oodle library for the shape files (`SOULWARDEN_OODLE_LIB`).
+  hand-in goes to the origin territory). The tool needs the Oodle library for the shape files (`SOULWARDEN_OODLE_LIB`). Stage QG3 (still
+  format 2: the loaders of 1.8c and QG1 do not read the new members): the origin of a POI shape is a POI or an area plot of each layer and
+  each region (POI_CapitalPlot, Area_CapitalPlot: 1,262 plots), checked with the entries of each region (25 regions, 269,807 entries);
+  the same fit rule. A shape name can end with its id (`poi_NAME_ID`). The area shapes `objects/worldprisms/areas/FOLDER/NAME.vshapec`
+  (world meters, the origin zero) get each area row whose entries agree. Each point of interest has `kind` (`poi`, `area`), `source` (the
+  shape file), `origin` (`{"capitals", "row"}` of its plot, or `{"world": true}`), `candidates` (the plots that agree), and `world`. The
+  member `unshaped` lists each tag of the territory tables with no shape and its cause; with `--quests` (default the `quest-data.json` of
+  the folder) `tasks` compares the tags of the place tasks and of the location rule. The build: 787 points of interest with a shape (476
+  before): 616 POI shapes of 762 files (140 new: 46 a plot of the layer "pois" of the folder, 45 of them an Area_CapitalPlot; 87 a plot of
+  another layer; 7 a plot of another region; the 476 of before keep their origin) and 171 area shapes (each of the 171 area files binds one row; 131 by a name that agrees
+  with the name key, 40 not); 146 shape files left out with their cause (106 no plot agrees, 32 no entry, 8 no row); 499 tags with no
+  shape; 513 of the 653 tags of the tasks have a shape; 20 s. The backend uses only the shapes of the open world, and the place view and
+  the causes of the manifest read the new members. `tools/release.sh` takes the new files with the game data folder.
 - `loot-tables.json`, stage 1.8c: each base vitals row has a tenth member, its VitalsCategories (the categories of a kill task of the
   quests, client 0x825E7C0); the format stays 2, and the loader takes a row of 9 members (a kill then has the vitals row and the category
   row of its kind as its categories). `check_loot_tool.py` has the case.
@@ -491,8 +511,8 @@ tools/gamedata/chests.sh             # one time: the chests of the world for the
 tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, the stations, ...; 25 MB, 2 to 4 minutes); needs an Oodle source
 tools/gamedata/crafting.sh           # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits, the gear score and perk data for the backend (format 3 of stage 3.7c; 9 MB, 5 s); needs an Oodle source
 tools/gamedata/quests.sh             # one time: the quest data for the backend (objectives, compiled task trees, achievement table, territory starts, backstories; 9 MB, 10 s); needs an Oodle source
-tools/gamedata/pois.sh               # one time: the shapes of the points of interest (the quest tasks of a place; 15 s); needs an Oodle source
-tools/gamedata/triggers.sh           # one time, after quests.sh: the trigger volumes of the quests (0.2 MB, 22 s with the pak index of navigation.sh); needs an Oodle source
+tools/gamedata/pois.sh               # one time, after quests.sh: the shapes of the points of interest and of the areas (the quest tasks of a place; 0.7 MB, 20 s); needs an Oodle source
+tools/gamedata/triggers.sh           # one time, after quests.sh: the trigger volumes of the quests (the chunks, the capitals, the instances apart; 0.35 MB, 74 s with the pak index of navigation.sh); needs an Oodle source
 tools/gamedata/quest-objects.sh      # one time: the destructible quest objects (0.1 MB); needs an Oodle source
 tools/gamedata/conversations.sh      # one time: the conversation data of the persons (NPC rows, states, topics; 1.5 MB, 10 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)

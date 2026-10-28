@@ -21,11 +21,17 @@
 // are not turned with it; the client sends 2297 with the "charted" achievement when its player goes into the shape, and with the
 // "discovered" achievement when it goes into the sphere of DiscoveryRadius around the same placement. The membership of a quest task is
 // the shape (the point of interest), not the discovery sphere.
+//
+// Stage QG3 (the format stays 2): the file also has the area shapes (objects/worldprisms/areas: world coordinates), the origins of each
+// layer and region, the source and the world of each point of interest, and the member `unshaped` (each tag of the territory tables with
+// no shape, with its cause). A point of interest of another world than the open world is not used.
 
 namespace soulwarden::backend::gamedata {
 
 /** File name of the point of interest data in the game data directory of the backend. */
 inline constexpr const char* kPoiDataFile = "poi-data.json";
+/** Stage QG3: the open world of the backend (the world of the shapes and of the volumes that it tests; an instance has its own stage). */
+inline constexpr const char* kOpenWorld = "newworld_vitaeeterna";
 
 /** One point of interest with a shape. */
 struct Poi {
@@ -44,6 +50,9 @@ struct Poi {
     float minY{0.0F};
     float maxX{0.0F};
     float maxY{0.0F};
+    /** Stage QG3: an area shape (world coordinates, its origin zero), and the shape file of the data. */
+    bool area{false};
+    std::string source;
 
     /** @return True when the point (x, y) is in the shape (the bounds first, then the even-odd rule). */
     [[nodiscard]] bool contains(float x, float y) const;
@@ -84,6 +93,21 @@ public:
      */
     [[nodiscard]] bool knows(const std::vector<std::string>& tags) const;
     /**
+     * Stage QG3: @return Why a tag (lower case) has no shape: the cause of the member `unshaped` of the tool (no shape file of the id, no
+     *         origin that agrees, no entry of the region metadata), "no row of the territory tables has the tag" for a tag of no row;
+     *         empty for a tag with a shape and for a file with no member `unshaped`.
+     */
+    [[nodiscard]] std::string cause(std::string_view tag) const;
+    /**
+     * Stage QG3: @return The points of interest whose shape holds the place (x, y). A grid of 256 m visits only the shapes whose bounds
+     *         touch the cell of the place (no scan of each shape; the place view of the development and admin commands).
+     */
+    [[nodiscard]] std::vector<const Poi*> at(float x, float y) const;
+    /** Stage QG3: the points of interest of the file of another world than the open world (not used). */
+    [[nodiscard]] std::size_t other_world() const {
+        return m_otherWorld;
+    }
+    /**
      * Stage QG1: @return The territory at the place (x, y): the first bounds of a territory (objects/worldprisms/bounds/territory of the game data,
      *         the property TerritoryId) that hold it; 0 outside each bounds or with a file of the format 1. The client takes the claim
      *         territory of its player from the territory at its position (research map.md 2.6, ClaimKey 0x2A09BA0); the tool checks the
@@ -104,6 +128,11 @@ private:
     std::vector<Poi> m_territories;
     std::unordered_map<std::string, std::vector<std::uint32_t>> m_byTag;
     std::unordered_map<std::uint32_t, std::uint32_t> m_byId;
+    /** Stage QG3: the member `unshaped` (tag: cause), the cells of the grid (the shapes whose bounds touch a cell), the other worlds. */
+    std::unordered_map<std::string, std::string> m_unshaped;
+    bool m_hasUnshaped{false};
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> m_cells;
+    std::size_t m_otherWorld{0};
 };
 
 } // namespace soulwarden::backend::gamedata

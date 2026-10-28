@@ -197,6 +197,7 @@ bool QuestData::load_text(const std::string& text) {
             task.territory = static_cast<std::uint16_t>(*territory);
         }
         task.enforceLocation = flag(cell(cells, "EnforceLocationRequirement"));
+        task.pin = !trimmed(cell(cells, "OverrideLocation")).empty();
         task.dropSources = lower_list(cell(cells, "ItemDropVC"));
         task.dropChance = std::clamp(number(cell(cells, "ItemDropProbability")).value_or(0.0), 0.0, 100.0);
         task.guaranteedAttempts = static_cast<std::uint32_t>(std::clamp(number(cell(cells, "GuranteedDropAttempts")).value_or(0.0), 0.0, 1e6));

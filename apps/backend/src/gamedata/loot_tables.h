@@ -96,10 +96,15 @@ struct LootVitals {
     /** KillEventIdOverride in lower case. Empty: the kill event of the game (KillEvent). */
     std::string event;
     /**
-     * Stage 1.8c: VitalsCategories of the base row (each in lower case, no repeat; client 0x825E7C0: the categories of a kill task). Empty:
-     * a file of the tool of before (the kill uses the vitals row and the category row of the kind).
+     * Stage 1.8c: VitalsCategories of the base row (each in lower case, no repeat; client 0x825E7C0: the categories of a kill task). An empty
+     * list of a row that has the member is an empty list (code review of stage QG2a, finding QG2R-R1: the client tests no base id then).
      */
     std::vector<std::string> categories;
+    /**
+     * False for a row of a file of the tool of before stage 1.8c (9 members, no categories): the kill then uses the vitals row and the
+     * category row of its kind (finding QG2R-R1: only the loader knows that the member is not there).
+     */
+    bool hasCategories{true};
 };
 
 enum class LootEntryKind : std::uint8_t {

@@ -82,6 +82,8 @@
 //                              achievement actions, the return of its items, its pin; CanBeAbandoned 0 gives 409)
 //          reset_quest         instance: the reset of an active quest (stage 1.8c: a new instance; the award rows stay)
 //          quest_rewards       objective, territory: the reward join and the availability of an objective (stage 1.8d; a reader)
+//          quest_places        no argument: the points of interest, the areas, and the trigger volumes at the position of the
+//                              character, and its territory (stage QG3; a reader)
 //          apply_preset        preset (the name of a build preset, bow-boltcaster), variant (pve or pvp; no value: the
 //                              first variant): the whole build of the preset (stage B0): the equipment (the old items go
 //                              into the bag), the level, the attributes, the masteries, the trees, the bars, and the
@@ -202,6 +204,7 @@ constexpr NamedCommand kCommands[] = {
     {"abandon_quest", commands::abandon_quest},
     {"reset_quest", commands::reset_quest},
     {"quest_rewards", commands::quest_rewards},
+    {"quest_places", commands::quest_places},
     // Stage QG1: the territory standing of the character (the rules of a game reward) and a card choice (the rules of the message 4040).
     {"give_standing", commands::give_standing},
     {"choose_territory_card", commands::choose_territory_card},

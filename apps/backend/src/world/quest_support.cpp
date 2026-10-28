@@ -84,9 +84,50 @@ bool never_true_tag(const std::string& tag) {
     return key == "nevertrue" || key == "nevetrue" || key == "nveretrue" || key == "nevercomplete";
 }
 
-/** @return True for the task types of a place (they test the shape of their tags themselves). */
-bool is_place_type(std::uint8_t type) {
-    return type == task_type::kGoToPoi || type == task_type::kGoToPoiOnTerritory || type == task_type::kExitPoi;
+/**
+ * Stage QG3: @return The causes of the data for the tags with no shape (" (TAG: CAUSE; ...)"; the member `unshaped` of the POI tool), or
+ *         an empty text (no data, or a file with no causes).
+ */
+std::string poi_causes(const gamedata::PoiData* data, const std::vector<std::string>& tags) {
+    if (data == nullptr || !data->loaded()) {
+        return {};
+    }
+    std::string text;
+    for (const std::string& tag : tags) {
+        const std::string cause = data->cause(tag);
+        if (!cause.empty()) {
+            text += (text.empty() ? " (" : "; ") + tag + ": " + cause;
+        }
+    }
+    return text.empty() ? text : text + ")";
+}
+
+/**
+ * Code review of stage QG2a, finding QG2R-R2: @return True for the task types whose runtime path applies the location rule
+ * (EnforceLocationRequirement): the possession and the equip predicates (Plan::location_ok) and the counters of an event
+ * (Quests::matched_tasks: the kills, the game events, the gathers, the crafts, the refines, the screens, the interactions, the cutscenes, the
+ * cinematics, the states of a person). TaskAchievement, TaskTriggerArea, TaskHaveLevel, and TaskConversationTopic (its progress is direct,
+ * Quests::topics_finished) do not test it; a place task tests its own shape.
+ */
+bool enforces_location(std::uint8_t type) {
+    switch (type) {
+    case task_type::kEquipItem:
+    case task_type::kKillContribution:
+    case task_type::kGameEvent:
+    case task_type::kRequireGatherItems:
+    case task_type::kCraftRecipe:
+    case task_type::kCraftMultipleRecipes:
+    case task_type::kRefineRecipe:
+    case task_type::kOpenUiScreen:
+    case task_type::kInteract:
+    case task_type::kCutsceneComplete:
+    case task_type::kCinematicStart:
+    case task_type::kCinematicComplete:
+    case task_type::kConversationState:
+        return true;
+    default:
+        return gamedata::is_possession(type);
+    }
 }
 
 /** @return True for a blank cell text. */
@@ -148,6 +189,10 @@ std::string reason_kind(const std::string& reason) {
         {"names no item and no ability table", "task: KillEnemyWeaponID names no item and no ability table"},
         {"KillEnemyWeaponID", "task: the item of a kill (KillEnemyWeaponID)"},
         {"the task has no TP_TargetTag", "task: a pin or a puzzle task with no trigger tag (never completes)"},
+        {"not in the open world (it belongs to its instance stage)", "task: a trigger volume of an instance (its instance stage)"},
+        {"the task has no POITag: the mission instance", "task: a place of a template (the mission instance gives it)"},
+        {"the task has no POITag: a pin task", "task: a pin task with no POITag (never completes)"},
+        {"the task has no POITag: a blank cell", "task: a place task with no POITag (never completes)"},
         {"is a never-true tag of the data", "task: a never-true trigger tag of the data (a sentinel)"},
         {"the task names no game event", "task: a pin or a map task with no game event (never completes)"},
         {"the mission instance of a template gives it", "task: a blank item of a template (the mission instance gives it)"},
@@ -570,7 +615,9 @@ void QuestSupport::build() {
         for (bool changed = true; changed;) {
             changed = false;
             for (const auto& [item, root] : loot.containerRoots) {
-                if (opened.count(item) == 0 && index.items.count(item) != 0) {
+                // Code review of stage QG2a, finding QG2R-R3: a container that the runtime refuses to open (a salvage event with a reward
+                // that has no owner) supplies none of its items.
+                if (opened.count(item) == 0 && index.items.count(item) != 0 && m_world.item_containers().openable(item)) {
                     opened.insert(item);
                     walk(root, "the loot container " + item);
                     changed = true;
@@ -773,7 +820,18 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
             } else if (never_true_tag(task.targetTag)) {
                 block("the tag " + task.targetTag + " is a never-true tag of the data (a sentinel: no volume; the task never completes)");
             } else if (options.triggerData == nullptr || !options.triggerData->knows(task.targetTag)) {
-                block("no trigger volume of the tag " + task.targetTag + " in the trigger data");
+                // Stage QG3: a volume of an instance (a dungeon, the introduction worlds) is never tested in the open world.
+                const std::vector<std::string>* worlds = options.triggerData != nullptr ? options.triggerData->elsewhere(task.targetTag) : nullptr;
+                if (worlds != nullptr) {
+                    std::string names;
+                    for (const std::string& world : *worlds) {
+                        names += (names.empty() ? "" : ", ") + world;
+                    }
+                    block("the volume of the tag " + task.targetTag + " is in the instance " + names
+                          + ", not in the open world (it belongs to its instance stage)");
+                } else {
+                    block("no trigger volume of the tag " + task.targetTag + " in the trigger data");
+                }
             } else {
                 fact.supplier = "the trigger volume " + task.targetTag;
             }
@@ -786,8 +844,15 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                 places.push_back(tag);
                 tags += (tags.empty() ? "" : ",") + tag;
             }
-            if (options.poiData == nullptr || !options.poiData->knows(task.poiTags)) {
-                block("no point of interest shape of the tags " + tags + " in the POI data");
+            // Stage QG3: a task with no tag, an empty task of a template, and a tag with no shape (with the cause of the data) stay apart.
+            if (task.poiTags.empty()) {
+                block(row.kind == "missionTemplate" || row.kind == "communityGoal"
+                          ? "the task has no POITag: the mission instance of a template gives the place (the mission boards and the community "
+                            "goals: roadmap 4.5, 5.4)"
+                          : (task.pin ? "the task has no POITag: a pin task (OverrideLocation) with no place of the data (it never completes)"
+                                      : "the task has no POITag: a blank cell of the data, no place (it never completes)"));
+            } else if (options.poiData == nullptr || !options.poiData->knows(task.poiTags)) {
+                block("no point of interest shape of the tags " + tags + " in the POI data" + poi_causes(options.poiData, task.poiTags));
             } else {
                 fact.supplier = "the point of interest " + tags;
             }
@@ -988,7 +1053,7 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
         // equip tasks progress only in a point of interest of a tag; Quests::matched_tasks, plan_drops, Plan::location_ok). With no shape of
         // any tag of the task in the POI data the task never progresses (brightwood8 of 02A_Side06_01_Bears is a tag with no shape). A place
         // task has its own check above.
-        if (fact.supported && task.enforceLocation && !task.poiTags.empty() && !is_place_type(task.type)) {
+        if (fact.supported && task.enforceLocation && !task.poiTags.empty() && enforces_location(task.type)) {
             const bool shaped = options.poiData != nullptr && options.poiData->loaded()
                                 && std::any_of(task.poiTags.begin(), task.poiTags.end(),
                                                [&](const std::string& tag) { return options.poiData->knows(std::vector<std::string>{tag}); });
@@ -998,7 +1063,7 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                     tags += (tags.empty() ? "" : ",") + tag;
                 }
                 block("the location rule (EnforceLocationRequirement) needs a point of interest shape of the tags " + tags
-                      + ": the POI data has none (the task never progresses)");
+                      + ": the POI data has none (the task never progresses)" + poi_causes(options.poiData, task.poiTags));
             }
         }
         if (!fact.supported) {

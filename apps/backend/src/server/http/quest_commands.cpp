@@ -4,6 +4,8 @@
 #include <nlohmann/json.hpp>
 
 #include "core/logging/log.h"
+#include "gamedata/poi_data.h"
+#include "gamedata/trigger_data.h"
 #include "server/http/character_commands.h"
 #include "server/http/router.h"
 #include "world/quest_support.h"
@@ -91,6 +93,48 @@ WorldCommand grant_objective(const std::string& character, const Arguments& argu
             return json_reply(status_of(result.error), json{{"message", world::quest_error_text(result.error)}}.dump());
         }
         return json_reply(200, json{{"message", "done"}, {"objective", id}, {"instance", hex(result.instance)}}.dump());
+    };
+}
+
+WorldCommand quest_places(const std::string& character, const Arguments& /*arguments*/, service::HttpResponse& /*refusal*/) {
+    return [character](world::World& target) {
+        world::Entity* entity = target.find_character(character);
+        if (entity == nullptr) {
+            return message(409, "the character is not in the world");
+        }
+        const float x = entity->position.x;
+        const float y = entity->position.y;
+        const float z = entity->position.z;
+        json pois = json::array();
+        if (const gamedata::PoiData* data = target.quests().pois(); data != nullptr && data->loaded()) {
+            for (const gamedata::Poi* poi : data->at(x, y)) {
+                pois.push_back(json{{"id", poi->id}, {"tags", poi->tags}, {"territory", poi->territory}, {"kind", poi->area ? "area" : "poi"},
+                                    {"source", poi->source}});
+            }
+        }
+        json volumes = json::array();
+        if (const gamedata::TriggerData* data = target.quests().triggers(); data != nullptr && data->loaded()) {
+            for (const gamedata::TriggerVolume* volume : data->at(x, y, z)) {
+                volumes.push_back(json{{"tag", volume->tag}, {"source", volume->source}, {"via", volume->via}});
+            }
+        }
+        std::string names;
+        for (const json& poi : pois) {
+            names += (names.empty() ? "" : ", ") + std::to_string(poi["id"].get<std::uint32_t>());
+        }
+        for (const json& volume : volumes) {
+            names += (names.empty() ? "" : ", ") + volume["tag"].get<std::string>();
+        }
+        log::write("quests: the place view of character %s at (%.1f, %.1f, %.1f)%s: territory %u; %s", character.c_str(), x, y, z,
+                   entity->positionEstimated ? " (a camera estimate)" : "", static_cast<unsigned>(target.territory_of(*entity)),
+                   names.empty() ? "no place of the data" : names.c_str());
+        return json_reply(200, json{{"character", character},
+                                    {"position", {x, y, z}},
+                                    {"estimated", entity->positionEstimated},
+                                    {"territory", target.territory_of(*entity)},
+                                    {"pois", pois},
+                                    {"volumes", volumes}}
+                                   .dump());
     };
 }
 

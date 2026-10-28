@@ -1,5 +1,6 @@
 #include "gamedata/trigger_data.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -7,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include "gamedata/loot_tables.h"
+#include "gamedata/poi_data.h"
 
 namespace soulwarden::backend::gamedata {
 namespace {
@@ -16,6 +18,31 @@ using nlohmann::json;
 constexpr std::uint64_t kFormat = 1;
 /** The rounding error that an axis of a volume can have (its length against 1, two axes against a right angle). */
 constexpr float kAxisTolerance = 0.001F;
+/** Stage QG3: the cell size of the grid of the place view (meters). */
+constexpr float kCell = 256.0F;
+
+std::uint64_t cell_key(std::int64_t x, std::int64_t y) {
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32U) | static_cast<std::uint32_t>(y);
+}
+
+std::int64_t cell_of(float value) {
+    return static_cast<std::int64_t>(std::floor(value / kCell));
+}
+
+/** @return The radius of a sphere around the center that holds the volume (the cells of the grid). */
+float reach(const TriggerVolume& volume) {
+    switch (volume.shape) {
+    case TriggerShape::aabb:
+    case TriggerShape::box:
+        return std::sqrt(volume.half[0] * volume.half[0] + volume.half[1] * volume.half[1] + volume.half[2] * volume.half[2]);
+    case TriggerShape::sphere:
+        return volume.radius;
+    case TriggerShape::cylinder:
+    case TriggerShape::capsule:
+        return std::sqrt(volume.radius * volume.radius + volume.height * volume.height / 4.0F);
+    }
+    return 0.0F;
+}
 
 template <std::size_t N>
 bool read_floats(const json& value, std::array<float, N>& out) {
@@ -66,6 +93,9 @@ bool TriggerVolume::contains(float x, float y, float z) const {
 bool TriggerData::fail(std::string cause) {
     m_volumes.clear();
     m_byTag.clear();
+    m_elsewhere.clear();
+    m_cells.clear();
+    m_otherWorld = 0;
     m_error = std::move(cause);
     return false;
 }
@@ -83,6 +113,8 @@ bool TriggerData::load(const std::string& path) {
 bool TriggerData::load_text(const std::string& text) {
     m_volumes.clear();
     m_byTag.clear();
+    m_elsewhere.clear();
+    m_otherWorld = 0;
     m_error.clear();
     const json document = json::parse(text, nullptr, false);
     if (!document.is_object() || !document.contains("format") || !document["format"].is_number_unsigned()
@@ -99,6 +131,16 @@ bool TriggerData::load_text(const std::string& text) {
         }
         TriggerVolume volume;
         volume.tag = lower_text(entry["tag"].get<std::string>());
+        // Stage QG3: a volume of another world (an instance) is never tested in the open world.
+        if (entry.contains("world") && (!entry["world"].is_string() || entry["world"].get<std::string>() != kOpenWorld)) {
+            ++m_otherWorld;
+            const std::string world = entry["world"].is_string() ? entry["world"].get<std::string>() : std::string("?");
+            std::vector<std::string>& worlds = m_elsewhere[volume.tag];
+            if (std::find(worlds.begin(), worlds.end(), world) == worlds.end()) {
+                worlds.push_back(world);
+            }
+            continue;
+        }
         const std::string shape = entry["shape"].get<std::string>();
         bool sized = false;
         if (shape == "aabb" || shape == "box") {
@@ -133,7 +175,29 @@ bool TriggerData::load_text(const std::string& text) {
             }
         }
         volume.ignoreHeight = entry.contains("ignoreHeight") && entry["ignoreHeight"].is_boolean() && entry["ignoreHeight"].get<bool>();
+        if (entry.contains("source") && entry["source"].is_string()) {
+            volume.source = entry["source"].get<std::string>();
+        }
+        if (entry.contains("via") && entry["via"].is_string()) {
+            volume.via = entry["via"].get<std::string>();
+        }
         volumes.push_back(std::move(volume));
+    }
+    // Stage QG3: the volumes of the other worlds (the instances): their tags and worlds, for the cause of a task that waits.
+    if (document.contains("elsewhere")) {
+        if (!document["elsewhere"].is_array()) {
+            return fail("the member elsewhere is not a list");
+        }
+        for (const json& entry : document["elsewhere"]) {
+            if (!entry.is_object() || !entry.contains("tag") || !entry["tag"].is_string() || !entry.contains("world") || !entry["world"].is_string()) {
+                return fail("an entry of elsewhere does not have a tag and a world");
+            }
+            std::vector<std::string>& worlds = m_elsewhere[lower_text(entry["tag"].get<std::string>())];
+            const std::string world = entry["world"].get<std::string>();
+            if (std::find(worlds.begin(), worlds.end(), world) == worlds.end()) {
+                worlds.push_back(world);
+            }
+        }
     }
     set(std::move(volumes));
     return true;
@@ -146,9 +210,36 @@ void TriggerData::set(std::vector<TriggerVolume> volumes) {
 
 void TriggerData::index() {
     m_byTag.clear();
+    m_cells.clear();
     for (std::size_t index = 0; index < m_volumes.size(); ++index) {
-        m_byTag[m_volumes[index].tag].push_back(static_cast<std::uint32_t>(index));
+        const TriggerVolume& volume = m_volumes[index];
+        m_byTag[volume.tag].push_back(static_cast<std::uint32_t>(index));
+        const float radius = reach(volume);
+        for (std::int64_t x = cell_of(volume.center[0] - radius); x <= cell_of(volume.center[0] + radius); ++x) {
+            for (std::int64_t y = cell_of(volume.center[1] - radius); y <= cell_of(volume.center[1] + radius); ++y) {
+                m_cells[cell_key(x, y)].push_back(static_cast<std::uint32_t>(index));
+            }
+        }
     }
+}
+
+const std::vector<std::string>* TriggerData::elsewhere(std::string_view tag) const {
+    const auto found = m_elsewhere.find(std::string(tag));
+    return found != m_elsewhere.end() ? &found->second : nullptr;
+}
+
+std::vector<const TriggerVolume*> TriggerData::at(float x, float y, float z) const {
+    std::vector<const TriggerVolume*> result;
+    const auto found = m_cells.find(cell_key(cell_of(x), cell_of(y)));
+    if (found == m_cells.end()) {
+        return result;
+    }
+    for (const std::uint32_t index : found->second) {
+        if (m_volumes[index].contains(x, y, z)) {
+            result.push_back(&m_volumes[index]);
+        }
+    }
+    return result;
 }
 
 bool TriggerData::knows(std::string_view tag) const {

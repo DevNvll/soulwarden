@@ -7,7 +7,9 @@ Each case builds the object stream elements of one trigger entity and runs the r
   - a turned entity with a sphere: the center turned, the radius as authored;
   - no query shape: the box component of the entity (Dimensions, the full size, with the scale of the entity);
   - no tag: no volume; no shape: a volume that the tool counts and does not write;
-  - the tags of the TaskTriggerArea rows of a quest data file (lower case).
+  - the tags of the TaskTriggerArea rows of a quest data file (lower case);
+  - stage QG3: the walk of a capitals placement (its rotation), a spawner at its start, a spawner with no start (notAtStart), an alias
+    spawner, a slice that spawns itself, a volume of an instance (elsewhere, with its world), and the comparison with the tasks.
 Status 0: each case passes. Usage: check_triggers_tool.py
 """
 
@@ -127,7 +129,92 @@ def main() -> int:
         tags = tool.quest_tags(path)
         report(tags == {"aelstrom_igc_trigger"} and tool.quest_tags(Path(folder) / "none.json") is None,
                "the tags of the TaskTriggerArea rows of a quest data file (lower case); no file: no comparison")
+    walk_cases(report, aabb, sphere)
     return 1 if failures else 0
+
+
+class MadeUpPaks:
+    """Stage QG3: the pak index of the walk cases: the capitals files of a main world W and of an instance, and the names of the slices."""
+
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = files
+
+    def paths(self, prefix: str, suffix: str) -> list[str]:
+        return sorted(path for path in self.files if path.startswith(prefix) and path.endswith(suffix))
+
+    def has(self, path: str) -> bool:
+        return path in self.files
+
+    def read(self, path: str) -> bytes:
+        return self.files[path]
+
+
+class MadeUpCatalog:
+    def __init__(self, data=None, endings=None) -> None:
+        self.paths = {(b"A" * 16, 0): "slices/test/child.dynamicslice", (b"B" * 16, 0): "slices/test/later.dynamicslice",
+                      (b"C" * 16, 0): "slices/test/loop.dynamicslice"}
+
+    def path(self, asset):
+        return self.paths.get(asset) if asset is not None else None
+
+
+def walk_cases(report, aabb: Element, sphere: Element) -> None:
+    """Stage QG3: the walk of the capitals and of the spawners, the other worlds, and the comparison with the tasks (made-up slices: the
+    content of a slice is given, no object stream is parsed). `report` counts the failures."""
+    identity = tool.IDENTITY
+    move = (1.0, 0.0, 0.0, 10.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    slices = {
+        "slices/test/root.dynamicslice": ([trigger_entity("Capital_Trigger", aabb, translation=(1.0, 0.0, 0.0))],
+                                          [(move, (b"A" * 16, 0), None, True), (identity, (b"B" * 16, 0), None, False),
+                                           (identity, None, (b"Z" * 16, 0), True)]),
+        "slices/test/child.dynamicslice": ([trigger_entity("Child_Trigger", sphere)], [(identity, (b"C" * 16, 0), None, True)]),
+        "slices/test/later.dynamicslice": ([trigger_entity("Later_Trigger", sphere)], []),
+        "slices/test/loop.dynamicslice": ([], [(identity, (b"C" * 16, 0), None, True)]),
+        "slices/test/instance.dynamicslice": ([trigger_entity("Instance_Trigger", sphere)], []),
+    }
+    half = math.sqrt(0.5)
+    capitals = {"Capitals": [{"sliceName": tool.PLOT}, {"sliceName": "test/root", "sliceAssetId": "",
+                                                       "worldPosition": {"x": 1000.0, "y": 2000.0, "z": 30.0},
+                                                       "rotation": {"x": 0.0, "y": 0.0, "z": half, "w": half}}]}
+    instance = {"Capitals": [{"sliceName": "test/instance", "worldPosition": {"x": 50.0, "y": 60.0, "z": 5.0}}]}
+    files = {name: b"" for name in slices}
+    files["sharedassets/coatlicue/w/regions/r_+00_+00/region.chunks"] = b""
+    files["sharedassets/coatlicue/w/regions/r_+00_+00/capitals/layer/layer.capitals.json"] = json.dumps(capitals).encode()
+    files["sharedassets/coatlicue/nw_dungeon_x/regions/r_+00_+00/capitals/script/script.capitals.json"] = json.dumps(instance).encode()
+    files[tool.CATALOG_PATH] = b""
+    saved = (tool.Catalog, tool.Walk.content, tool.Walk.chunks)
+    tool.Catalog = MadeUpCatalog
+    tool.Walk.content = lambda self, path, data=None: slices[path]
+    tool.Walk.chunks = lambda self, folder, region, seen: None
+    try:
+        document = tool.build(MadeUpPaks(files), "w", None, {"capital_trigger", "child_trigger", "later_trigger", "instance_trigger", "nowhere"})
+    finally:
+        tool.Catalog, tool.Walk.content, tool.Walk.chunks = saved
+    volumes = {volume["tag"]: volume for volume in document["volumes"]}
+    capital = volumes.get("Capital_Trigger", {})
+    child = volumes.get("Child_Trigger", {})
+    counts = document["counts"]
+    checks = [
+        (sorted(volumes) == ["Capital_Trigger", "Child_Trigger"] and near(capital.get("center", ()), (1000.0, 2001.0, 30.0))
+         and capital.get("via") == "capitals r_+00_+00/capitals/layer/layer.capitals.json row 1" and capital.get("world") == "w"
+         and capital.get("source") == "root.dynamicslice",
+         "stage QG3: a capitals placement (not <PLOT>) places its slice: the rotation of 90 degrees turns the entity offset (1, 0, 0) to "
+         "(0, 1, 0); the volume keeps its slice, its placement, and its world"),
+        (near(child.get("center", ()), (1000.0, 2010.0, 30.0)) and counts.get("volumesOfASpawnedSlice") == 1,
+         "stage QG3: a spawner with m_spawnOnInitialize 1 places its slice at the spawner place (the offset 10 m turns to the north)"),
+        ([volume["tag"] for volume in document["notAtStart"]] == ["Later_Trigger"] and counts.get("spawnersNotAtStart") == 1
+         and counts.get("aliasSpawners") == 1 and counts.get("slicesThatSpawnThemselvesOrTooDeep") == 1,
+         "stage QG3: the volume of a spawner with no start is in notAtStart, not in volumes; an alias spawner and a slice that spawns "
+         "itself are counted"),
+        ([(volume["tag"], volume["world"]) for volume in document["elsewhere"]] == [("Instance_Trigger", "nw_dungeon_x")]
+         and counts.get("otherWorlds") == 1,
+         "stage QG3: a volume of another world (an instance) is in elsewhere with its world, never in volumes"),
+        (document["tasks"] == {"tags": 5, "found": 2, "missing": ["instance_trigger", "later_trigger", "nowhere"],
+                               "elsewhere": {"instance_trigger": ["nw_dungeon_x"]}, "notAtStart": ["later_trigger"]},
+         "stage QG3: the comparison with the tasks names the instance of a missing tag and the tags of a spawner with no start"),
+    ]
+    for passed, text in checks:
+        report(passed, text)
 
 
 if __name__ == "__main__":

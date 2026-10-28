@@ -124,6 +124,8 @@ struct QuestTask {
     std::uint16_t territory{0};
     /** EnforceLocationRequirement: progress only inside a point of interest of `poiTags` (0x825DAD0, 0x825E860). */
     bool enforceLocation{false};
+    /** Stage QG3: OverrideLocation has a text (the place of the pin of the task: three numbers). The support manifest only. */
+    bool pin{false};
     /** ItemDropVC: the vitals categories (a possession task) or the gatherable ids (a gather task) of a quest drop. */
     std::vector<std::string> dropSources;
     /** ItemDropProbability: 0 to 100 (a blank cell: 0). */

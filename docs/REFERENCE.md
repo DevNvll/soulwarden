@@ -140,8 +140,8 @@ tools/gamedata/chests.sh           # one time: the chests of the world (without 
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/gathering.sh        # one time, after heights.sh: the gathering nodes of the world (without them each gather is refused); 40 MB, 1 minute; needs an Oodle library
 tools/gamedata/quests.sh           # one time: the quests, the achievement table, the backstory templates (without it no quest); 9 MB, 10 s; needs an Oodle library
-tools/gamedata/pois.sh             # one time: the shapes of the points of interest (without it no quest task of a place counts); 15 s; needs an Oodle library
-tools/gamedata/triggers.sh         # one time, after quests.sh: the trigger volumes of the quests (without it no quest task of a trigger area counts); 22 s; needs an Oodle library
+tools/gamedata/pois.sh             # one time, after quests.sh: the shapes of the points of interest and of the areas (without it no quest task of a place counts); 20 s; needs an Oodle library
+tools/gamedata/triggers.sh         # one time, after quests.sh: the trigger volumes of the quests (without it no quest task of a trigger area counts); 74 s; needs an Oodle library
 tools/gamedata/crafting.sh         # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits (without it each craft is refused; format 2 of stage 3.7b for refining, format 3 of stage 3.7c for procedural gear and Azoth); 9 MB, 5 s; needs an Oodle library
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
@@ -521,10 +521,16 @@ button on "Confirm").
 - `tools/gamedata/pois.sh` makes the points of interest (stage 1.8c; `poi-data.json`, format 1): the shape of each point of interest of the
   territory tables with its origin (the POI placement that the entries of the region metadata confirm), its tags, and its territory: 476
   points of interest in the supported build. Without the file the quest tasks of a place wait. Stage 1.8c also adds the vitals categories
-  to `loot.sh` (the kill tasks of the quests) and the quest objects to `gathering.sh` (run the two tools again).
+  to `loot.sh` (the kill tasks of the quests) and the quest objects to `gathering.sh` (run the two tools again). Stage QG3 (still format
+  2, 0.7 MB, 20 s; run it again after `quests.sh`): the origins of each layer and region, the area shapes in world coordinates, the source,
+  origin, and world of each place, and the tags with no shape with their cause: 787 places (616 POI shapes and 171 areas). In a
+  development run `tools/world quest places NAME` (route `GET /v1/dev/quests/places`, admin command `quest_places`) prints the territory,
+  the places, and the trigger volumes at the position of a character; it changes nothing.
 - `tools/gamedata/triggers.sh` makes the trigger volumes of the quests (stage 1.8b; `trigger-data.json`, format 1, 0.2 MB, 22 s): the
   detection volume of each quest trigger of the chunk slices with its tag: 849 volumes with 790 tags in the supported build. Without the
-  file a quest task of a trigger area waits. Stage 1.8b also changes `quests.sh` (the columns of the game events) and `interactions.sh`
+  file a quest task of a trigger area waits. Stage QG3 (still format 1, 0.35 MB, 74 s): also the capitals of each region and the slices
+  that they spawn at their start (860 volumes with 791 tags); the 48 volumes of the instances are apart with their world and never count
+  in the open world. Stage 1.8b also changes `quests.sh` (the columns of the game events) and `interactions.sh`
   (the ids of the persons near a border of the id rule): run the three tools again. Stage 1.8d changes `progression.sh` (format 3: the territory
   standings) and `loot.sh` (the loot table of each loot container item): run the two tools again; with a file from before, the hand-in of
   a quest with a standing or a container reward is refused. Stage QG2a changes `loot.sh` (still format 2: the salvage event of each loot container item, the cells

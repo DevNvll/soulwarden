@@ -14,6 +14,10 @@
 // The client sends no message for these volumes (live check T1 of stage 1.8b: no message 560 at the entry of Aelstrom_IGC_Trigger): the
 // server tests the accepted position of a character against the volumes of the tag of an active task. A lookup goes by the tag (a hash):
 // no scan of all volumes (rule MP-8). Without the file the backend starts, and a task of a trigger area waits.
+//
+// Stage QG3: the tool also walks the capitals of the open world and the slices that they and the chunks spawn at their start; each volume
+// has its world. A volume of another world (an instance: a dungeon, the introduction worlds) is in the member `elsewhere` of the file and
+// is never tested in the open world: its tag and its worlds are kept only for the cause of a task that waits (the manifest).
 
 namespace soulwarden::backend::gamedata {
 
@@ -35,6 +39,9 @@ struct TriggerVolume {
     float height{0.0F};
     /** m_ignoreHeight: the volume has no limit in Z. */
     bool ignoreHeight{false};
+    /** Stage QG3: the slice of the entity and the placement that put it in the world (a chunk, or a capitals file and its row). */
+    std::string source;
+    std::string via;
 
     /** @return True when the point is in the volume (the border counts as inside). */
     [[nodiscard]] bool contains(float x, float y, float z) const;
@@ -68,6 +75,20 @@ public:
      *         null) counts them.
      */
     [[nodiscard]] bool inside(std::string_view tag, float x, float y, float z, std::uint64_t* visits = nullptr) const;
+    /**
+     * Stage QG3: @return The worlds of the volumes of a tag (lower case) that are not in the open world (an instance), or null. Such a
+     *         volume is never tested: only the cause of a task of the tag uses it.
+     */
+    [[nodiscard]] const std::vector<std::string>* elsewhere(std::string_view tag) const;
+    /** Stage QG3: @return The volumes that hold the point (a grid of 256 m: only the volumes near the cell of the point; the place view). */
+    [[nodiscard]] std::vector<const TriggerVolume*> at(float x, float y, float z) const;
+    /** Stage QG3: the volumes of the member `volumes` of another world (not used), and the tags of the other worlds. */
+    [[nodiscard]] std::size_t other_world() const {
+        return m_otherWorld;
+    }
+    [[nodiscard]] std::size_t elsewhere_tags() const {
+        return m_elsewhere.size();
+    }
 
 private:
     bool fail(std::string cause);
@@ -76,6 +97,10 @@ private:
     std::vector<TriggerVolume> m_volumes;
     std::unordered_map<std::string, std::vector<std::uint32_t>> m_byTag;
     std::string m_error;
+    /** Stage QG3: the worlds of each tag of the other worlds, the cells of the grid, and the count of the volumes of another world. */
+    std::unordered_map<std::string, std::vector<std::string>> m_elsewhere;
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> m_cells;
+    std::size_t m_otherWorld{0};
 };
 
 } // namespace soulwarden::backend::gamedata

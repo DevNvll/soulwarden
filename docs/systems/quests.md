@@ -41,6 +41,7 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage 1.8e: a cinematic in a development run | the command `quest_cinematic` (`server/http/quest_commands.cpp`), `Quests::cinematic` |
 | Stage 1.8f: the corrections of the review of 1.8e | `Combat::strike_objects`, `QuestObjects::strike` (the cutscene, the wall line: `Navigation::line_ready`, `line_stop`), `Quests::object_destroyed` (one plan), `QuestObjectData::load_text` (one actor, one key), `QuestSupport` (the items, the hand-in, `std::size_t` counters); `tests/review_quests_18e_tests.cpp`, cases QRE1 to QRE8, QF1 |
 | Stage QG2a: the small quest rules (the category rule, TaskHaveLevel, the salvage events, the Azoth amount, no arc gate, the push) | `LootTables::kill_categories` (`gamedata/loot_tables.h`), `Rewards::killed`; the TaskHaveLevel predicate of `Quests::Plan::predicate`, `Quests::level_changed` (called by `Progress::finish`); `gamedata/game_event.h` (`read_game_event`, `azoth_amount`); `ItemContainers::open`, `open_refusal`; `Quests::available`; `Quests::PushIndex`, `push_changed`, `pushed`; `QuestSupport` (the reasons, the location rule, the push source); `tests/quest_gap_tests.cpp` (QG2A to QG2G, but QG2D), `tests/quest_gap_support_tests.cpp` (QG2D); the second computation `~/Games/soulwarden/work/evidence/quests/qg2a/implement/scripts/support_check.py` |
+| Stage QG3: the places (the area shapes, the origins of each layer and region, the causes of the tags with no shape, the trigger volumes of the capitals, the instance volumes, the place view) | `tools/gamedata/pois.py` (`origin_of`, `read_plots`, `unshaped_tags`), `tools/gamedata/triggers.py` (`Walk`), `check_pois_tool.py`, `check_triggers_tool.py`; `gamedata/poi_data.h` (`PoiData::cause`, `at`), `gamedata/trigger_data.h` (`TriggerData::elsewhere`, `at`); the reasons of `QuestSupport::evaluate`; the command `quest_places` (`server/http/quest_commands.cpp`, `tools/world quest places`); `tests/quest_places_tests.cpp` (QG3A to QG3E); the review of QG2a: `tests/review_qg2a_tests.cpp` (QGR2A1 to QGR2A5); the second computation `~/Games/soulwarden/work/evidence/quests/qg3/implement/scripts/support_check.py` |
 | The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`; stage QG2a: `research/quest-gaps.md`, `research/quest-gaps-qg2b.md`, the static read of the category rule `evidence/quests/qg2a/implement/static/category/CATEGORY.md` |
 
 ## Rules
@@ -266,6 +267,8 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
   entity with an ObjectiveDetectionVolumeComponent, its m_targetTag, and its detection volume in world coordinates (the chunk position and
   the entity transform; QueryShapeAabb, a box, a sphere, a cylinder, a capsule; with no query shape the shape component of the entity). 849
   volumes with 790 tags in the supported build; 657 of the 700 trigger tags of the tasks have a volume (each of the 10 of the beach chain).
+  Stage QG3: also the capitals of each region and the slices that they and the chunks spawn at their start, and the volumes of the other
+  worlds apart (the section of stage QG3): 860 volumes with 791 tags of the open world, 48 volumes of 7 instances.
 - The cutscenes [live A1 of stage 1.8a, C1 and I1 of stage 1.8b; research conversations.md]: the client runs the AchievementEvents script of
   a cutscene spawner with the bits of its player (`Start_IGC_X && !Watched_IGC_X`) and sends 6703 with the CRC-32 of the cutscene name. The
   server grants it (6707 with the CRC) only when an Active TaskCutsceneComplete of the character has that name: it is the pending cutscene of
@@ -508,11 +511,66 @@ live checks are in `~/Games/soulwarden/work/evidence/quests/qg2a/implement/RESUL
   template or a community goal: its mission instance gives the item), KillEnemyWeaponID of an ability table (a weapon filter:
   `BowAbilityTable`) or of neither an item nor a table (`Turkey`), TaskHaveLevel of a faction progression, and a loot container whose
   salvage event pays a reward with no owner [research quest-gaps.md sections 2 and 8]. No row becomes supported by these reasons.
-- The location rule in the manifest (stage QG2a): a task with EnforceLocationRequirement and a POITag progresses only in a point of interest
-  of a tag (`Quests::matched_tasks`, `plan_drops`, `Plan::location_ok`, stage 1.8c); with no shape of any of its tags in the POI data the
-  task never progresses, and the manifest blocks it ("the location rule (EnforceLocationRequirement) needs a point of interest shape") [the
-  rule of the runtime; agent]. The manifests of the stages 1.8e to QG1 did not test it: 13 rows were marked supported that no character can
+- The location rule in the manifest (stage QG2a; its scope corrected in stage QG3, finding QG2R-R2): a task with EnforceLocationRequirement
+  and a POITag progresses only in a point of interest of a tag when its runtime path tests the rule: the possession and the equip
+  predicates (`Plan::location_ok`), the quest drops (`plan_drops`), and the counters of an event (`Quests::matched_tasks`: the kills, the
+  game events, the gathers, the crafts, the refines, the screens, the interactions, the cutscenes, the cinematics, the states of a
+  person). TaskAchievement, TaskTriggerArea, TaskHaveLevel, and TaskConversationTopic (direct progress: `Quests::topics_finished`) do not
+  test it. For a task of the scope with no shape of any of its tags in the POI data the task never progresses, and the manifest blocks it
+  ("the location rule (EnforceLocationRequirement) needs a point of interest shape") [the rule of the runtime; agent]. The manifests of the stages 1.8e to QG1 did not test it: 13 rows were marked supported that no character can
   complete (among them `FactionIntro_Marauders_01`, `06A_MSQ_12_DefeatPirateCaptain`; the tags `abandoned_village_40289`, `brightwood8`).
+
+### The places of stage QG3
+
+The rules of the places do not change (the shape of a point of interest and the volume of a trigger area at the accepted position; 2297
+and 6416 are a cue). Stage QG3 gives the data the places that the tools of 1.8b and 1.8c did not find [research quest-gaps.md sections 1
+and 2; data].
+
+- The origin of a POI shape is a POI or an area plot of any layer and any region of the open world [data]: the placements whose slice is
+  POI_CapitalPlot or Area_CapitalPlot (1,262 plots). The tool of 1.8c took only the POI plots of the layer "pois" of the folder of the
+  shape. The fit rule does not change (90 percent of the entries of the id in the shape, at most 5 percent wrong entries, the margin of
+  6 m); the check uses the entries of each region (40300 Everfall_Settlement_01 has its shape file in r_+04_+03 and its entries and its
+  plot in r_+04_+02). Of two plots with the same fit (plots a few meters apart: 8 shapes) the plot of the layer "pois" of the folder of the
+  shape comes first, then a plot of that region [agent: the rule of 1.8c keeps its origins; no origin of the 476 shapes of before
+  changed]. The source of most new origins: an Area_CapitalPlot of the layer "pois" (45), a plot of another layer (87, for example the
+  shipwrecks of 04nwindward_persist_capt and the shrines of 08queensport_persistence), a plot of another region (7).
+- A shape file `poi_NAME_ID.vshapec` has its id at the end (`poi_ancient_observatory_20423.vshapec`) [data].
+- The area shapes (`objects/worldprisms/areas/FOLDER/NAME.vshapec`, the form of a POI shape) are in world meters: the origin is zero
+  [data: the entries agree at the origin zero; Great Cleave area 5 spans x 8625 to 9416]. The file has no id, and its name does not always
+  agree with the name key of a row (`monarchsbluffs/area1` and `@ui_area_monarchsbluff_1`; the files of the folder `queensport` are the
+  areas of Ebonscale Reach; `windswardshores/area2` is the area of the row `windswardshores2_v2`). The id of an area file is each area row
+  (IsArea) whose entries agree with the shape at the origin zero, by the same fit rule [agent: the fit is the data link; 131 of the 171
+  files agree with the name key, and each of the 171 files binds exactly one row]. The 5 older Windsward Shores rows (9112, 9116 to 9119)
+  have no entry: their V2 and FFA rows have the shapes.
+- Each point of interest of `poi-data.json` keeps its kind (`poi`, `area`), its source (the shape file), its origin (the capitals file
+  and the row of its plot, or the world origin of an area), the count of the origins that agree, and its world. The backend uses only the
+  shapes of the open world (`gamedata::kOpenWorld`); a shape of another world is counted and not used [agent: an instance has its own
+  stage].
+- The tags with no shape stay apart from the tasks with no tag [agent]. `unshaped` lists each tag of the territory tables with no shape
+  and the cause for each id of the tag: no shape file of the id, no POI or area plot that agrees, no entry of the region metadata, no row,
+  a second shape. `PoiData::cause` gives it; a tag of no row has the cause "no row of the territory tables has the tag". The manifest
+  names the cause in the block of a place task and of the location rule. A place task with no POITag has its own reason: the place of a
+  mission template (its mission instance gives it), a pin task (OverrideLocation with no tag), or a blank cell (it never completes).
+- No bounding box of entries is a shape [project rule of the brief: it is not the shape of the game]. The search of the inline shapes
+  (the territory components of the placed slices of the open world, the walk of the trigger tool: 1,481 components; 1,045 POI plots, 207
+  area plots, 13 siege forts with m_useLocalBounds 1, the masters of some objects) found no id that binds an inline shape to a territory
+  id or a tag [data]: a component has only m_isPOITerritory, m_useLocalBounds, m_Radius, the guild and player names, and the storage
+  overrides; its charted shape has an empty shape asset and the default prism of 100 m (6 POI plots have an inline prism of their own, also
+  with no id). The tags whose row has no shape file stay in `unshaped`.
+- The trigger volumes [data; the placement rule of the collision tool]: the tool also walks the capitals of each region of the open world
+  (each placement that is not `<PLOT>`: its slice at the position, the rotation, and the scale of the placement) and the slices that a
+  chunk or a slice spawns at its start (m_spawnOnInitialize 1, at most 12 levels, no slice that spawns itself). A volume keeps its slice
+  (`source`), its placement (`via`: the chunk, or the capitals file and its row), and its world. The build: 11 new volumes (the tag
+  Obj_GotoOutpost_Complete_00 of the outpost slices; no task of the data names it); no volume below a spawner; 13,475 spawners with no
+  start (their slices have no volume).
+- A volume of another world (an instance: a dungeon level script, a trial, the introduction worlds ftue_v2 and climaxftue_02) is in the
+  member `elsewhere` with its world, never in `volumes` [agent: it belongs to its instance stage]. The backend never tests it; the
+  manifest names its world ("the volume of the tag ... is in the instance ..."): 35 of the 43 trigger tags of the tasks with no volume of
+  the open world have a volume of an instance (48 volumes in 7 worlds). The other 8: the never-true tags, `triggervol_msq_dummytask`,
+  `maudlinbug_waltz`, `tv_17zq_galbrionoffice`, `tv_17zquru3_teleportedchallenge2` (no volume in any world).
+- The place view (the command `quest_places` of the admin and development routes, `tools/world quest places CHARACTER`) [agent: a
+  development aid]: the territory, the points of interest and the areas, and the trigger volumes at the accepted position of a character,
+  with their sources. A grid of 256 m of each loader visits only the shapes and the volumes near the position (no scan of each shape; MP-8).
 
 ### The support manifest (stage 1.8e)
 
@@ -614,6 +672,38 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   rule, its own TaskHaveLevel, an allow list of the cells of a salvage event, the Azoth amount, the push) gives the same counts: 2,147
   rows, 356 supported, 0 row differences, 0 kill and level fact differences, 306 histories with 0 differences, 25 groups; on the manifest
   of stage QG1 it finds 230 row differences.
+
+- The counts of stage QG3 (the same game data, with `poi-data.json` and `trigger-data.json` of stage QG3, and the corrections of the
+  review of QG2a): 414 supported objectives (356 before; 58 new, 0 no longer). The first reasons before of the 58 new rows: 46 a point of
+  interest with no shape (the new places), 12 the location rule (9 a tag with a new shape, 3 the correction QG2R-R2:
+  `06A_MSQ_06_RescueFarmers`, `06A_MSQ_14_SolveMapPuzzle`, `0713_0101_explorerift`). The corrections of the review alone (the old place
+  data) give 359. A new character of each archetype completes 37 (35 before; new: `C10A_S8_SnaggleTooth`, `C10A_S9_Catnipping`). A level 60
+  character with no template completes 7 (7 before). The 298 template histories in 23 groups complete 7 to 16 (7 to 14 before;
+  `99F_MSQ_ER_DeliverPoem`: 16, `16_Side_19_HelpWarden`: 14, 158 templates with no start objective: 7 to 15); 116 of the 306 histories
+  have a new played list. The first reasons of the 613 objectives that are not supported: 157 an item with no source, 99 a point of
+  interest with no shape (183 before; their causes: 66 no plot agrees, 25 no shape file of the id, 7 no entry of the region metadata, 1
+  no row), 73 no producer of a game event, 48 TaskGameMode, 39 no creature of the categories, 35 TaskQuickCourse, 30 no grant source
+  that the backend runs, 21 no object of the interact tag, 20 TaskHaveLevel of a faction progression, 15 the location rule with no shape
+  (38 before), 4 a trigger volume of an instance, and 26 smaller groups. The second computation (a copy of `support_check.py` with the
+  rules of stage QG3 in the evidence of the stage: its own readers of the shapes and the volumes of the open world, its own place, trigger,
+  and location facts, the corrections QG2R-R1, R4, and R5) gives the same counts: 2,147 rows, 414 supported, 0 row differences, 0 of 3,905
+  own facts differ, 306 histories with 0 differences, 25 groups; on the manifest of before with the new data it finds 34 row differences.
+
+### The corrections of the code review of stage QG2a (in stage QG3)
+
+The findings QG2R-R1 to QG2R-R5 (`~/Games/soulwarden/work/evidence/quests/qg2a/code-review/FINDINGS.md`) are corrected in stage QG3; each
+has a case of `tests/review_qg2a_tests.cpp` (QGR2A1 to QGR2A5) that fails on the tree of stage QG2a and passes after the correction.
+
+- QG2R-R1 (QGR2A1): the categories of a known base row with the member VitalsCategories are its list, also when it is empty [client: the
+  drop helper returns false for an empty base list, 0x5C758FE; the kill tests the base id apart, 0x3B1A057]. Only a row of a file of
+  before stage 1.8c (9 members: `LootVitals::hasCategories` false) uses the vitals row as its category.
+- QG2R-R2 (QGR2A2): the location rule of the manifest applies only to the task types whose runtime path tests it (the rule of the
+  section of stage QG2a above).
+- QG2R-R3 (QGR2A3): a loot container that the runtime refuses to open (`ItemContainers::openable`: a salvage event with a reward that has
+  no owner) is no source of the items of its table in the manifest.
+- QG2R-R4 (QGR2A4): a CurrencyReward with a fraction (2500.75) stays unpaid; the open of its container is refused with no change.
+- QG2R-R5 (QGR2A5): AzothReward is the whole text of a number of 0 or more; a negative cell (-0.5) and a text after the number (37junk)
+  stay unpaid.
 
 ### The corrections of the code review of stage 2.5c (in stage 1.8b)
 
@@ -735,9 +825,11 @@ tools/world achievement CHARACTER ID on|off     # development only: the change e
 tools/gamedata/quest-objects.sh [OUTPUT.json]   # stage 1.8e: the destructible quest objects (a test: a path outside the common folder)
 tools/world quest cinematic CHARACTER ID start|end   # stage 1.8e, development only: the notice of 6606 and 6542 (no audio, no video)
 tools/world quest support FILE                  # stage 1.8e: the support manifest into FILE (outside the repository)
+tools/world quest places CHARACTER              # stage QG3: the territory, the points of interest, the areas, and the trigger volumes at its position
+tools/gamedata/pois.sh OUT.json --quests QUESTS # stage QG3: with the comparison of the tags of the place tasks (member tasks)
 ```
 
-The admin interface has the route `GET /admin/v1/catalog/quest-support` (stage 1.8e: the support manifest), the commands `apply_backstory` (argument `template`), `quest_rewards` (arguments `objective` and `territory`; stage 1.8d), `abandon_quest` and `reset_quest` (argument `instance`, 16
+The admin interface has the route `GET /admin/v1/catalog/quest-support` (stage 1.8e: the support manifest), the commands `apply_backstory` (argument `template`), `quest_rewards` (arguments `objective` and `territory`; stage 1.8d), `quest_places` (no argument; stage QG3: a reader), `abandon_quest` and `reset_quest` (argument `instance`, 16
 hexadecimal digits), the route `GET /admin/v1/catalog/backstories`, and the member `quests` of the state of a character (stage 1.8c: with
 the award rows and the counts of the events; stage 1.8b: the counts of the offers, the hand-ins, the cutscenes, the whispers, the trigger
 volumes, and the topic effects). The tool window has no control for them in this stage. An offer and a hand-in have no command: they come
@@ -821,7 +913,24 @@ from the client at a person (a development run: `tools/world quest grant` gives 
   `_pushedonce` bit, or its requirement, is true again).
 - Stage QG2a: the HUD of the client shows its own list of pins: a quest of a command (`tools/world quest grant`) can be pinned on the server
   and not on the HUD when the client has many quests. Read the counter of a task in the journal (J, the category of the quest).
-- Stage QG2a: a kill task with EnforceLocationRequirement and a tag with no shape never counts (the bears of `02A_Side06_01_Bears`, the tag
-  `brightwood8`): the manifest blocks such a row now. Choose a quest of the manifest of the same tree for a live check.
+- Stage QG2a: a kill task with EnforceLocationRequirement and a tag with no shape never counts: the manifest blocks such a row. Choose a
+  quest of the manifest of the same tree for a live check. (Stage QG3: the tag `brightwood8` of the bears of `02A_Side06_01_Bears` has
+  its area shape now, and the row is supported.)
 - Stage QG2a: in a live fight with the journal open the creatures still attack: the development character died at the ruins of
   `ancient_ruins_40214`. Take the pictures with `tools/world ignore CHARACTER on`, then turn it off for the kill (the mode gives no credit).
+- Stage QG3: a POI shape can fit near its plot and still fail the fit rule: 79 tags of the tasks have such a shape (40116 Shattered
+  Obelisk: 355 of 406 entries inside at the plot, 112 wrong; 40268 Green Defile: 96 of 100 inside, 17 wrong). The file and the entries of
+  the region metadata are of different builds of the place, or the origin is not a plot. Do not relax the fit for them: a wrong origin
+  credits a quest at a wrong place. They stay in `unshaped` with their cause.
+- Stage QG3: the fit of a shape with few entries is weak evidence: 86 shapes of the file have fewer than 10 entries in them (the influence
+  towers have 1 to 9). The only plot that agrees is the origin for 84 of them (`candidates` 1), but check such a place in the client
+  (`tools/world quest places`, the cue 2297) before a live test relies on it.
+- Stage QG3: an area file and its row have names that do not agree for 40 of the 171 files (the folders `monarchsbluffs` and
+  `queensport`, the V2 and FFA rows of Windsward Shores): do not bind an area file by its name. The entries decide.
+- Stage QG3: the client can give its cue of an area some meters before the border of the data (live QG3: the entry and the exit of
+  9027 Faith's Bounty 6.5 m west of the common border of 9027 and 9022 in the data, both directions; the cues of 9022 1.9 to 2.5 m from
+  it; the watchtower 30220 within 1 m). The server completes a task of the place when the accepted position crosses the border of the
+  data: up to about a second after the cue. Read the place view (`tools/world quest places`), not only the cue, for a check of a border.
+- Stage QG3: a travel can put the character in the discovery sphere of a POI (DiscoveryRadius, 150 to 1000 m): the client sends 2297
+  "entered" for it and the shape of the data says outside (live QG3: the shipwrecks 30215 and 30216 at 177 m and 127 m, radius 200). That
+  is no disagreement of the shape.

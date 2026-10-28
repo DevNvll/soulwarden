@@ -50,8 +50,10 @@ std::optional<double> whole_number(const std::string& text) {
 } // namespace
 
 std::optional<std::uint64_t> azoth_amount(const std::string& text) {
-    const std::optional<double> value = number(trimmed(text));
-    if (!value) {
+    // Code review of stage QG2a, finding QG2R-R5: the whole text is the number ("37junk" is no amount), and a negative cell (-0.5) has no
+    // rule: both stay unpaid.
+    const std::optional<double> value = whole_number(trimmed(text));
+    if (!value || *value < 0.0) {
         return std::nullopt;
     }
     // The cell is a float32 (numeric column kind 2); the integer getter 0x5AC0ED0 truncates it toward zero (cvttss2si at 0x5AC0F7B), and
@@ -85,7 +87,8 @@ QuestGameEvent read_game_event(const std::string& key, const EventCells& cells) 
     // number with a text after it must not pay its first number).
     if (const std::string text = trimmed(cell(cells, "CurrencyReward")); !text.empty()) {
         const std::optional<double> value = whole_number(text);
-        if (value && *value >= 0.0) {
+        // Code review of stage QG2a, finding QG2R-R4: a fraction (2500.75) is not a whole number of the units of the wallet: unpaid.
+        if (value && *value >= 0.0 && std::floor(*value) == *value) {
             event.coin = static_cast<std::uint64_t>(std::min(*value, 1e12));
         } else {
             event.unpaid.push_back("CurrencyReward " + text);

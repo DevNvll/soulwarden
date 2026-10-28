@@ -565,6 +565,7 @@ bool LootTables::load(const std::string& path) {
             }
             base.tags.push_back(std::move(text));
         }
+        base.hasCategories = row.size() == 10;
         if (row.size() == 10) {
             if (!row[9].is_array()) {
                 return fail("the vitals categories of the vitals row " + base.id + " are not a list");
@@ -695,9 +696,10 @@ std::vector<std::string> LootTables::kill_categories(const LootVitals* vitals, s
     }
     // The categories with a parent test: the base row (stage 1.8c: VitalsCategories, the vector of row +0xF0; a file of the loot tool of
     // before stage 1.8c has none: the vitals row), and the category of the spawn point (stage QG2a: the separate category of the victim, also
-    // when the base row has categories).
+    // when the base row has categories). Code review of stage QG2a, finding QG2R-R1: the list of a known base row also when it is empty (the
+    // drop helper returns false for an empty base list at 0x5C758FE; the kill tests the base id apart, 0x3B1A057).
     std::vector<std::string> own;
-    if (vitals != nullptr && !vitals->categories.empty()) {
+    if (vitals != nullptr && vitals->hasCategories) {
         own = vitals->categories;
     } else {
         own.push_back(lower_text(vitalsRow));

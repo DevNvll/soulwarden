@@ -214,6 +214,10 @@ not, as for the items):
                                                 stage 1.8d: the reward join of a hand-in of the objective (what it pays, or the
                                                 reward that refuses it) and the availability of its offer (no change)
   tools/world quest grant CHARACTER OBJECTIVE   a new instance of an objective (development only)
+  tools/world quest places CHARACTER            stage QG3: the places of the data at the position of the character:
+                                                its territory, each point of interest and area shape that holds it
+                                                (the id, the tags, the shape file), each trigger volume that holds it
+                                                (the tag, the slice, the placement) (no change)
   tools/world quest cinematic CHARACTER ID start|end
                                                 stage 1.8e: the notice of the client messages 6606 and 6542 to the
                                                 quests (development only: a development run has no audio, and its
@@ -1663,6 +1667,8 @@ def main() -> None:
             fail("the cinematic must be an id of the cinematic data (TempestRising)")
         request(data_dir, "POST", f"/v1/dev/quests/cinematic?character={character_id(data_dir, arguments[2])}"
                                   f"&id={arguments[3]}&phase={arguments[4]}")
+    elif command == "quest" and len(arguments) == 3 and arguments[1] == "places":
+        request(data_dir, "GET", f"/v1/dev/quests/places?character={character_id(data_dir, arguments[2])}")
     elif command == "quest" and len(arguments) == 3 and arguments[1] == "support":
         save_quest_support(data_dir, Path(arguments[2]).expanduser())
     elif command == "achievement" and len(arguments) == 4 and arguments[3] in ("on", "off"):

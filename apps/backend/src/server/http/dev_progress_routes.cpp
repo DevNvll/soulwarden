@@ -67,6 +67,8 @@
 //                                                         interface)
 //   POST /v1/dev/quests/reset?character=ID&instance=HEX   the reset of a quest (stage 1.8c; the command reset_quest)
 //   GET  /v1/dev/quests/rewards?character=ID&objective=ID[&territory=N]  the reward join and the availability of an objective (stage 1.8d)
+//   GET  /v1/dev/quests/places?character=ID                the places of the data at the position of the character (stage QG3; the command
+//                                                          quest_places)
 //   POST /v1/dev/quests/cinematic?character=ID&id=ID&phase=start|end
 //                                                         the notice of the client messages 6606 and 6542 to the quest system (stage
 //                                                         1.8e, development only: a development run has no audio, and its client then
@@ -165,6 +167,7 @@ void register_dev_progress_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/quests/abandon", "dev.quest_abandon", command_route(services, commands::abandon_quest));
     router.add("POST", "", "/v1/dev/quests/reset", "dev.quest_reset", command_route(services, commands::reset_quest));
     router.add("GET", "", "/v1/dev/quests/rewards", "dev.quest_rewards", command_route(services, commands::quest_rewards));
+    router.add("GET", "", "/v1/dev/quests/places", "dev.quest_places", command_route(services, commands::quest_places));
     router.add("GET", "", "/v1/dev/quests/support", "dev.quest_support", [&services](const RouteContext& context) {
         if (!context.request.host.empty()) {
             return message(403, "forbidden");

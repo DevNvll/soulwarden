@@ -21,14 +21,28 @@ The sources (all in the pak files of the game copy):
      reads the same components). The entity transform
      (m_worldTM: three basis vectors, then the translation) places it in its chunk.
 
+  3. Stage QG3: the capitals of each region (regions/REGION/capitals/LAYER/LAYER.capitals.json): each placement (not "<PLOT>") names a
+     slice that the game makes at run time, at the position, the rotation, and the scale of the placement (the rule of the collision
+     tool, collision_data.py). The tool reads the trigger entities of that slice, and of each slice that a slice spawns at its start
+     (the spawner component b52d0d52-..., m_sliceAsset, m_spawnOnInitialize 1; at most 12 levels), also of a spawner of a chunk. A
+     spawner that does not spawn at its start (a script or an event spawns it) and an alias spawner are counted; their volumes are not
+     in `volumes` (a volume of a spawner with no start is in `notAtStart`, with its tag).
+  4. Stage QG3: the other worlds (an instance: a dungeon, a trial, the introduction worlds ftue_v2 and climaxftue_02): the same walk of
+     their capitals. Their volumes are in `elsewhere`, each with its world, never in `volumes`: the backend never tests them in the main
+     world. A volume belongs to its instance stage.
+
 The client sends no message for these volumes (live check T1 of stage 1.8b: no message 560 at the entry of Aelstrom_IGC_Trigger; the
 trigger is local, PlayerOnly, and not synchronized): the server tests the position itself.
 
 Output (one line of JSON):
   {"format": 1, "world": TEXT,
    "volumes": [{"tag", "shape", "center": [X, Y, Z], "axes": [9 numbers: the unit axes X, Y, Z of the volume in world coordinates],
-                "half": [X, Y, Z], "radius", "height", "ignoreHeight", "filter", "source"}, ...],
-   "tasks": {"tags": N, "found": N, "missing": [TAG, ...]}, "counts": {...}}
+                "half": [X, Y, Z], "radius", "height", "ignoreHeight", "filter", "source", "via", "world"}, ...],
+   "notAtStart": [{"tag", "source", "via"}, ...], "elsewhere": [{"tag", "world", "source", "via"}, ...],
+   "tasks": {"tags": N, "found": N, "missing": [TAG, ...], "elsewhere": {TAG: [WORLD, ...]}, "notAtStart": [TAG, ...]},
+   "counts": {...}}
+  "source" is the slice of the entity, "via" the placement that put it in the world (a chunk slice, or a capitals file and its row);
+  "world" the world of the volume (stage QG3).
   "shape" is aabb, box, sphere, cylinder, or capsule. "half" is the half size of a box on its axes (aabb: on the world axes); "radius" and
   "height" (the full height along the Z axis of the volume) are the sizes of a sphere, a cylinder, or a capsule. The sizes of a query shape
   are the authored sizes with the scale of the entity in them (a decision of an agent from the data: the m_aabb of TriggerVol_06_Reese is
@@ -53,20 +67,25 @@ import argparse
 import json
 import math
 import os
+import re
 import struct
 import sys
+import uuid
 from collections import Counter
 from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from collision_data import PLOT, quaternion_matrix, slice_key  # noqa: E402
 from nav_assets import CATALOG_PATH, Catalog, Element, Failure, Paks, asset_id, field_id, number, type_bytes, walk  # noqa: E402
-from nav_shapes import multiply  # noqa: E402
-from nav_slices import matrix_of  # noqa: E402
+from nav_shapes import IDENTITY, multiply  # noqa: E402
+from nav_slices import ALIAS_FIELD, ON_START_FIELD, SLICE_ASSET_FIELD, SPAWNER_TYPE, matrix_of  # noqa: E402
 
 OUTPUT_NAME = "trigger-data.json"
 FORMAT = 1
 DEFAULT_WORLD = "newworld_vitaeeterna"
+# Stage QG3: the levels of spawners that the walk follows (the limit of the collision tool).
+MAX_DEPTH = 12
 
 ENTITY_TYPE = type_bytes("75651658-8663-478d-9090-2432dfcafa44")
 TRANSFORM_TYPE = type_bytes("484ae67d-abd0-4d9c-b2c8-9bb0eec900e0")
@@ -222,21 +241,160 @@ def slice_volumes(roots: list[Element], base: tuple[float, ...], source: str, co
             components = node.child(COMPONENTS_FIELD)
             if components is None or component(components, OBJECTIVE_VOLUME_TYPE) is None:
                 continue
-            counts["triggerEntities"] += 1
-            volume = volume_of(node, base, source)
-            if volume is None:
-                counts["triggersWithNoTag"] += 1
-                continue
-            if volume.get("noShape"):
-                counts["triggersWithNoShape"] += 1
-                continue
-            counts["volumesWithAnEntityShape" if volume.get("entityShape") else "volumesWithAQueryShape"] += 1
-            volumes.append(volume)
+            volume = counted(volume_of(node, base, source), counts)
+            if volume is not None:
+                volumes.append(volume)
     return volumes
 
 
+def counted(volume: dict | None, counts: Counter) -> dict | None:
+    """@return The volume of a trigger entity, or None (counted) when it has no tag or no shape."""
+    counts["triggerEntities"] += 1
+    if volume is None:
+        counts["triggersWithNoTag"] += 1
+        return None
+    if volume.get("noShape"):
+        counts["triggersWithNoShape"] += 1
+        return None
+    counts["volumesWithAnEntityShape" if volume.get("entityShape") else "volumesWithAQueryShape"] += 1
+    return volume
+
+
+class Walk:
+    """Stage QG3: the placed slices of one world (the chunk slices, the capitals placements, and the slices that they spawn) and the trigger
+    volumes in them. A spawner follows the rule of the collision tool: m_sliceAsset with m_spawnOnInitialize 1, at most MAX_DEPTH
+    levels, no slice that spawns itself. The volumes below a spawner with no start go to `not_at_start`."""
+
+    def __init__(self, paks: Paks, catalog: Catalog, world: str, counts: Counter) -> None:
+        self.paks = paks
+        self.catalog = catalog
+        self.world = world
+        self.counts = counts
+        self.cache: dict[str, tuple[list[Element], list[tuple]]] = {}
+        self.volumes: list[dict] = []
+        self.not_at_start: list[dict] = []
+
+    def content(self, path: str, data: bytes | None = None) -> tuple[list[Element], list[tuple]]:
+        """@return The trigger entities and the spawners (matrix, slice asset, alias asset, at start) of a slice."""
+        found = self.cache.get(path)
+        if found is not None:
+            return found
+        from nav_assets import parse  # noqa: E402 (the parser of the object streams)
+        keep = data is None  # A chunk (its data given) is read one time; a slice of a capital or a spawner can be placed many times.
+        data = self.paks.read(path) if data is None else data
+        triggers: list[Element] = []
+        spawners: list[tuple] = []
+        if OBJECTIVE_VOLUME_TYPE in data or SPAWNER_TYPE in data:
+            for root in parse(data):
+                for node in walk(root):
+                    if node.type_id != ENTITY_TYPE:
+                        continue
+                    components = node.child(COMPONENTS_FIELD)
+                    if components is None:
+                        continue
+                    if component(components, OBJECTIVE_VOLUME_TYPE) is not None:
+                        triggers.append(node)
+                    spawner = component(components, SPAWNER_TYPE)
+                    if spawner is not None:
+                        transform = component(components, TRANSFORM_TYPE)
+                        world = find(transform, WORLD_FIELD) if transform is not None else None
+                        local = (matrix_of(world.value) if world is not None else None) or IDENTITY
+                        spawners.append((local, asset_id(spawner.child(SLICE_ASSET_FIELD)), asset_id(spawner.child(ALIAS_FIELD)),
+                                         number(spawner.child(ON_START_FIELD)) != 0))
+        found = (triggers, spawners)
+        if keep:
+            self.cache[path] = found
+        return found
+
+    def place(self, path: str, matrix: tuple[float, ...], via: str, depth: int = 0, stack: tuple[str, ...] = (), at_start: bool = True,
+              data: bytes | None = None) -> None:
+        if depth > MAX_DEPTH or path in stack:
+            self.counts["slicesThatSpawnThemselvesOrTooDeep"] += 1
+            return
+        triggers, spawners = self.content(path, data)
+        for entity in triggers:
+            volume = counted(volume_of(entity, matrix, path), self.counts)
+            if volume is None:
+                continue
+            volume["via"] = via
+            volume["world"] = self.world
+            if depth > 0 and at_start:
+                self.counts["volumesOfASpawnedSlice"] += 1  # a volume of `volumes` below a spawner
+            (self.volumes if at_start else self.not_at_start).append(volume)
+        for local, asset, alias, on_start in spawners:
+            if asset is None:
+                if alias is not None:
+                    self.counts["aliasSpawners"] += 1  # a choice of slices at run time (a creature)
+                continue
+            child = self.catalog.path(asset)
+            if child is None or not self.paks.has(child):
+                self.counts["spawnersWithNoSlice"] += 1
+                continue
+            if not on_start:
+                self.counts["spawnersNotAtStart"] += 1
+            self.place(child, multiply(matrix, local), via, depth + 1, stack + (path,), at_start and on_start)
+
+    def slice_path(self, name: str, asset: str) -> str | None:
+        """@return The pak path of the slice of a capitals placement: from its asset id, or from its name (collision_data.py)."""
+        match = re.fullmatch(r"\{?([0-9A-Fa-f-]{36})\}?:([0-9A-Fa-f]+)", asset or "")
+        if match:
+            path = self.catalog.path((uuid.UUID(match[1]).bytes, int(match[2], 16)))
+            if path is not None and self.paks.has(path):
+                return path
+        key = slice_key(name)
+        for path in (key + ".dynamicslice", "slices/" + key + ".dynamicslice"):
+            if self.paks.has(path):
+                return path
+        return None
+
+    def chunks(self, folder: str, region: str, seen: set[str]) -> None:
+        from nav_assets import parse  # noqa: E402
+        if not self.paks.has(folder + region + "/region.chunks"):
+            return
+        root = parse(self.paks.read(folder + region + "/region.chunks"))[0]
+        chunks = root.child(CHUNKS_FIELD)
+        if chunks is None:
+            raise Failure(f"{region}: region.chunks has no chunk list")
+        for chunk in chunks.children:
+            path = self.catalog.path(asset_id(chunk.child(ASSET_FIELD)))
+            position = chunk.child(POSITION_FIELD)
+            if path is None or position is None or position.value is None or len(position.value) != 12:
+                raise Failure(f"{region}: a chunk of region.chunks has no slice in the asset catalog")
+            self.counts["chunks"] += 1
+            if path in seen:
+                continue  # A chunk that two regions list (a border chunk) is read one time.
+            seen.add(path)
+            data = self.paks.read(path)
+            if OBJECTIVE_VOLUME_TYPE not in data and SPAWNER_TYPE not in data:
+                continue
+            if OBJECTIVE_VOLUME_TYPE in data:
+                self.counts["chunksWithTriggers"] += 1
+            x, y, z = struct.unpack(">3f", position.value)
+            self.place(path, (1.0, 0.0, 0.0, x, 0.0, 1.0, 0.0, y, 0.0, 0.0, 1.0, z), "chunk " + path, data=data)
+
+    def capitals(self, folder: str, region: str) -> None:
+        for path in self.paks.paths(f"{folder}{region}/capitals/", ".capitals.json"):
+            try:
+                document = json.loads(self.paks.read(path))
+            except ValueError as error:
+                raise Failure(f"{path}: not a JSON document: {error}") from error
+            for row, placement in enumerate(document.get("Capitals") or []):
+                name = str(placement.get("sliceName", ""))
+                if name == PLOT:
+                    continue
+                self.counts["capitals"] += 1
+                target = self.slice_path(name, str(placement.get("sliceAssetId", "")))
+                if target is None:
+                    self.counts["capitalsWithNoSlice"] += 1
+                    continue
+                try:
+                    matrix = quaternion_matrix(placement.get("rotation", {}), placement["worldPosition"], float(placement.get("scale", 1.0)))
+                except (KeyError, TypeError, ValueError) as error:
+                    raise Failure(f"{path}: a placement has no position: {error}") from error
+                self.place(target, matrix, f"capitals {path[len(folder):]} row {row}")
+
+
 def build(paks: Paks, world: str, regions: list[str] | None, task_tags: set[str] | None) -> dict:
-    from nav_assets import parse  # noqa: E402 (the parser of the object streams)
     if not paks.has(CATALOG_PATH):
         raise Failure(f"the game copy has no {CATALOG_PATH}")
     catalog = Catalog(paks.read(CATALOG_PATH), (".dynamicslice",))
@@ -250,38 +408,60 @@ def build(paks: Paks, world: str, regions: list[str] | None, task_tags: set[str]
     if not names:
         raise Failure(f"the game copy has no region of the world {world}")
     counts: Counter = Counter()
-    volumes: list[dict] = []
+    main = Walk(paks, catalog, world, counts)
     seen: set[str] = set()
     for region in names:
         counts["regions"] += 1
-        root = parse(paks.read(folder + region + "/region.chunks"))[0]
-        chunks = root.child(CHUNKS_FIELD)
-        if chunks is None:
-            raise Failure(f"{region}: region.chunks has no chunk list")
-        for chunk in chunks.children:
-            path = catalog.path(asset_id(chunk.child(ASSET_FIELD)))
-            position = chunk.child(POSITION_FIELD)
-            if path is None or position is None or position.value is None or len(position.value) != 12:
-                raise Failure(f"{region}: a chunk of region.chunks has no slice in the asset catalog")
-            counts["chunks"] += 1
-            if path in seen:
-                continue  # A chunk that two regions list (a border chunk) is read one time.
-            seen.add(path)
-            data = paks.read(path)
-            if OBJECTIVE_VOLUME_TYPE not in data:
-                continue
-            counts["chunksWithTriggers"] += 1
-            x, y, z = struct.unpack(">3f", position.value)
-            base = (1.0, 0.0, 0.0, x, 0.0, 1.0, 0.0, y, 0.0, 0.0, 1.0, z)
-            volumes.extend(slice_volumes(parse(data), base, path, counts))
-    volumes.sort(key=lambda volume: (volume["tag"].lower(), volume["center"]))
+        main.chunks(folder, region, seen)
+        main.capitals(folder, region)
+    volumes = unique(main.volumes)
+    # Stage QG3: the other worlds (the instances), with their world: never in `volumes`.
+    elsewhere: list[dict] = []
+    if not regions:
+        others = Counter()
+        worlds = sorted({path.split("/")[2] for path in paks.paths("sharedassets/coatlicue/", ".capitals.json")} - {world})
+        for other in worlds:
+            walker = Walk(paks, catalog, other, others)
+            base = f"sharedassets/coatlicue/{other}/regions/"
+            for region in sorted({path[len(base):].split("/", 1)[0] for path in paks.paths(base, ".capitals.json")}):
+                walker.chunks(base, region, set())
+                walker.capitals(base, region)
+            elsewhere.extend({"tag": volume["tag"], "world": other, "source": volume["source"], "via": volume["via"],
+                              "center": volume["center"]} for volume in unique(walker.volumes + walker.not_at_start))
+        counts["otherWorlds"] = len(worlds)
+        counts["elsewhereVolumes"] = len(elsewhere)
+    not_at_start = [{"tag": volume["tag"], "source": volume["source"], "via": volume["via"], "center": volume["center"]}
+                    for volume in unique(main.not_at_start)]
     counts["volumes"] = len(volumes)
     counts["tags"] = len({volume["tag"].lower() for volume in volumes})
-    document = {"format": FORMAT, "world": world, "volumes": volumes, "counts": dict(counts)}
+    counts["notAtStartVolumes"] = len(not_at_start)
+    document = {"format": FORMAT, "world": world, "volumes": volumes, "notAtStart": not_at_start,
+                "elsewhere": sorted(elsewhere, key=lambda volume: (volume["tag"].lower(), volume["world"], volume["center"])),
+                "counts": dict(counts)}
     if task_tags is not None:
         found = {volume["tag"].lower() for volume in volumes}
-        document["tasks"] = {"tags": len(task_tags), "found": len(task_tags & found), "missing": sorted(task_tags - found)}
+        missing = sorted(task_tags - found)
+        worlds_of: dict[str, set[str]] = {}
+        for volume in elsewhere:
+            worlds_of.setdefault(volume["tag"].lower(), set()).add(volume["world"])
+        later = {volume["tag"].lower() for volume in not_at_start}
+        document["tasks"] = {"tags": len(task_tags), "found": len(task_tags & found), "missing": missing,
+                             "elsewhere": {tag: sorted(worlds_of[tag]) for tag in missing if tag in worlds_of},
+                             "notAtStart": [tag for tag in missing if tag in later]}
     return document
+
+
+def unique(volumes: list[dict]) -> list[dict]:
+    """@return The volumes with no second copy of one volume (the same tag, shape, center, and source), sorted by tag and center."""
+    seen = set()
+    result = []
+    for volume in sorted(volumes, key=lambda volume: (volume["tag"].lower(), volume["center"], volume["source"], volume["via"])):
+        key = (volume["tag"].lower(), volume.get("shape"), tuple(volume["center"]), volume["source"])
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(volume)
+    return result
 
 
 def quest_tags(path: Path) -> set[str] | None:
@@ -329,7 +509,10 @@ def main() -> int:
     counts = document["counts"]
     tasks = document.get("tasks")
     print(f"{target}: {counts['volumes']} trigger volumes with {counts['tags']} tags in {counts.get('chunksWithTriggers', 0)} of "
-          f"{counts['chunks']} chunks of {counts['regions']} regions; {counts.get('triggersWithNoTag', 0)} with no tag"
+          f"{counts['chunks']} chunks and {counts.get('capitals', 0)} capitals placements of {counts['regions']} regions "
+          f"({counts.get('volumesOfASpawnedSlice', 0)} of a spawned slice); {counts.get('triggersWithNoTag', 0)} with no tag; "
+          f"{counts.get('notAtStartVolumes', 0)} volumes of a spawner with no start; {counts.get('elsewhereVolumes', 0)} volumes of "
+          f"{counts.get('otherWorlds', 0)} other worlds"
           + (f"; the quest data names {tasks['tags']} tags, {tasks['found']} with a volume" if tasks else ""))
     return 0
 

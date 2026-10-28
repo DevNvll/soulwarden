@@ -16,6 +16,18 @@ using nlohmann::json;
 
 /** Format 1 (stage 1.8c): the points of interest. Format 2 (stage QG1): and the bounds of the territories. */
 constexpr std::uint64_t kLastFormat = 2;
+/** Stage QG3: the cell size of the grid of the place view (meters). */
+constexpr float kCell = 256.0F;
+/** Stage QG3: the cause of a tag that no row of the territory tables has (the tool lists only the tags of the rows). */
+constexpr const char* kNoRow = "no row of the territory tables has the tag";
+
+std::uint64_t cell_key(std::int64_t x, std::int64_t y) {
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32U) | static_cast<std::uint32_t>(y);
+}
+
+std::int64_t cell_of(float value) {
+    return static_cast<std::int64_t>(std::floor(value / kCell));
+}
 
 bool finite_number(const json& value) {
     return value.is_number() && std::isfinite(value.get<double>());
@@ -90,6 +102,11 @@ bool PoiData::load_text(const std::string& text) {
             || entry["center"].size() != 3) {
             return fail("a point of interest does not have an id, a center, and a shape of 3 points or more");
         }
+        // Stage QG3: a shape of another world (an instance) is never tested in the open world.
+        if (entry.contains("world") && (!entry["world"].is_string() || entry["world"].get<std::string>() != kOpenWorld)) {
+            ++m_otherWorld;
+            continue;
+        }
         Poi poi;
         poi.id = static_cast<std::uint32_t>(entry["id"].get<std::uint64_t>());
         for (std::size_t axis = 0; axis < 3; ++axis) {
@@ -114,13 +131,38 @@ bool PoiData::load_text(const std::string& text) {
         if (!read_shape(entry["shape"], poi)) {
             return fail("the point of interest " + std::to_string(poi.id) + " has a shape point that is not two finite numbers");
         }
+        poi.area = entry.contains("kind") && entry["kind"] == "area";
+        if (entry.contains("source") && entry["source"].is_string()) {
+            poi.source = entry["source"].get<std::string>();
+        }
         if (!m_byId.emplace(poi.id, static_cast<std::uint32_t>(m_pois.size())).second) {
             return fail("two points of interest have the id " + std::to_string(poi.id));
         }
         for (const std::string& tag : poi.tags) {
             m_byTag[tag].push_back(static_cast<std::uint32_t>(m_pois.size()));
         }
+        for (std::int64_t x = cell_of(poi.minX); x <= cell_of(poi.maxX); ++x) {
+            for (std::int64_t y = cell_of(poi.minY); y <= cell_of(poi.maxY); ++y) {
+                m_cells[cell_key(x, y)].push_back(static_cast<std::uint32_t>(m_pois.size()));
+            }
+        }
         m_pois.push_back(std::move(poi));
+    }
+    // Stage QG3: the tags of the territory tables with no shape and their cause (a tag of a shape is not one of them).
+    if (document.contains("unshaped")) {
+        if (!document["unshaped"].is_array()) {
+            return fail("the member unshaped is not a list");
+        }
+        m_hasUnshaped = true;
+        for (const json& entry : document["unshaped"]) {
+            if (!entry.is_object() || !entry.contains("tag") || !entry["tag"].is_string() || !entry.contains("cause") || !entry["cause"].is_string()) {
+                return fail("an entry of unshaped does not have a tag and a cause");
+            }
+            const std::string tag = lower_text(entry["tag"].get<std::string>());
+            if (m_byTag.count(tag) == 0) {
+                m_unshaped[tag] = entry["cause"].get<std::string>();
+            }
+        }
     }
     // Stage QG1 (format 2): the bounds of the territories (objects/worldprisms/bounds/territory of the game data), each with its territory id.
     if (format >= 2) {
@@ -184,6 +226,28 @@ bool PoiData::inside(const std::vector<std::string>& tags, std::uint16_t territo
         }
     }
     return false;
+}
+
+std::string PoiData::cause(std::string_view tag) const {
+    if (!m_hasUnshaped || m_byTag.count(std::string(tag)) != 0) {
+        return {};
+    }
+    const auto found = m_unshaped.find(std::string(tag));
+    return found != m_unshaped.end() ? found->second : kNoRow;
+}
+
+std::vector<const Poi*> PoiData::at(float x, float y) const {
+    std::vector<const Poi*> result;
+    const auto found = m_cells.find(cell_key(cell_of(x), cell_of(y)));
+    if (found == m_cells.end()) {
+        return result;
+    }
+    for (const std::uint32_t index : found->second) {
+        if (m_pois[index].contains(x, y)) {
+            result.push_back(&m_pois[index]);
+        }
+    }
+    return result;
 }
 
 bool PoiData::knows(const std::vector<std::string>& tags) const {
