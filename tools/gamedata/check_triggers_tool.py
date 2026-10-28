@@ -9,7 +9,8 @@ Each case builds the object stream elements of one trigger entity and runs the r
   - no tag: no volume; no shape: a volume that the tool counts and does not write;
   - the tags of the TaskTriggerArea rows of a quest data file (lower case);
   - stage QG3: the walk of a capitals placement (its rotation), a spawner at its start, a spawner with no start (notAtStart), an alias
-    spawner, a slice that spawns itself, a volume of an instance (elsewhere, with its world), and the comparison with the tasks.
+    spawner, a slice that spawns itself, a volume of an instance (elsewhere, with its world), and the comparison with the tasks;
+  - the code review of stage QG3 (finding QG3R-R4, stage QG4): two volumes with one tag and one center and different axes are two volumes.
 Status 0: each case passes. Usage: check_triggers_tool.py
 """
 
@@ -130,6 +131,24 @@ def main() -> int:
         report(tags == {"aelstrom_igc_trigger"} and tool.quest_tags(Path(folder) / "none.json") is None,
                "the tags of the TaskTriggerArea rows of a quest data file (lower case); no file: no comparison")
     walk_cases(report, aabb, sphere)
+    # Code review of stage QG3, finding QG3R-R4: two boxes of one slice with one tag, one center, and different axes are two volumes; an
+    # equal copy is one volume.
+    query = element(None, type_of("box"), children=[element("m_box", value=floats(20.0, 2.0, 2.0))])
+    first = tool.volume_of(trigger_entity("Review_Same_Tag", query), tool.IDENTITY, "slices/test/coincident.dynamicslice")
+    second = tool.volume_of(trigger_entity("Review_Same_Tag", query, basis=(0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0)), tool.IDENTITY,
+                            "slices/test/coincident.dynamicslice")
+    for entry in (first, second):
+        entry.update(via="capitals test row 0", world=tool.DEFAULT_WORLD)
+
+    def holds(entry: dict, x: float, y: float, z: float) -> bool:
+        offset = [x - entry["center"][0], y - entry["center"][1], z - entry["center"][2]]
+        local = [sum(offset[column] * entry["axes"][row * 3 + column] for column in range(3)) for row in range(3)]
+        return all(abs(local[row]) <= entry["half"][row] for row in range(3))
+    kept = tool.unique([first, second])
+    report(len(kept) == 2 and any(holds(entry, 0.0, 10.0, 0.0) for entry in kept) and not holds(first, 0.0, 10.0, 0.0)
+           and len(tool.unique([first, dict(first)])) == 1,
+           "QG3R-R4: two boxes with one tag and one center and different axes stay two volumes (the turned one holds (0, 10, 0)); an equal "
+           "copy is one volume")
     return 1 if failures else 0
 
 

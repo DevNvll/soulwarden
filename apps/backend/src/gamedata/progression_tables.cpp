@@ -209,6 +209,22 @@ bool ProgressionTables::load(const std::string& path) {
         }
         data.levels.push_back(level);
     }
+    // Stage QG4: the item level of a gear score (a new member of format 4; a file of before stage QG4 has none). One row for each level,
+    // and the values do not go down (the lookup of the client takes the first row that admits a gear score).
+    if (document.contains("equipGearScores")) {
+        const json& rows = document["equipGearScores"];
+        if (!rows.is_array() || rows.size() != data.levels.size()) {
+            return false;
+        }
+        for (const json& row : rows) {
+            std::uint32_t cap = 0;
+            if (!row.is_array() || row.size() != 2 || !read_number(row[0], cap) || !row[1].is_boolean()
+                || (!data.equipGearScores.empty() && cap < data.equipGearScores.back().first)) {
+                return false;
+            }
+            data.equipGearScores.emplace_back(cap, row[1].get<bool>());
+        }
+    }
     const json& attributes = document["attributes"];
     const json& vitals = document["vitals"];
     if (!attributes.is_object() || !attributes.contains("minimum") || !attributes.contains("constitutionHealth")
@@ -522,6 +538,19 @@ const ExpansionRow* ProgressionTables::base_expansion() const {
 std::uint32_t ProgressionTables::max_equip_gear_score() const {
     const ExpansionRow* row = owned_expansion() != nullptr ? owned_expansion() : base_expansion();
     return row != nullptr ? row->maxEquipGearScore : 0;
+}
+
+std::uint32_t ProgressionTables::item_level(std::uint32_t gearScore) const {
+    const auto& rows = m_data.equipGearScores;
+    if (rows.empty()) {
+        return 0;
+    }
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+        if (rows[row].first >= gearScore) {
+            return static_cast<std::uint32_t>(row + 1);
+        }
+    }
+    return kNoItemLevel;
 }
 
 std::uint32_t ProgressionTables::max_craft_gear_score() const {

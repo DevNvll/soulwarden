@@ -29,6 +29,13 @@ std::int64_t cell_of(float value) {
     return static_cast<std::int64_t>(std::floor(value / kCell));
 }
 
+/**
+ * Code review of stage QG3, finding QG3R-R3: the largest count of cells of one shape in the grid (a square of 32 km: twice the open world),
+ * and of all the shapes of one file. A shape above it refuses the file: a small file cannot take all the memory at the start.
+ */
+constexpr double kMaxShapeCells = 16384.0;
+constexpr double kMaxGridEntries = 2000000.0;
+
 bool finite_number(const json& value) {
     return value.is_number() && std::isfinite(value.get<double>());
 }
@@ -96,6 +103,7 @@ bool PoiData::load_text(const std::string& text) {
     if (!document.contains("pois") || !document["pois"].is_array()) {
         return fail("the file has no list pois");
     }
+    double gridEntries = 0.0;
     for (const json& entry : document["pois"]) {
         if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_number_unsigned() || !entry.contains("shape")
             || !entry["shape"].is_array() || entry["shape"].size() < 3 || !entry.contains("center") || !entry["center"].is_array()
@@ -140,6 +148,14 @@ bool PoiData::load_text(const std::string& text) {
         }
         for (const std::string& tag : poi.tags) {
             m_byTag[tag].push_back(static_cast<std::uint32_t>(m_pois.size()));
+        }
+        // QG3R-R3: the cells of the shape are counted in double before the grid and before any integer conversion.
+        const double cellsX = std::floor(static_cast<double>(poi.maxX) / kCell) - std::floor(static_cast<double>(poi.minX) / kCell) + 1.0;
+        const double cellsY = std::floor(static_cast<double>(poi.maxY) / kCell) - std::floor(static_cast<double>(poi.minY) / kCell) + 1.0;
+        const double cells = cellsX * cellsY;
+        gridEntries += std::isfinite(cells) ? cells : kMaxGridEntries * 2.0;
+        if (!std::isfinite(cells) || cells > kMaxShapeCells || gridEntries > kMaxGridEntries) {
+            return fail("the point of interest " + std::to_string(poi.id) + " covers too many cells of the grid of the place view");
         }
         for (std::int64_t x = cell_of(poi.minX); x <= cell_of(poi.maxX); ++x) {
             for (std::int64_t y = cell_of(poi.minY); y <= cell_of(poi.maxY); ++y) {
@@ -238,6 +254,10 @@ std::string PoiData::cause(std::string_view tag) const {
 
 std::vector<const Poi*> PoiData::at(float x, float y) const {
     std::vector<const Poi*> result;
+    // QG3R-R3: no integer conversion of a place that is not finite or far outside each world.
+    if (!std::isfinite(x) || !std::isfinite(y) || std::fabs(x) > 1.0e9F || std::fabs(y) > 1.0e9F) {
+        return result;
+    }
     const auto found = m_cells.find(cell_key(cell_of(x), cell_of(y)));
     if (found == m_cells.end()) {
         return result;

@@ -669,7 +669,52 @@ bool InteractionData::load(const std::string& path) {
         m_error = cause;
         return false;
     }
+    // Stage QG4: the persons apart (a list of causes for the support manifest; a file of before stage QG4 has none).
+    std::vector<PersonApart> apart;
+    if (document.contains("personsApart")) {
+        if (!document["personsApart"].is_array()) {
+            *this = InteractionData{};
+            m_error = "the member personsApart is not a list";
+            return false;
+        }
+        for (const json& entry : document["personsApart"]) {
+            PersonApart person;
+            if (!entry.is_object() || !entry.contains("npc") || !entry["npc"].is_string() || !entry.contains("cause") || !entry["cause"].is_string()
+                || !entry.contains("world") || !entry["world"].is_string()) {
+                *this = InteractionData{};
+                m_error = "a person of personsApart has no npc, cause, or world";
+                return false;
+            }
+            person.npc = entry["npc"].get<std::string>();
+            person.cause = entry["cause"].get<std::string>();
+            person.world = entry["world"].get<std::string>();
+            person.slice = entry.contains("slice") && entry["slice"].is_string() ? entry["slice"].get<std::string>() : std::string{};
+            person.placement = entry.contains("placement") && entry["placement"].is_string() ? entry["placement"].get<std::string>() : std::string{};
+            apart.push_back(std::move(person));
+        }
+    }
+    set_persons_apart(std::move(apart));
     return true;
+}
+
+void InteractionData::set_persons_apart(std::vector<PersonApart> persons) {
+    m_personsApart = std::move(persons);
+    m_apartByNpc.clear();
+    for (std::size_t at = 0; at < m_personsApart.size(); ++at) {
+        if (!m_personsApart[at].npc.empty()) {
+            m_apartByNpc[lower_ascii(m_personsApart[at].npc)].push_back(at);
+        }
+    }
+}
+
+std::vector<const PersonApart*> InteractionData::persons_apart(std::string_view npc) const {
+    std::vector<const PersonApart*> found;
+    if (const auto entry = m_apartByNpc.find(lower_ascii(npc)); entry != m_apartByNpc.end()) {
+        for (const std::size_t at : entry->second) {
+            found.push_back(&m_personsApart[at]);
+        }
+    }
+    return found;
 }
 
 bool InteractionData::set(std::vector<InteractionOption> options,

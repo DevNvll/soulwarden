@@ -138,7 +138,8 @@ def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] 
     kinds[expansions.name] = "ExpansionData"
     additions = [
         ("ExperienceData", FakeSheet(tool.LEVEL_TABLE, [
-            {"Level Number": level, "XPToLevel": level * 100, "AttributePoints": 0, "Health": 1, "AttributeRespecCost": 0}
+            {"Level Number": level, "XPToLevel": level * 100, "AttributePoints": 0, "Health": 1, "AttributeRespecCost": 0,
+             "MaxEquippableGearScore": min(100 + level * 10, 800) if level < 64 else 800, "IgnoreItemRarity": level >= 60}
             for level in range(70)])),
         ("AttributeDefinition", FakeSheet(tool.CONSTITUTION_TABLE, attribute_rows(tool.CONSTITUTION_TABLE, True, None))),
         *[("AttributeDefinition", FakeSheet(table, attribute_rows(table, thresholds,
@@ -240,6 +241,12 @@ def main() -> int:
         and standings == [["6", 2, tool.STANDING_RANK_TABLE, "TerritoryStandingPool", True, 1.25]] \
         and standing_table == {"experience": [150, 375, 600], "xpReward": [0, 100, 150], "cards": cards}
     print(f"{'ok  ' if passed else 'FAIL'}  standing: the standing of the territory 6 (stage 1.8d, format 4): {standings} {standing_table}")
+    failures += 0 if passed else 1
+    # Stage QG4: the item level of a gear score: MaxEquippableGearScore and IgnoreItemRarity of each row of XPLevels (the row 64 admits 700).
+    equip = run_ranks.document.get("equipGearScores") or []
+    passed = status == 0 and len(equip) == 70 and equip[0] == [100, False] and equip[63] == [730, True] and equip[64] == [800, True] \
+        and next(index for index, row in enumerate(equip) if row[0] >= 700) + 1 == 61
+    print(f"{'ok  ' if passed else 'FAIL'}  equip-gear-scores: the cap of each level (stage QG4): {equip[:2]} ... {equip[63:65]}")
     failures += 0 if passed else 1
     # Stage QG1 (format 4): the territory cards with the values of the Territory Bonus Data.
     territory_cards = run_ranks.document.get("territoryCards")

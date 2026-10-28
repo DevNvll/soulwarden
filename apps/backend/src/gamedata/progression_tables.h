@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // The progression tables: the rules of the level, of the attributes, of the weapon mastery,
@@ -47,6 +48,9 @@ inline constexpr std::array<std::uint32_t, 29> kAbilityTableOrder{
 
 /** @return The id on the wire of an id text: the CRC-32 of the text with the letters A to Z in lower case. */
 [[nodiscard]] std::uint32_t progression_id(std::string_view text);
+
+/** Stage QG4: the item level of a gear score that no row of XPLevels admits (ProgressionTables::item_level). */
+inline constexpr std::uint32_t kNoItemLevel = 0xFFFFFFFFU;
 
 /** One level of a character. */
 struct LevelRow {
@@ -246,6 +250,11 @@ struct ProgressionData {
     std::uint32_t levelCap{0};
     /** Entry K: the level K + 1 of the screen. */
     std::vector<LevelRow> levels;
+    /**
+     * Stage QG4: entry K is MaxEquippableGearScore and IgnoreItemRarity of the row K of XPLevels (the member equipGearScores; a file of
+     * before stage QG4 has none: empty). The item level of a gear score (ProgressionTables::item_level).
+     */
+    std::vector<std::pair<std::uint32_t, bool>> equipGearScores;
     std::uint32_t attributeMinimum{kDefaultAttributeMinimum};
     /** Entry K: the health that the constitution value `attributeMinimum` + K gives. */
     std::vector<std::uint32_t> constitutionHealth;
@@ -325,6 +334,14 @@ public:
     [[nodiscard]] const ExpansionRow* base_expansion() const;
     /** @return The largest gear score of an equipped item of a player: MaxEquipGS of the owned expansion, or of no expansion. 0: no limit (no rows). */
     [[nodiscard]] std::uint32_t max_equip_gear_score() const;
+    /**
+     * Stage QG4: @return The item level of a gear score, a level of the screen: K + 1 for the first row K of XPLevels whose
+     * MaxEquippableGearScore admits it (the getter of an item with an empty RequiredLevel, client 0x5C4C960 and the lookup 0x4403360;
+     * research quest-engine.md Q7: an artifact of gear score 700 needs the level 65). kNoItemLevel: no row admits it; 0: the file has no
+     * member equipGearScores (no rule). The rarity offset of a row with IgnoreItemRarity false is not known: the level of the row (no
+     * artifact item reaches such a row).
+     */
+    [[nodiscard]] std::uint32_t item_level(std::uint32_t gearScore) const;
     /**
      * @return The largest gear score of a craft of a player (stage 3.7c; client 0x2E57A70 with the setting
      *         javelin.max-craft-gear-score-override 0): MaxCraftGS of the owned expansion, or of no expansion. 0: no limit (no rows).

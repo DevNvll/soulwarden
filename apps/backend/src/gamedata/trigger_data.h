@@ -101,6 +101,8 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> m_elsewhere;
     std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> m_cells;
     std::size_t m_otherWorld{0};
+    /** Code review of stage QG3, findings QG3R-R2 and QG3R-R3: the volumes that the grid does not hold; each lookup tests them. */
+    std::vector<std::uint32_t> m_unbounded;
 };
 
 } // namespace soulwarden::backend::gamedata

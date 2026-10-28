@@ -42,6 +42,7 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage 1.8f: the corrections of the review of 1.8e | `Combat::strike_objects`, `QuestObjects::strike` (the cutscene, the wall line: `Navigation::line_ready`, `line_stop`), `Quests::object_destroyed` (one plan), `QuestObjectData::load_text` (one actor, one key), `QuestSupport` (the items, the hand-in, `std::size_t` counters); `tests/review_quests_18e_tests.cpp`, cases QRE1 to QRE8, QF1 |
 | Stage QG2a: the small quest rules (the category rule, TaskHaveLevel, the salvage events, the Azoth amount, no arc gate, the push) | `LootTables::kill_categories` (`gamedata/loot_tables.h`), `Rewards::killed`; the TaskHaveLevel predicate of `Quests::Plan::predicate`, `Quests::level_changed` (called by `Progress::finish`); `gamedata/game_event.h` (`read_game_event`, `azoth_amount`); `ItemContainers::open`, `open_refusal`; `Quests::available`; `Quests::PushIndex`, `push_changed`, `pushed`; `QuestSupport` (the reasons, the location rule, the push source); `tests/quest_gap_tests.cpp` (QG2A to QG2G, but QG2D), `tests/quest_gap_support_tests.cpp` (QG2D); the second computation `~/Games/soulwarden/work/evidence/quests/qg2a/implement/scripts/support_check.py` |
 | Stage QG3: the places (the area shapes, the origins of each layer and region, the causes of the tags with no shape, the trigger volumes of the capitals, the instance volumes, the place view) | `tools/gamedata/pois.py` (`origin_of`, `read_plots`, `unshaped_tags`), `tools/gamedata/triggers.py` (`Walk`), `check_pois_tool.py`, `check_triggers_tool.py`; `gamedata/poi_data.h` (`PoiData::cause`, `at`), `gamedata/trigger_data.h` (`TriggerData::elsewhere`, `at`); the reasons of `QuestSupport::evaluate`; the command `quest_places` (`server/http/quest_commands.cpp`, `tools/world quest places`); `tests/quest_places_tests.cpp` (QG3A to QG3E); the review of QG2a: `tests/review_qg2a_tests.cpp` (QGR2A1 to QGR2A5); the second computation `~/Games/soulwarden/work/evidence/quests/qg3/implement/scripts/support_check.py` |
+| Stage QG4: the quest givers (the artifact grant at the equip, the item level, the causes of an NPC with no slot, the rows with no source; the corrections of the review of QG3) | `Quests::item_equipped`, `Quests::equip_grant` (`world/quests.h`), `ProgressionTables::item_level`, `InteractionData::persons_apart`, the grant `equip` and `apart_cause` of `world/quest_support.cpp`; cases QG4A to QG4D, QGR3A1 to QGR3A4 |
 | The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`; stage QG2a: `research/quest-gaps.md`, `research/quest-gaps-qg2b.md`, the static read of the category rule `evidence/quests/qg2a/implement/static/category/CATEGORY.md` |
 
 ## Rules
@@ -572,6 +573,53 @@ and 2; data].
   development aid]: the territory, the points of interest and the areas, and the trigger volumes at the accepted position of a character,
   with their sources. A grid of 256 m of each loader visits only the shapes and the volumes near the position (no scan of each shape; MP-8).
 
+### The quest givers of stage QG4
+
+The research is `~/Games/soulwarden/work/research/quest-gaps.md` (QG0, section 3 and the appendix "missing giver source index") and
+`quest-engine.md` (section "Expansion and level closure"); the result and the live checks are in
+`~/Games/soulwarden/work/evidence/quests/qg4/implement/RESULT.md`. The persons of the stage are in [Persons](persons.md).
+
+- The artifact grant [data: MasterItemDefinitions.OnEquipObjectiveId of 73 artifact items, `artifactObjectives` of `item-catalog.json`;
+  client: the server facet of the Objectives component in the image has an equip callback (table 0x82574A8, entry 0x3A547B0) that calls
+  the objective-add path with OnEquipObjectiveId (item definition +0xC0, loader 0x442E9FC) at 0x3A5483E; the client facet callback
+  0x3A54630 only pins an objective that is active already (1458); no client request asks for the objective: the static read of stage QG4,
+  `evidence/quests/qg4/implement/static/ANSWERS.md` Q3]: an equip of such an item into the paperdoll (`Inventory::finish`: a
+  slot with the action ItemEquipped: an equip request, a swap of two paperdoll slots, a build preset, a command) calls
+  `Quests::item_equipped`; the next tick grants the objective (source `equip`, the territory of ExclusiveTerritory, the automatic pin)
+  when both rules pass:
+  - the item level [client: GetLevelRequirement 0x5C4C960 and the lookup 0x4403360 for an item with an empty RequiredLevel; research
+    quest-engine.md Q7]: the level of the character is K + 1 or more for the first row K of XPLevels whose MaxEquippableGearScore admits
+    the gear score of the instance (`ProgressionTables::item_level`, the member `equipGearScores` of `progression-tables.json`): 700
+    needs the level 65 (the row 64, cap 800). The objective rows have no RequiredLevel: the rule is the rule of the item. The client equips
+    no item above the level of its player (the normal equip path 0x67A5C50 checks the level, 0x67A5D8D to 0x5C5FB00, before it sends 3895;
+    static read Q3c); the backend does not refuse such an equip yet (items-and-equipment.md), and so it tests the level at the grant. A row of XPLevels with IgnoreItemRarity false adds a rarity offset that is not known: the level of the row (no
+    artifact reaches such a row) [agent]. Progression tables of before stage QG4 (no member): no item level and no grant [agent: the
+    default with no data];
+  - the normal availability (`Quests::available`): no active instance (no second instance at a new equip), no completion achievement (a
+    build preset gives the completion achievement of its artifacts in its transaction, before the tick: no grant), the gates.
+  The world entry grants nothing: an artifact that is in the paperdoll at the entry is no equip [the brief: no grant of each artifact
+  objective at the entry]. An equip while the character is not in the world (the rows only) grants nothing. The cost (MP-8): one lookup of
+  the item catalog for each equipped slot of a commit; the tick visits only the pending equips. Cases QG4A, QG4D. Live QG4-I1.
+- An artifact objective has no NpcDestinationId: the server has no hand-in for it (the trap of stage 1.8f below); the completion of an
+  artifact is an open point.
+- The manifest: the equip is a grant source of a kind that the backend runs when the item level of the gear score of the item row
+  (GearScoreOverride, else MinGearScore) is not above the level cap; a history grants it when it has the item (a source of the world or an
+  item of the history) and the item level. 7 artifact rows are supported now; no history plays one (no hand-in).
+- The causes of an NPC with no person slot (the reason of an offer grant): the member `personsApart` of the interaction data names the
+  cause and the world (a person of an instance, of the old introduction world `climaxftue_02`, of a seasonal world, of an event spawn); an
+  NPC with no entry has "no placement in the data". The line "grant: no source of a kind that the backend runs" of the blocks has the
+  group of the first grant that the backend does not run (`(a person of an instance)`, `(a person with no placement in the data)`, `(a
+  faction rank-up row (the faction stage))`, `(a mount race row (no grant))`, `(an artifact with no item level)`).
+- A row with no grant source, by its Type [data]: `FactionStory_*` (the 12 rank-up rows `9804_*`, `9806_*`, `9809_*`, `9812_*`) is a
+  rank-up of the faction rank system (no owner: the faction stage, roadmap 4.5); `MountRace` (the 4 rows `MountRace_ScaleTest_*`) is a
+  course of QuickCourseData with no grant row. The other rows with no source keep "the data of the backend has no source"
+  (`06A_S_02_PowerSpheres`, `09A_S8_FixAncientWiring`, `S_getoffbeach`, `Quest_08015`, `Quest_08016`); the seasonal rows
+  (`Quest_03193`, `Quest_03195`, `Quest_03198`) keep their gate RequiredWorldTags; the developer rows keep their kind. No spawn is made for
+  an NPC with no placement (`0424_Yeti_WW_NPC`, `09a_Morgaine_RW`, `09a_Morgaine_SM`, `1225_Giacomo_FL`, `1338_MasterOfCeremonies`,
+  `1533_BloomHerald`, `placeholderNPC_81`) [the brief].
+- The ordinary accept 3772 keeps its checks: a new person slot is a slot of the interaction data; the server takes the giver from the
+  validated interaction and the selected conversation state (Persons::accept), with its presence rule.
+
 ### The support manifest (stage 1.8e)
 
 The support manifest says for each row of the quest data whether the backend runs it, and for each start history what a character can
@@ -688,6 +736,44 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   rules of stage QG3 in the evidence of the stage: its own readers of the shapes and the volumes of the open world, its own place, trigger,
   and location facts, the corrections QG2R-R1, R4, and R5) gives the same counts: 2,147 rows, 414 supported, 0 row differences, 0 of 3,905
   own facts differ, 306 histories with 0 differences, 25 groups; on the manifest of before with the new data it finds 34 row differences.
+
+- The counts of stage QG4 (the same game data, with `interaction-data.json` and `progression-tables.json` of stage QG4): 434 supported
+  objectives (414 before; 20 new, 0 no longer). The first reason before of each of the 20 new rows was "no grant source that the backend
+  runs": 13 offers of the direct NPC templates of Morrowtide and East Consolation (`1102_0301_musslebeard`, `1104_01a01_crashing`,
+  `1105_0201_teardropgems`, `1105_0202_excommunication`, `1110_0101_GreetTheNewcomers`, `1111_0401_ancienttruth`,
+  `1111_0402_corruptedenergy`, `1502_1501_Sieged`, `1503_1506_Boars`, `1505_1510_Slaying`, `1510_1507_Scouting`, `1510_1508_Damnation`,
+  `1510_1512_PayingRespects`) and 7 artifact rows (the equip grant: `Objective_Artifact_Set1_2hBow`, `_Set1_Earring1`, `_Set1_MediumFeet`,
+  `_Set1_MediumHead`, `_Set2_1hRapier`, `_Set2_2hBow`, `_Set2_2hStaffLife`; no history plays them: no hand-in). A new character of each
+  archetype completes 39 (37 before; new: `1104_01a01_crashing`, `1502_1501_Sieged`). A level 60 character with no template completes 9
+  (7 before). The 298 template histories in 23 groups complete 9 to 18 (7 to 16 before; `99F_MSQ_ER_DeliverPoem`: 18; 158 templates with
+  no start objective: 9 to 17); each of the 306 histories has a new played list. The offers of `06_NessaHarrower05` are grant sources of a
+  kind that the backend runs now (its presence rule): of its 13 rows 3 were supported before by an other grant, and 10 stop at an other
+  gap (a pin task, TaskGameMode). The 24 rows of an offer of the 10 direct NPC templates have a grant of a kind that the backend runs
+  now; 13 of them are supported. Each of the 73 artifact rows has the equip grant (the item level 65). The first reasons of the 593 objectives that are not supported: 158 an item with no source, 100 a point of
+  interest with no shape, 73 no producer of a game event, 48 TaskGameMode, 39 no creature of the categories, 35 TaskQuickCourse, 21 no
+  object of the interact tag, 20 TaskHaveLevel of a faction progression, 15 the location rule with no shape, 10 a ProgressionReward, 8
+  no grant source that the backend runs (30 before), 2 a person whose client id an other slot has (`1625_Ghazi_p4`), and 36 smaller
+  groups. The second computation (a copy of `support_check.py` with the rule of stage QG4 in the evidence of the stage: its own item
+  level of the artifacts from `equipGearScores`, the equip grant of a row and of a history) gives the same counts: 2,147 rows, 434
+  supported, 0 row differences, 0 of 3,905 own facts differ, 306 histories with 0 differences, 25 groups, the new Soldier completes 39;
+  on the manifest of before with the new data it finds 117 row differences and 306 history differences.
+
+### The corrections of the code review of stage QG3 (in stage QG4)
+
+The findings QG3R-R1 to QG3R-R4 (`~/Games/soulwarden/work/evidence/quests/qg3/code-review/FINDINGS.md`) are corrected in stage QG4; each
+has a case of `tests/review_qg3_tests.cpp` (QGR3A1 to QGR3A4) that fails on the tree of stage QG3 and passes after the correction. No
+correction changes the files of the supported build or a count of the manifest.
+
+- QG3R-R1 (QGR3A1): a trigger volume with no world of its own is of the world of the file (the member `world` at its root; no member: the
+  open world). A file of an instance never gives a volume to the open world.
+- QG3R-R2 (QGR3A2): a volume with no height limit whose local height axis is not vertical has no horizontal limit: it is in a short list
+  (64 at most in a file) that each lookup of the place view tests, and the place view agrees with the predicate of the runtime.
+- QG3R-R3 (QGR3A3): the loaders of `poi-data.json` and `trigger-data.json` count the cells of a shape in double before the grid: a shape
+  of more than 16,384 cells (a square of 32 km) or a file of more than 2,000,000 cells is refused (the backend starts with the default of
+  no data); a lookup far outside each world converts no large value. A test volume of `set` that is too large goes into the list of each
+  lookup. In a process limit of 384 MiB the case passes; on the tree of QG3 it stops with `std::bad_alloc`.
+- QG3R-R4 (QGR3A4, `check_triggers_tool.py`): the duplicate key of the trigger tool has each value of the predicate (the axes, the sizes,
+  the radius, the height, the height rule, the filter): two volumes with one tag and one center and different axes stay two volumes.
 
 ### The corrections of the code review of stage QG2a (in stage QG3)
 

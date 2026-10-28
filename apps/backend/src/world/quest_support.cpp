@@ -251,6 +251,57 @@ std::string reason_kind(const std::string& reason) {
     return text;
 }
 
+/**
+ * Stage QG4: the cause of an NPC with no person slot of the open world (the member personsApart of the interaction data): a short group
+ * (the first reasons of the counts) and the detail (the cause, the world, the slice). No person apart: the data has no placement of it.
+ */
+std::pair<std::string, std::string> apart_cause(const gamedata::InteractionData* interactions, const std::string& npc) {
+    const std::vector<const gamedata::PersonApart*> apart = interactions != nullptr ? interactions->persons_apart(npc) : std::vector<const gamedata::PersonApart*>{};
+    if (apart.empty()) {
+        return {"a person with no placement in the data", "the data has no placement of the NPC " + npc + " in any world (no spawn is made for it)"};
+    }
+    // The order of the groups: an instance first (a level script of a dungeon, a dungeon world), then the other causes.
+    static const std::vector<std::string> kOrder{"levelScript", "otherWorld", "event", "nested", "alias", "idTaken"};
+    const gamedata::PersonApart* first = apart.front();
+    for (const std::string& cause : kOrder) {
+        const auto found = std::find_if(apart.begin(), apart.end(), [&](const gamedata::PersonApart* person) { return person->cause == cause; });
+        if (found != apart.end()) {
+            first = *found;
+            break;
+        }
+    }
+    std::string group;
+    if (first->cause == "otherWorld" && first->world.find("ftue") != std::string::npos) {
+        group = "a person of the old introduction world";
+    } else if (first->cause == "otherWorld" && first->world.find("season") != std::string::npos) {
+        group = "a person of a seasonal world";
+    } else if (first->cause == "otherWorld" || first->cause == "levelScript") {
+        group = "a person of an instance";
+    } else if (first->cause == "event") {
+        group = "a person of an event spawn (no owner)";
+    } else if (first->cause == "nested") {
+        group = "a person below a nested spawner (not proved)";
+    } else if (first->cause == "alias") {
+        group = "a person of an alias choice";
+    } else {
+        group = "a person whose client id another slot has";
+    }
+    return {group, "the data has the person apart: " + first->cause + " in the world " + first->world + " (" + first->slice + ")"};
+}
+
+/**
+ * Stage QG4: @return The item level of an artifact (the gear score of its item row: GearScoreOverride, else MinGearScore) by the rule of
+ * ProgressionTables::item_level, or 0 when the item catalog or the progression tables have no value.
+ */
+std::uint32_t artifact_level(const WorldOptions& options, const std::string& itemId) {
+    const gamedata::ItemDefinition* definition = options.itemCatalog != nullptr ? options.itemCatalog->find(itemId) : nullptr;
+    if (definition == nullptr || options.progressionTables == nullptr || !options.progressionTables->loaded()) {
+        return 0;
+    }
+    const std::uint32_t gearScore = definition->gearScoreOverride != 0 ? definition->gearScoreOverride : definition->minGearScore;
+    return gearScore == 0 ? 0 : options.progressionTables->item_level(gearScore);
+}
+
 } // namespace
 
 /** The indexes of the world content that the rows name (one pass over the data at the start of a manifest). */
@@ -269,6 +320,8 @@ struct QuestSupport::Index {
     std::unordered_map<std::string, std::vector<std::string>> templates;
     /** The territories whose start objective it is. */
     std::unordered_map<std::string, std::vector<std::uint16_t>> territories;
+    /** Stage QG4: the artifacts whose equip grants the objective (lower case objective id; OnEquipObjectiveId of the item catalog). */
+    std::unordered_map<std::string, std::vector<const gamedata::ArtifactObjective*>> equips;
     /** The vitals categories and the kill events of the creatures of the spawn points (lower case). */
     std::unordered_set<std::string> killCategories;
     std::unordered_set<std::string> killEvents;
@@ -407,6 +460,12 @@ void QuestSupport::build() {
     for (std::uint16_t territory = 0; territory < 512; ++territory) {
         if (const QuestObjective* start = data.territory_objective(territory)) {
             index.territories[lower_text(start->id)].push_back(territory);
+        }
+    }
+    // Stage QG4: the artifact grants of an equip (the item catalog).
+    if (const gamedata::ItemCatalog* catalog = options.itemCatalog; catalog != nullptr) {
+        for (const gamedata::ArtifactObjective& artifact : catalog->artifact_objectives()) {
+            index.equips[lower_text(artifact.objectiveId)].push_back(&artifact);
         }
     }
     // The persons of the interaction data (a person slot with its binding) and the offers of the conversation data.
@@ -670,9 +729,15 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                : data_rules::same_text(objective.type, "CommunityGoal") ? "communityGoal"
                                                                        : "objective";
     // The grant sources (research quest-engine-3.md Q1) and the kind of each one that the backend runs.
-    const auto add_grant = [&](const std::string& source, const std::string& detail, bool supported, const std::string& reason) {
+    // Stage QG4: the group of the first grant that the backend does not run (the line "grant: ..." of the blocks names it).
+    std::string grantGroup;
+    const auto add_grant = [&](const std::string& source, const std::string& detail, bool supported, const std::string& reason,
+                               const std::string& group = std::string{}) {
         row.grants.push_back(json{{"source", source}, {"detail", detail}, {"supported", supported}, {"reason", reason}});
         row.grantKind = row.grantKind || supported;
+        if (!supported && grantGroup.empty()) {
+            grantGroup = group;
+        }
     };
     if (const auto found = index.territories.find(id); found != index.territories.end()) {
         for (const std::uint16_t territory : found->second) {
@@ -690,9 +755,14 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
         for (const auto& [npc, state] : found->second) {
             const auto persons = index.persons.find(lower_text(npc->id));
             std::string reason;
+            std::string group;
             bool supported = false;
             if (persons == index.persons.end()) {
-                reason = "the NPC " + npc->id + " has no person slot in the interaction data";
+                // Stage QG4: the cause of the missing slot (a person of an instance, of the old introduction world, of an event spawn, no
+                // placement in the data).
+                const auto [apartGroup, detail] = apart_cause(options.interactionData, npc->id);
+                reason = "the NPC " + npc->id + " has no person slot in the interaction data; " + detail;
+                group = apartGroup;
             } else {
                 for (const gamedata::InteractionObject* object : persons->second) {
                     if (object->person->unresolved.empty()) {
@@ -700,9 +770,10 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                         break;
                     }
                     reason = "the person slot of " + npc->id + " is not resolved: " + object->person->unresolved;
+                    group = "a person slot that is not resolved";
                 }
             }
-            add_grant("offer", npc->id + " " + m_world.persons().data()->state(state).id, supported, supported ? "" : reason);
+            add_grant("offer", npc->id + " " + m_world.persons().data()->state(state).id, supported, supported ? "" : reason, group);
         }
     }
     if (const auto found = index.rewardParents.find(id); found != index.rewardParents.end()) {
@@ -725,13 +796,40 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                   : territory ? "the push of a row with ExclusiveTerritory needs the character in that territory"
                               : "");
     }
+    // Stage QG4: the equip of an artifact (OnEquipObjectiveId of the item catalog): the backend runs it when the progression tables have
+    // the item level of its gear score (ProgressionTables::item_level; 700: the level 65) and that level is not above the level cap.
+    if (const auto found = index.equips.find(id); found != index.equips.end()) {
+        for (const gamedata::ArtifactObjective* artifact : found->second) {
+            const std::uint32_t level = artifact_level(options, artifact->itemId);
+            const bool supported = level != 0 && level != gamedata::kNoItemLevel && level <= index.levelCap;
+            add_grant("equip", artifact->itemId + (level != 0 && level != gamedata::kNoItemLevel ? " level " + std::to_string(level) : std::string{}),
+                      supported,
+                      supported   ? ""
+                      : level == 0 ? "the progression tables or the item catalog have no item level of the artifact (equipGearScores)"
+                                   : "the item level of the artifact is above the level cap",
+                      "an artifact with no item level");
+        }
+    }
     if (row.kind == "missionTemplate") {
         add_grant("mission", objective.type, false, "the mission boards and the mission definitions have no contract (roadmap 4.5, 5.4)");
     } else if (row.kind == "communityGoal") {
         add_grant("communityGoal", objective.type, false, "the community goals have no contract (roadmap 5.4)");
     }
     if (row.grants.empty()) {
-        add_grant("none", "", false, "the data of the backend has no source that grants the objective");
+        // Stage QG4: the kind of a row with no source, by its Type [data]: a rank-up row of a faction story (the faction rank system grants
+        // it: the faction stage, roadmap 4.5), a mount race row (QuickCourseData names it; no grant row: the mount race system).
+        if (objective.type.rfind("FactionStory_", 0) == 0) {
+            add_grant("none", objective.type, false,
+                      "a rank-up row of a faction story (Type " + objective.type + "): the faction rank system grants it, which has no owner "
+                      "(the faction stage, roadmap 4.5)",
+                      "a faction rank-up row (the faction stage)");
+        } else if (data_rules::same_text(objective.type, "MountRace")) {
+            add_grant("none", objective.type, false,
+                      "a mount race row (Type MountRace; QuickCourseData names it): no grant row of the data; the mount race system has no owner",
+                      "a mount race row (no grant)");
+        } else {
+            add_grant("none", "", false, "the data of the backend has no source that grants the objective");
+        }
     }
     // The gates whose rule is known before a history: the gates with no service rule, the faction of an unaligned character, a level above
     // the cap.
@@ -1132,7 +1230,7 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
         row.blocked.push_back("rewards: " + detail);
     }
     if (!row.grantKind) {
-        row.blocked.push_back("grant: no source of a kind that the backend runs");
+        row.blocked.push_back("grant: no source of a kind that the backend runs" + (grantGroup.empty() ? std::string{} : " (" + grantGroup + ")"));
     }
     for (const std::string& gate : row.gates) {
         row.blocked.push_back("gate: " + gate);
@@ -1593,6 +1691,21 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                             return object->person->unresolved.empty() && persons.present(history.scratch, *object->person);
                         });
                         if (present && persons.selected_state(history.scratch, *npc) == static_cast<std::int32_t>(state)) {
+                            origin = objective.exclusiveTerritory.value_or(0);
+                            break;
+                        }
+                    }
+                }
+            }
+            // Stage QG4: the equip of an artifact (Quests::item_equipped): the history has the item (a source of the world, or an item of the
+            // history) and the item level of its gear score; the availability below decides.
+            if (!origin) {
+                if (const auto found = index.equips.find(id); found != index.equips.end()) {
+                    for (const gamedata::ArtifactObjective* artifact : found->second) {
+                        const std::string item = lower_text(artifact->itemId);
+                        const std::uint32_t level = artifact_level(m_world.options(), artifact->itemId);
+                        if ((index.items.count(item) != 0 || history.items.count(item) != 0) && level != 0 && level != gamedata::kNoItemLevel
+                            && history.scratch.progression.level >= level) {
                             origin = objective.exclusiveTerritory.value_or(0);
                             break;
                         }

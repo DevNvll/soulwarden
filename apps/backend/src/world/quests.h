@@ -203,6 +203,12 @@ struct QuestCounts {
     std::uint64_t pushGrants{0};
     /** Stage QG2a: the characters whose level changed (Progress::finish): a look at their TaskHaveLevel tasks at the next tick. */
     std::uint64_t levelLooks{0};
+    /**
+     * Stage QG4: the equips of an item with OnEquipObjectiveId (an artifact) that the quest system looked at, and the grants of its
+     * objective. A look with no grant has its cause in the log (the item level, the availability).
+     */
+    std::uint64_t equipChecks{0};
+    std::uint64_t equipGrants{0};
 };
 
 /** Stage 1.8b: the result of a hand-in (794): the rewards that the transaction paid, or the cause of the refusal. */
@@ -490,6 +496,13 @@ public:
     /** The accepted position of a character changed (World::place): its tasks of a place look again at the next tick. */
     void moved(const Entity& entity);
     /**
+     * Stage QG4: the inventory committed an equip of an item into the paperdoll of a character (Inventory::finish: a slot with the action
+     * ItemEquipped). An item with OnEquipObjectiveId (the artifactObjectives of the item catalog) grants its objective at the next tick
+     * when the character has the item level of the gear score (ProgressionTables::item_level) and the normal availability passes
+     * (Quests::available: no active instance, no completion achievement). The world entry grants nothing (an equipped item is no equip).
+     */
+    void item_equipped(const Entity& entity, const std::string& itemId, std::uint32_t gearScore);
+    /**
      * Stage QG2a: the level of a character changed (Progress::finish, the one writer of the level): its TaskHaveLevel tasks and the push
      * candidates of its new level look again at the next tick.
      */
@@ -607,6 +620,8 @@ private:
     const PushIndex& push_index();
     /** Stage QG2a: the push rows whose dependencies changed since the last check of a character (all rows at its entry): the grants. */
     void push_changed(Entity& entity, bool all, const char* cause);
+    /** Stage QG4: the grant of the objective of an equipped artifact (Quests::item_equipped). */
+    void equip_grant(Entity& entity, const std::string& itemId, std::uint32_t gearScore);
     /** Commits a plan (one transaction), then gives the entity the values. */
     [[nodiscard]] QuestError commit(Entity& entity, Plan& plan, const std::vector<state::QuestGrantRow>& grants);
     /** Runs the pending grants of a character in the world. */
@@ -660,6 +675,8 @@ private:
     /** Stage QG2a: the characters whose level changed, and the characters whose bits changed (the push looks at the next tick). */
     std::set<EntityId> m_levelsDirty;
     std::set<EntityId> m_pushDirty;
+    /** Stage QG4: the equips of an artifact of each character since the last tick (the item id and its gear score), in their order. */
+    std::map<EntityId, std::vector<std::pair<std::string, std::uint32_t>>> m_equips;
     std::unique_ptr<PushIndex> m_push;
     std::unordered_map<EntityId, PushWatch> m_pushWatch;
     /** The misses of each task with GuranteedDropAttempts since its last drop (key: the character, the instance, the index). */

@@ -24,6 +24,7 @@ contracts are in the protocol notes (sections 4.55 and 4.56).
 | The corrections of the code review of stage 2.5c (PR5C-R1, R2, R3, R6) | `Persons::source_replaced`, `Persons::lost_presence`, `Persons::refresh_offer`, `Interactions::update_service`; `child_groups` of `tools/gamedata/interactions.py`; cases QRP1, QRP2, QRP3, QRP6 |
 | The commands | `server/http/person_commands.cpp`, `tools/world persons`, the admin state member `persons` |
 | The research and the results | `~/Games/soulwarden/work/research/npc-conversations.md`, `quest-engine-3.md` (Q2), `shops-stage.md` (Q5); the static read of stage 2.5c: `~/Games/soulwarden/work/research/scratch/persons-25c-static/ANSWERS.md`; the result: `~/Games/soulwarden/work/evidence/persons/25c/implement/RESULT.md` |
+| Stage QG4: the direct NPC templates, the presence by the swap controller, the persons apart | `presence_rule`, `person_binding`, `nested_persons`, `APART_CAUSES` of `tools/gamedata/interactions.py`; `check_interactions_tool.py --persons` (case NC1); `InteractionData::persons_apart`; cases QG4B, QG4D; the result `~/Games/soulwarden/work/evidence/quests/qg4/implement/RESULT.md` |
 
 ## Rules
 
@@ -57,14 +58,46 @@ the stage (with the cause), [review] a finding of the code review of stage 2.5c 
   file; case QRP6]. Two slots with one id: the first keeps it (2 in the build) [agent: the client has one entity for the id].
 - The binding of a person child [data; research npc-conversations.md Q1]: the NPC id is the column NPCId of the row of its variant
   (m_sliceVariant of the spawner) in the variation table of the child slice, not the defaults of the generic slice. A variant with no
-  row, a row with no NPCId, or a swap slice with no presence rule gives a binding with a cause (`unresolved`, 50 in the build): the backend
-  refuses its use (3743 result 2) [agent: no NPC row to check]. The server binds a request only by the exact reference of the data (G and
-  the target); no alias of an actor and no nearest person [orchestrator: the brief of stage 2.5c].
+  row, a row with no NPCId, or a swap slice with no presence rule gives a binding with a cause (`unresolved`: 50 in the build of stage
+  2.5c, 0 from stage QG4): the backend refuses its use (3743 result 2) [agent: no NPC row to check]. The server binds a request only by
+  the exact reference of the data (G and the target); no alias of an actor and no nearest person [orchestrator: the brief of stage 2.5c].
+- Stage QG4, the direct NPC templates [data: the spawners of `settlement_morrowtide_complete` (Grayvale, Mourningdale) and `settlement_eastconsolation_complete` (Restless Shores)
+  and of 6 more settlement slices have an empty m_sliceVariant, m_spawnOnInitialize 1, m_isClientAuthoratative 0; their child slices
+  (`npc_1102_magistrate`, `npc_1502_magistrate`, ...) have their own NPC component and no variation table]: a person child of an empty
+  variant whose slice has an NPC component and no variation table gets the m_npcKey of its slice (`"template": true`; 48 objects). Before
+  stage QG4 these slots had the cause "the variant '' has no row". Each such spawner has m_spawnOnTrigger 1 too: the client makes the
+  person at the load as the other children with m_spawnOnInitialize 1 [live check I2 of stage QG4: Constable Martin Bayles of
+  `1104_Overseer` shows his name, the quest marker, and the prompt; the static read Q4 did not find the exact path of these spawners]. A
+  child of an empty variant whose
+  slice has a variation table keeps the cause (the defaults of a generic slice are no person).
+- Stage QG4, the persons apart [data; agent: a list of causes, no object]: the tool walks the PrefabSpawner children below a child slice
+  (4 levels, no slice that spawns itself), the slices of an alias asset, and the placements of the other worlds, and writes each person
+  that is not an object into the member `personsApart` with its cause (`APART_CAUSES`): `otherWorld` (a placement of an instance or of an
+  introduction world; the world names it: `nw_dungeon_*`, `climaxftue_02`, `nw_trial_season_*`), `levelScript` (a dungeon level script of
+  the open world, `slices/dungeon/levelscripts/`), `nested` (a child below a child slice: the client id of such a child is not proved),
+  `event` (a spawner with m_spawnOnInitialize false: an event or a trigger spawns it; it needs an owner), `alias` (a choice of slices at
+  run time), `idTaken` (the second slot of one client id). The build: 39 otherWorld, 2 levelScript, 1 event, 2 idTaken, 0 nested, 0
+  alias. The backend reads the list only for the cause of an NPC with no slot (the support manifest: [Quests](quests.md)).
 - The presence of a person for one character [research decision 4, quest-engine-3.md Q2; client 0x3369430; live A2]: the client shows a
-  person child by the achievements of its own player. The rule of the slice (`PERSON_PRESENCE` of the tool): `masternpc_swap_defaultshown`
+  person child by the achievements of its own player. The rule of the slice: `masternpc_swap_defaultshown`
   is gone while the SwapAchievementId of its row is true (`hideWhen`, 172), `masternpc_swap_defaulthidden` is there while it is true
   (`showWhen`), `masternpc_walkaway` is there while AE.3_RequiredAchievementConditional is true (`showWhen`; 859 `showWhen` in all), and a
-  slice with no swap controller is always there (227). An empty SwapAchievementId keeps the m_achievementName of the slice. The person
+  slice with no swap controller is always there (227). An empty SwapAchievementId keeps the m_achievementName of the slice. Stage QG4
+  [client: the static read `~/Games/soulwarden/work/evidence/quests/qg4/implement/static/ANSWERS.md` Q1; data; live A2 and live check I3
+  of stage QG4]: with the achievement swap the client sets the state of the GatherableController to Depleted (8) when the conditional is
+  true and to Healthy (4) when it is false (0x3369747 to 0x336977E; an empty achievement keeps Invalid), and it shows the entities below
+  the state child whose name is the text of that state (0x33699D2, 0x33699E3). The mode of a person is the state child above its NPC
+  entity (`PERSON_SWAP_STATES`): below Healthy it is gone while the condition is true (`hideWhen`: `masternpc_swap_defaultshown`), below
+  Depleted it is there while the condition is true (`showWhen`: `masternpc_swap_defaulthidden`, `npc_msq_swap_nessacaptured` of
+  `06_NessaHarrower05`, the caged persons of Nighthaven); below no state child it is there in each state; below another state child it is
+  a cause. The two named slices keep their rule (the same result); 4 child slots that had no rule get one. The byte
+  m_achievementServerState of the server facet has the value of that state child in each slice of the data (4 Healthy, 8 Depleted; the
+  count `personSwapStateDiffers` of the tool is 0), but the client does not read it for this rule [client: no reader found]. The
+  controller of a person is the controller of the entity of its NPC component, else of its nearest parent entity, else the only
+  controller of the slice (a slice of a cage and its person, `io_worldevent_1625_imhotepcage`, has one for each). A direct person whose
+  slice has a swap controller has the same rule (21 direct persons and 2 children that were always there: `1225_Giacomo_*`,
+  `9930_VK_RomacBarbo*`, `1130_Sensou`, `0317_Warden` of a generic `npc_trapped` slice, ...) [data: the coatgen slices have their variant
+  in m_selectedVariant and its achievement in m_achievementName]. The walkaway slice keeps its table rule (`PERSON_PRESENCE`). The person
   system checks the same rule at the key E with the bits of the character (`Quests::conditional`): a person that is not there for the
   character gives the verdict `notPresent` (3743 result 2) [agent: the client of that character does not show it]. Live A2: with the bit
   the person goes for the client, and without it the person comes back (`A2-02-bit-off-return.mp4`).
@@ -214,3 +247,16 @@ tools/world persons NAME [METERS]                  # the person conversation of 
   `tools/world quests` with the screen.
 - Stage 1.8b: a hand-in moves the quests, and so the selection of the person changes in the same conversation (the next offer shows at
   once). A 5397 of a topic of the old selection is `notOffered` then.
+- Stage QG4: a presence condition with a star at the start (`*SwapActive_18007_Cecilia`: 222 person slots of the data, most of Nighthaven) is
+  an achievement id with the star: the client keeps the star in the token and its hash (0x3A8AEB0, 0x3A8AF47; static read Q1d). These ids
+  are rows of NPAData (428 rows with a star; `*SwapActive_18007_Cecilia` is `u:Quest_18018,l:Quest_18018/Quest_18018_Task_5:c`): the
+  presence is the conditional of that row (`Quests::conditional`, the rule of a non-persisted achievement), as in a task.
+- Stage QG4: two persons at one place with one slice (`1625_Ghazi_p4` and `1625_Ghazi_p6` at the cave of Brimstone Sands) have one
+  client id: only the first slot is in the file, and the second is in `personsApart` (`idTaken`). The offers of the second person (2 rows)
+  have no slot. The entity registry of the client keeps the first entity that it registers and refuses the second (0x15E9621,
+  "We have an Entity ID collision!"; static read Q2), but which source registers first is not known: the first slot of the file is a
+  rule of this project [agent].
+- Stage QG4: the persons of `personsApart` are no objects: `tools/world persons` does not list them. Read the member of the file.
+- Stage QG4: the presence of a person child is the rule of the client, also for a direct person with a swap controller: a direct person
+  that was always there before stage QG4 can be gone for a character now (21 direct persons, for example `1225_Giacomo_*` while
+  `SwapActive_1225_GiacomoStart_Off` is set). Compare `tools/world persons` with the screen.

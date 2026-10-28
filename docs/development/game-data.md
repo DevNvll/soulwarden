@@ -442,6 +442,12 @@ backend. The tool of each system is also in the document of that system.
   Territory Bonus Data, a value is not finite or below 0, or the territory of a standing has no modifier. The loader refuses a file of the
   format 3 with cards and a format 4 file with an offered card that the list does not have. With a file of the format 3 the standing has
   the modifier 1 and no card (a card choice is refused). `check_progression_tool.py` has the cases (DL9).
+- `progression-tables.json`, stage QG4 (still format 4, a new member; [Quests](../systems/quests.md), the quest givers): `equipGearScores`
+  has `[MAX_EQUIPPABLE_GEAR_SCORE, IGNORE_ITEM_RARITY]` for each row of XPLevels (one for each level, in the order of the levels): the item
+  level of a gear score is K + 1 for the first row K that admits it (700: 65). The tool stops when the column goes down. The loader
+  refuses a list of a wrong size, a row that is not a number and a flag, and a list that goes down; a file with no member has no item level
+  (an artifact grants no objective). An older backend reads the file of stage QG4 (it does not know the member). `check_progression_tool.py`
+  has the case `equip-gear-scores`; case QG4C.
 - `gathering-data.json`, stage 1.8c: the quest objects of the variation table Gatherable_Quest (the slice Master_Quest_Instanced of the
   layers): a capital entry `[TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST]`, its row with the member `"quest": true` (a loot container with the
   loot table Empty is not a refusal for it), and its game event with no row of the event tables (the event of the quests). The format stays
@@ -467,7 +473,19 @@ backend. The tool of each system is also in the document of that system.
   with two ids), 145 direct persons, 50 with no binding; 44,534 objects in all. Stage 1.8b (code review of stage 2.5c, finding PR5C-R6):
   the tool rounds the float place of the client (f32(x) * 8) and writes each combination of the candidates of each axis and of the yaw,
   the id of the float rule first (1,311 ids: each of the 1,309 ids of before, 90 slots with more than one id, 4 at most); the format stays
-  4. Write the file again with `tools/gamedata/interactions.sh`. `check_interactions_tool.py --persons` (case NC1) checks the id rule against an independent
+  4. Stage QG4 (still format 4; [Persons](../systems/persons.md)): a child of an empty variant whose slice has its own NPC component and no
+  variation table has the NPC of its slice (`"template": true`; 48 objects of 8 settlement slices); the presence mode of a swap person is
+  the state child above its NPC entity (Healthy `hideWhen`, Depleted `showWhen`; `PERSON_SWAP_STATES`; the client rule 0x3369747 and
+  0x33699D2), with the controller of the NPC entity, also for a direct person (23 more persons with a rule); the count
+  `personSwapStateDiffers` compares m_achievementServerState with that state child (0 in the build); the new member `personsApart` lists
+  each person that is not an object with its cause
+  (`APART_CAUSES`: otherWorld, levelScript, nested, event, alias, idTaken), its world, its slice, the slices between, and its placement;
+  the tool reads the placements of the other worlds for it (`sharedassets/coatlicue/WORLD/regions/`). The build: 1,221 person children,
+  145 direct persons, 0 with no binding (50 before), 44,536 objects; 44 persons apart (39 otherWorld in 39 worlds, 2 levelScript, 1 event,
+  2 idTaken). The other members are the same as the file of stage 2.5c. An older backend reads the file (the new members and the person
+  of a template have the form that it knows). The loader refuses a person apart with no npc, cause, or world, and a member that is not a
+  list (case QG4C). `tools/release.sh` takes the new file with the game data folder.
+  Write the file again with `tools/gamedata/interactions.sh`. `check_interactions_tool.py --persons` (case NC1) checks the id rule against an independent
   bit builder and the bindings with made-up slices. A file of format 3 loads: it has no person child.
 - `conversation-data.json` (stage 2.5c, `tools/gamedata/conversations.sh`, `check_conversations_tool.py` (case NC2),
   [Persons](../systems/persons.md)): format 1. The NPC rows (the tables of the type NPCData: their states ConversationStateId1 to N in
@@ -531,6 +549,13 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   stage 2.2 (a compare of the two files of the supported build). The backend reads the member as a binding key of the behavior trees
   ([Creature behavior](../systems/creature-behavior.md), section "Behavior trees"); a file with no member works (no creature has a server
   tree), and a member with a wrong form refuses the file (test case BTB1). `tools/release.sh` takes the new file with the game data folder.
+
+- Stage QG4 changes `interaction-data.json` (the persons; still format 4) and `progression-tables.json` (the member `equipGearScores`;
+  still format 4). Write both again (`tools/gamedata/interactions.sh`, `tools/gamedata/progression.sh`): with the older files the backend
+  has the persons of before and no artifact grant. The code review of stage QG3 (finding QG3R-R4) changes the duplicate key of
+  `triggers.py`; the file of the supported build is the same bytes (a compare of the two files). The loaders of `poi-data.json` and
+  `trigger-data.json` refuse a shape or a volume that covers more than 16,384 cells of 256 m (finding QG3R-R3), and a volume with no world
+  in a file whose root names an instance world is of that world (QG3R-R1).
 
 - Stage 1.8b adds `trigger-data.json` and changes `quest-data.json` (11 more columns of a game event, still format 1) and
   `interaction-data.json` (the float rule of the ids of a person child, still format 4). Make `trigger-data.json` after

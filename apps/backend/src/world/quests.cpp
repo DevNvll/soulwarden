@@ -9,6 +9,8 @@
 
 #include "core/logging/log.h"
 #include "gamedata/crafting_data.h"
+#include "gamedata/item_catalog.h"
+#include "gamedata/progression_tables.h"
 #include "world/inventory.h"
 #include "world/skills.h"
 #include "world/world.h"
@@ -1796,6 +1798,7 @@ void Quests::left(const Entity& entity) {
     m_levelsDirty.erase(entity.id);
     m_pushDirty.erase(entity.id);
     m_pushWatch.erase(entity.id);
+    m_equips.erase(entity.id);
 }
 
 void Quests::run_pending(Entity& entity) {
@@ -2554,6 +2557,58 @@ void Quests::moved(const Entity& entity) {
     }
 }
 
+void Quests::item_equipped(const Entity& entity, const std::string& itemId, std::uint32_t gearScore) {
+    const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
+    if (data() == nullptr || !entity.quests.loaded || catalog == nullptr || catalog->artifact_objective(itemId) == nullptr) {
+        return;
+    }
+    m_equips[entity.id].emplace_back(itemId, gearScore);
+}
+
+void Quests::equip_grant(Entity& entity, const std::string& itemId, std::uint32_t gearScore) {
+    const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
+    const gamedata::ArtifactObjective* artifact = catalog != nullptr ? catalog->artifact_objective(itemId) : nullptr;
+    if (artifact == nullptr || data() == nullptr || !entity.quests.loaded) {
+        return;
+    }
+    ++m_counts.equipChecks;
+    const QuestObjective* objective = m_data->objective(artifact->objectiveId);
+    if (objective == nullptr) {
+        log::write("quests: the equip of %s by character %s grants nothing: the quest data has no objective %s", itemId.c_str(),
+                   entity.characterId.c_str(), artifact->objectiveId.c_str());
+        return;
+    }
+    // The item level of the gear score of the instance (research quest-engine.md Q7: GetLevelRequirement 0x5C4C960 with the equip-cap
+    // lookup 0x4403360 for an item with an empty RequiredLevel; the artifacts of gear score 700 need the level 65). The client equips no
+    // item above the level of its player; the backend grants the objective only at that level.
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const std::uint32_t level = tables != nullptr && tables->loaded() ? tables->item_level(gearScore) : 0;
+    if (level == 0 || entity.progression.level < level) {
+        log::write("quests: the equip of %s (gear score %u) by character %s grants no %s: %s", itemId.c_str(), static_cast<unsigned>(gearScore),
+                   entity.characterId.c_str(), objective->id.c_str(),
+                   level == 0 ? "the progression tables have no item level (equipGearScores)"
+                              : ("the level " + std::to_string(entity.progression.level) + " is below the item level "
+                                 + (level == gamedata::kNoItemLevel ? std::string("(no level admits the gear score)") : std::to_string(level)))
+                                    .c_str());
+        return;
+    }
+    // The normal availability: no active instance (no second instance), the completion achievement, the gates of the row.
+    if (const QuestError error = available(entity, *objective); error != QuestError::none) {
+        log::write("quests: the equip of %s by character %s grants no %s: %s", itemId.c_str(), entity.characterId.c_str(), objective->id.c_str(),
+                   quest_error_text(error));
+        return;
+    }
+    const QuestResult result = grant(entity, objective->id, "equip", objective->exclusiveTerritory.value_or(0));
+    if (result.ok()) {
+        ++m_counts.equipGrants;
+        log::write("quests: character %s got the objective %s by the equip of %s (OnEquipObjectiveId)", entity.characterId.c_str(),
+                   objective->id.c_str(), itemId.c_str());
+    } else {
+        log::write("quests: the equip grant of %s to character %s: %s", objective->id.c_str(), entity.characterId.c_str(),
+                   quest_error_text(result.error));
+    }
+}
+
 void Quests::level_changed(const Entity& entity) {
     if (data() != nullptr && entity.quests.loaded) {
         m_levelsDirty.insert(entity.id);
@@ -2742,8 +2797,20 @@ void Quests::died(Entity& entity) {
 }
 
 void Quests::tick() {
-    if (m_itemsDirty.empty() && m_placesDirty.empty() && m_levelsDirty.empty() && m_pushDirty.empty()) {
+    if (m_itemsDirty.empty() && m_placesDirty.empty() && m_levelsDirty.empty() && m_pushDirty.empty() && m_equips.empty()) {
         return;
+    }
+    // Stage QG4: the grants of the equipped artifacts first (a build preset gives the completion achievement of its artifacts in its
+    // transaction, before this tick: no grant then).
+    std::map<EntityId, std::vector<std::pair<std::string, std::uint32_t>>> equips;
+    equips.swap(m_equips);
+    for (const auto& [id, list] : equips) {
+        Entity* entity = m_world.find(id);
+        for (const auto& [itemId, gearScore] : list) {
+            if (entity != nullptr && entity->kind == EntityKind::player) {
+                equip_grant(*entity, itemId, gearScore);
+            }
+        }
     }
     std::set<EntityId> items;
     std::set<EntityId> places;

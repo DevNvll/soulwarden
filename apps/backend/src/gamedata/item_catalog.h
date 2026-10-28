@@ -210,6 +210,10 @@ public:
     [[nodiscard]] std::size_t artifact_objective_count() const {
         return m_objectives.size();
     }
+    /** Stage QG4: @return Each artifact objective (the support manifest: the grant of an equip). */
+    [[nodiscard]] const std::vector<ArtifactObjective>& artifact_objectives() const {
+        return m_objectives;
+    }
     /** Sets the artifact objectives with no file (tests). */
     void set_artifact_objectives(std::vector<ArtifactObjective> objectives);
 

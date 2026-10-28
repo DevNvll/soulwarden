@@ -452,11 +452,14 @@ def build(paks: Paks, world: str, regions: list[str] | None, task_tags: set[str]
 
 
 def unique(volumes: list[dict]) -> list[dict]:
-    """@return The volumes with no second copy of one volume (the same tag, shape, center, and source), sorted by tag and center."""
+    """@return The volumes with no second copy of one volume (the same tag, shape, center, source, and each value of the predicate of the
+    volume: the axes, the sizes, the height rule, the filter), sorted by tag and center. Code review of stage QG3, finding QG3R-R4: two
+    volumes of one slice with one center and different axes or sizes are two volumes."""
     seen = set()
     result = []
     for volume in sorted(volumes, key=lambda volume: (volume["tag"].lower(), volume["center"], volume["source"], volume["via"])):
-        key = (volume["tag"].lower(), volume.get("shape"), tuple(volume["center"]), volume["source"])
+        key = (volume["tag"].lower(), volume.get("shape"), tuple(volume["center"]), volume["source"], tuple(volume.get("axes", ())),
+               tuple(volume.get("half", ())), volume.get("radius"), volume.get("height"), volume.get("ignoreHeight"), volume.get("filter"))
         if key in seen:
             continue
         seen.add(key)

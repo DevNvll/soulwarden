@@ -186,6 +186,19 @@ struct PersonBinding {
     std::string unresolved;
 };
 
+/**
+ * Stage QG4: a person that the file does not make an object (the member personsApart of the tool): the NPC id, the cause (otherWorld,
+ * levelScript, nested, event, alias, idTaken), the world of its placement, its slice, and its placement. The support manifest names the
+ * cause of an NPC with no person slot. A file of before stage QG4 has none.
+ */
+struct PersonApart {
+    std::string npc;
+    std::string cause;
+    std::string world;
+    std::string slice;
+    std::string placement;
+};
+
 /** One object: a placement of a layer whose slice has Interact components. */
 struct InteractionObject {
     /** The placement UUID: the durable key of the object. */
@@ -373,6 +386,10 @@ public:
     [[nodiscard]] const std::map<std::string, LootContainer>& loot_containers() const {
         return m_lootContainers;
     }
+    /** Stage QG4: sets the persons apart (the loader, a test with no file). */
+    void set_persons_apart(std::vector<PersonApart> persons);
+    /** Stage QG4: @return The persons apart of an NPC id (any case), in the order of the file. */
+    [[nodiscard]] std::vector<const PersonApart*> persons_apart(std::string_view npc) const;
     /** @return The largest horizontal distance of a bound or of a child from the origin of a template (meters). */
     [[nodiscard]] float template_spread(std::uint32_t templateIndex) const;
 
@@ -424,6 +441,9 @@ private:
     std::vector<SpawnedPlacement> m_spawned;
     std::map<std::string, std::uint32_t> m_fixtures;
     std::map<std::string, LootContainer> m_lootContainers;
+    /** Stage QG4: the persons apart, and the lower-case NPC id to their positions. */
+    std::vector<PersonApart> m_personsApart;
+    std::unordered_map<std::string, std::vector<std::size_t>> m_apartByNpc;
     std::vector<float> m_templateSpread;
     std::unordered_map<std::int64_t, std::vector<std::uint32_t>> m_spawnedCells;
     std::string m_error;

@@ -70,6 +70,11 @@ member "person":
     no rule: always there), "clientChild" true, the spawner, and "unresolved" with a cause when the tool cannot bind it (the backend
     refuses its use).
   - a direct person: a placement whose own slice has the NPC component: "npc" (m_npcKey) and "direct" true.
+  Stage QG4 (docs/systems/persons.md): a child of an empty variant whose slice has its own NPC component and no variation table has the
+  NPC of its slice ("template" true); the mode of a swap person is the state child above its NPC entity (presence_rule; the client shows
+  the child Depleted for a true conditional and Healthy for a false one), also for a direct person; "personsApart" lists each person that
+  is not an object with its cause (APART_CAUSES): a placement of another world, a dungeon level script, a nested spawner, a spawner with
+  no init, an alias, a taken id.
 What the file does not have, with the count of each cause in "excluded" (a later stage reads them):
   - The other children of a PrefabSpawner (a trading post, a building), a person child with m_spawnOnInitialize false (the client does
     not make it), and the second slot of a client id that an earlier person slot has: a later stage.
@@ -125,7 +130,8 @@ Output (one line of JSON):
                    "options": [[option index, option entity], ...], "lore": achievement index or -1,
                    "requires": {...}}, ...],
                 "person" (format 4, a person only): {"npc", "variant", "table", "row", "presence": {"mode", "condition"},
-                            "clientChild", "spawner", "unresolved"} or {"npc", "direct"}}, ...]}
+                            "clientChild", "spawner", "unresolved", "template"} or {"npc", "direct"}}, ...],
+   "personsApart" (stage QG4): [{"npc", "cause", "world", "slice", "via": [SLICE, ...], "placement", "unresolved"}, ...]}
   `key` is the placement UUID (the durable key of the object), `actor` the 32 hexadecimal digits of the actor id,
   `target` and `component` and an option entity 16 hexadecimal digits, `asset` the 32 hexadecimal digits of the slice
   asset id and `sub` its sub id (the metadata state of the record of the object). "options" of a bound are indexes into
@@ -160,7 +166,7 @@ sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure, field_id  # noqa: E402
 from creature_data import (CATALOG_PATH, DEFAULT_CENTER, REGIONS_FOLDER, TABLES_FOLDER, WORLD, Catalog, Sources,  # noqa: E402
-                           asset_id, region_names, spawner_path)
+                           asset_id, read_alias, region_names, spawner_path)
 from item_catalog import Sheet, sheet_type  # noqa: E402
 from slice_ids import (BASE_CLASS_FIELDS, COMPONENTS_FIELD, ENTITY_TYPE, ID_FIELD, NAME_FIELD, NO_ENTITY,  # noqa: E402
                        Element, component_id, find_field, id_value)
@@ -172,7 +178,12 @@ CRAFTING_STATIONS = "sharedassets/genericassets/craftingstations.craftstationdb"
 # The station slices of the settlements (stage 3.7a, decision D1: the _t2 variant of a master slice whose key has no row).
 STATION_FOLDER = "slices/structures/settlements/stations/"
 STATION_PREFIX = "settlement_station_"
-WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", UI_DATABASE, CRAFTING_STATIONS, CATALOG_PATH)
+# Stage QG4: "sharedassets/" for the placements of the other worlds (sharedassets/coatlicue/WORLD/regions/) and the alias assets.
+WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", UI_DATABASE, CRAFTING_STATIONS, CATALOG_PATH, "sharedassets/")
+WORLDS_FOLDER = "sharedassets/coatlicue/"
+# Stage QG4: the slices of the level scripts of the dungeons (an instance: its stage), and the depth of the walk of nested children.
+LEVEL_SCRIPT_FOLDER = "slices/dungeon/levelscripts/"
+PERSON_DEPTH = 4
 # The development fixtures (stage 2.5b, live checks L5 and L6): a command of the backend makes them near a character.
 FIXTURES = {
     "powderKeg": "slices/structures/deployables/deployable_powderkeg.dynamicslice",
@@ -259,19 +270,33 @@ VARIATION_TABLE = field_id("m_variationTableUniqueName")
 VARIATION_COLUMN = field_id("m_colName")
 SWAP_ACHIEVEMENT = field_id("m_achievementName")
 SWAP_ENABLED = field_id("m_enableUseAchievementForClientState")
+SWAP_STATE = field_id("m_achievementServerState")
+SPAWN_ON_TRIGGER = field_id("m_spawnOnTrigger")
 VARIATION_TABLE_TYPE = "VariationData"
 # The presence of a person child for one character (stage 2.5c; research npc-conversations.md decision 4 and quest-engine-3.md Q2): the
 # client shows the child of a swap slice by the achievement of its GatherableController (client 0x3369430 asks the local player for the
 # achievement; the variation action "Change Gatherable Achievement" sets it from the column SwapAchievementId), and the child of the
 # walkaway slice by the events of its AchievementEvents script (the column AE.3_RequiredAchievementConditional starts the fade-in, AE.0
-# the walkaway that deactivates the interaction). A table of this project from the slice names and the columns of the data; live check
-# A2 of stage 2.5c. "showWhen": the person is there while the condition is true; "hideWhen": while it is false. A slice with the swap
-# column and no row here has a rule that the tool does not know: the backend refuses its use.
+# the walkaway that deactivates the interaction). Live check A2 of stage 2.5c. "showWhen": the person is there while the condition is
+# true; "hideWhen": while it is false.
+# Stage QG4 (the static read evidence/quests/qg4/implement/static/ANSWERS.md, Q1): with the achievement swap the client sets the state of the
+# controller to Depleted (8) when the conditional is true and to Healthy (4) when it is false (0x3369747 to 0x336977E), and it shows the
+# entities below the state child whose name is the text of that state (0x33699D2, 0x33699E3). The mode of a person is the state child
+# above its NPC entity (PERSON_SWAP_STATES): below Healthy the person goes with the bit (masternpc_swap_defaultshown; live A2), below
+# Depleted it comes with the bit (masternpc_swap_defaulthidden, npc_msq_swap_nessacaptured); below no state child it is there in each state.
+# A person below another state child has a rule that the tool does not know: the backend refuses its use. The byte m_achievementServerState
+# of the server facet has the value of that state in each slice of the data (4 Healthy, 8 Depleted), but the client rule does not read it:
+# the tool counts each slice where the two differ (counts personSwapStateDiffers). The walkaway slice keeps its table rule.
 PERSON_PRESENCE = {
-    "slices/characters/mission/sliceswaps/masternpc_swap_defaultshown.dynamicslice": ("SwapAchievementId", "hideWhen"),
-    "slices/characters/mission/sliceswaps/masternpc_swap_defaulthidden.dynamicslice": ("SwapAchievementId", "showWhen"),
     "slices/characters/mission/achievementevents/masternpc_walkaway.dynamicslice": ("AE.3_RequiredAchievementConditional", "showWhen"),
 }
+PERSON_SWAP_STATES = {"Healthy": "hideWhen", "Depleted": "showWhen"}
+# The names of the states of a GatherableController (the enum of the client, 0x3378FE5 to 0x33790DE): a state child has one of them.
+GATHERABLE_STATES = frozenset({"Invalid", "Initialized", "Healthy", "Depleted", "Removed", "Obstructed", "NotOnRequiredQuest", "Locked"})
+SWAP_STATE_OF_BYTE = {4: "Healthy", 8: "Depleted"}
+# The columns of a variation row that a presence rule reads.
+PRESENCE_COLUMNS = ("SwapAchievementId", "AE.3_RequiredAchievementConditional")
+SWAP_COLUMN = "SwapAchievementId"
 # The client id of a child that the client makes for a PrefabSpawner of a level placement (live check L1 of stage 2.5c; client 0x6160B60,
 # called from 0x69EE550): the place, the yaw, and the slice asset of the child, with the low three bits 7.
 CHILD_GROUP_TAG = 7
@@ -329,6 +354,17 @@ CAUSE_PERSON_ID_TAKEN = ("a person child whose client id an earlier person slot 
                          "of the slice asset): the first slot keeps the id (stage 2.5c)")
 CAUSE_PERSON_NO_INIT = ("a person child of a PrefabSpawner with m_spawnOnInitialize false: the client does not make it at the load "
                         "(stage 2.5c), and the server source of such a person is not known")
+# Stage QG4: the persons that the file does not make objects, in the member "personsApart" with one of these causes (the support manifest
+# names the cause of an NPC with no person slot).
+APART_CAUSES = {
+    "otherWorld": "a person of a placement of another world (an instance, an introduction world): its own stage",
+    "levelScript": "a person of a dungeon level script (slices/dungeon/levelscripts/) of the open world: the instance of the dungeon",
+    "nested": "a person child below a child slice (a nested PrefabSpawner): the client id of such a child is not proved",
+    "event": "a person child of a PrefabSpawner with m_spawnOnInitialize false (an event, a start trigger, or an encounter spawns it): "
+             "it needs an owner",
+    "alias": "a person slice of an alias asset (a choice of slices at run time): no fixed person",
+    "idTaken": "a person child whose client id an earlier person slot has: the first slot keeps the id",
+}
 
 
 def text_of(element: Element | None) -> str:
@@ -587,7 +623,7 @@ def read_variation_tables(sources: Sources) -> dict[str, dict[str, dict]]:
                 variant = str(sheet.cell(row, "VariantID"))
                 if variant and variant not in rows:
                     rows[variant] = {"row": row, "npc": str(sheet.cell(row, "NPCId")),
-                                     **{column: str(sheet.cell(row, column)) for column, _ in PERSON_PRESENCE.values()}}
+                                     **{column: str(sheet.cell(row, column)) for column in PRESENCE_COLUMNS}}
         except (struct.error, ValueError, IndexError, TypeError) as error:
             raise Failure(f"{path}: the table did not parse: {error}") from error
     return tables
@@ -721,6 +757,12 @@ class Template:
         self.variation_table = ""
         self.variation_columns: list[str] = []
         self.swap_achievement = ""
+        # Stage QG4: m_achievementServerState of that GatherableController (-1: the field is not there). The controller of a person: the
+        # one of the entity of the NPC component, else of its nearest parent entity, else the only one of the slice (a slice of a cage and
+        # its person has one controller for each).
+        self.swap_state = -1
+        self.swap_controllers: list[tuple[int, str, int]] = []
+        self.npc_entity: int | None = None
         self.entity_names: dict[int, str] = {}
         entities: dict[int, dict] = {}
         interacts: list[tuple[int, Element]] = []
@@ -748,6 +790,32 @@ class Template:
                     self._read_parts(path, name, entity_id, component)
                 entities[entity_id] = info
         self.entity_names = {identifier: info["name"] for identifier, info in entities.items()}
+        if self.swap_controllers:
+            by_entity = {entity: (name, state) for entity, name, state in reversed(self.swap_controllers)}
+            chosen = None
+            entity, seen = self.npc_entity, set()
+            while entity is not None and entity not in seen and chosen is None:
+                seen.add(entity)
+                chosen = by_entity.get(entity)
+                entity = entities.get(entity, {}).get("parent")
+            if chosen is None and (len(self.swap_controllers) == 1 or self.npc_entity is None):
+                chosen = self.swap_controllers[0][1:]
+            if chosen is not None:
+                self.swap_achievement, self.swap_state = chosen
+            else:
+                self.swap_state = -2  # more than one controller and none on the person: no rule
+        # Stage QG4: the state child above the person (its NPC entity, else its first Interact entity): the nearest entity of the parent
+        # chain whose name is a state of the controller.
+        self.person_state = ""
+        for start in [self.npc_entity] + [entity_id for entity_id, _ in interacts]:
+            entity, seen = start, set()
+            while entity is not None and entity not in seen and not self.person_state:
+                seen.add(entity)
+                name = entities.get(entity, {}).get("name", "")
+                self.person_state = name if name in GATHERABLE_STATES else ""
+                entity = entities.get(entity, {}).get("parent")
+            if self.person_state or start is not None:
+                break
         roots_of_slice = [identifier for identifier, info in entities.items() if info["parent"] == NO_ENTITY]
         if (interacts or self.spawner_list) and not roots_of_slice:
             raise Failure(f"{path}: the slice has no root entity (an entity whose transform has no parent)")
@@ -787,22 +855,31 @@ class Template:
             self._read_loot_part(what, entity_id, name, component)
         if component.type_id == NPC_CLASS and not self.npc_key:
             self.npc_key = text_of(find_field(component, NPC_KEY))
+            self.npc_entity = entity_id
         table = find_field(component, VARIATION_TABLE)
         if table is not None and not self.variation_table:
             self.variation_table = text_of(table)
             self.variation_columns = [text_of(node) for node in walk(component) if node.name == VARIATION_COLUMN and text_of(node)]
         swap = find_field(component, SWAP_ENABLED)
-        if swap is not None and flag_of(swap, f"{what}: m_enableUseAchievementForClientState") and not self.swap_achievement:
-            self.swap_achievement = text_of(find_field(component, SWAP_ACHIEVEMENT))
+        if swap is not None and flag_of(swap, f"{what}: m_enableUseAchievementForClientState"):
+            # The state is a field of the server facet of the controller (BaseClass1/m_serverFacetPtr/m_achievementServerState).
+            state = next((node for node in walk(component) if node.name == SWAP_STATE and node.value is not None), None)
+            if state is not None and len(state.value) not in (1, 2, 4):
+                raise Failure(f"{what}: m_achievementServerState is not a number of 1, 2, or 4 bytes")
+            self.swap_controllers.append((entity_id, text_of(find_field(component, SWAP_ACHIEVEMENT)),
+                                          int.from_bytes(state.value, "big") if state is not None and state.value else -1))
         if component.type_id == SPAWNER_CLASS or find_field(component, SLICE_ASSET) is not None:
             authority = find_field(component, CLIENT_AUTHORITY)
             on_init = find_field(component, SPAWN_ON_INIT)
+            on_trigger = find_field(component, SPAWN_ON_TRIGGER)
             alias = find_field(component, ALIAS_ASSET)
             self.spawner_list.append({
                 "entity": entity_id, "name": name, "asset": asset_id(find_field(component, SLICE_ASSET)),
-                "alias": asset_id(alias) is not None,
+                "alias": asset_id(alias) is not None, "aliasAsset": asset_id(alias),
                 "client": flag_of(authority, f"{what}: m_isClientAuthoratative") if authority is not None else False,
                 "onInit": flag_of(on_init, f"{what}: m_spawnOnInitialize") if on_init is not None else False,
+                # An empty value is false (the serialized form of some false flags).
+                "onTrigger": flag_of(on_trigger, f"{what}: m_spawnOnTrigger") if on_trigger is not None and on_trigger.value else False,
                 "variant": text_of(find_field(component, SLICE_VARIANT))})
 
     def _read_loot_part(self, what: str, entity_id: int, name: str, component: Element) -> None:
@@ -952,6 +1029,40 @@ class Template:
                 "options": options, "lore": lore, "requires": requires, "tag": tag}
 
 
+def presence_rule(slice_path: str, template: Template, row: dict | None) -> tuple[dict | None, str]:
+    """@return The presence of a person for one character ({"mode", "condition"}, or none: always there) and a cause when the tool does
+    not know the rule (stage 2.5c; stage QG4: the mode of a swap person by its state child).
+    - The walkaway slice (PERSON_PRESENCE): the column of its row.
+    - A GatherableController with m_enableUseAchievementForClientState: the mode of the state child above the person (PERSON_SWAP_STATES:
+      Healthy hideWhen, Depleted showWhen; no state child: always there), and the condition of
+      the column SwapAchievementId of the row when the slice has the variation action of that column ("Change Gatherable Achievement"),
+      else m_achievementName of the slice (no action value: the achievement of the slice stays). A condition with a star at the start
+      (`*SwapActive_18007_Cecilia`, the persons of Nighthaven) stays as the data has it: the client keeps the star in the id (static read
+      Q1d), and the id is a row of NPAData (a non-persisted achievement with its own conditional).
+    - A slice with no swap controller: always there. A swap column with no action and no such controller (npc_variantmaster) changes
+      nothing that shows."""
+    rule = PERSON_PRESENCE.get(slice_path)
+    if rule is not None:
+        condition = (row or {}).get(rule[0], "")
+        if not condition:
+            return None, f"the row of the variant has no {rule[0]}"
+        return {"mode": rule[1], "condition": condition}, ""
+    if not template.swap_controllers:
+        return None, ""
+    if template.swap_state == -2:
+        return None, f"the slice {slice_path} has more than one swap controller and none on its person: no presence rule"
+    if not template.person_state:
+        return None, ""  # No state child above the person: it is there in each state of the controller.
+    mode = PERSON_SWAP_STATES.get(template.person_state)
+    if mode is None:
+        return None, f"the person of the slice {slice_path} is below the state child {template.person_state}: no presence rule"
+    condition = (row or {}).get(SWAP_COLUMN, "") if SWAP_COLUMN in template.variation_columns else ""
+    condition = condition or template.swap_achievement
+    if not condition:
+        return None, f"the swap controller of the slice {slice_path} has no achievement"
+    return {"mode": mode, "condition": condition}, ""
+
+
 def capital_regions(sources: Sources) -> list[str]:
     """@return The name of each region with a placement file (some regions have placements and no metadata file)."""
     names = set()
@@ -1059,7 +1170,8 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     station_keys = read_station_keys(sources)
     variation_tables = read_variation_tables(sources)
     person_groups: set[int] = set()
-    counts.update({"persons": 0, "personsDirect": 0, "personsUnresolved": 0, "personSlotsWithTwoIds": 0})
+    counts.update({"persons": 0, "personsDirect": 0, "personsUnresolved": 0, "personSlotsWithTwoIds": 0, "personsFromTemplate": 0,
+                   "personsAlsoOnTrigger": 0, "personsOfLevelScripts": 0, "personSwapStateDiffers": 0})
     # The asset id of each slice path (the catalog of the game): the metadata state of a fixture.
     path_assets = {path: asset for asset, path in getattr(catalog, "paths", {}).items()}
     template_index: dict[str, int] = {}
@@ -1139,37 +1251,100 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     def person_binding(slice_path: str, template: Template, variant: str | None) -> dict:
         """@return The binding of a person (stage 2.5c): the NPC id, the variant and its row, and the presence rule. A person child gets
         its NPC id from the row of its variant in the variation table of its slice (research npc-conversations.md Q1: not the defaults
-        of the generic child slice); a direct person from its NPC component. "unresolved": the backend refuses the use."""
+        of the generic child slice); a direct person from its NPC component. Stage QG4: a child of a spawner with an empty m_sliceVariant
+        whose slice has its own NPC component and no variation table (the direct NPC templates of the settlement slices
+        settlement_morrowtide_complete and settlement_eastconsolation_complete: npc_1102_magistrate, ...) gets the m_npcKey of its slice
+        ("template": true). "unresolved": the backend refuses the use."""
         if variant is None:
             binding = {"npc": template.npc_key, "direct": True}
             if not template.npc_key:
                 binding["unresolved"] = "the NPC component has no m_npcKey"
-            return binding
-        binding: dict = {"npc": "", "variant": variant, "table": template.variation_table}
-        rows = variation_tables.get(template.variation_table)
-        row = rows.get(variant) if rows is not None and variant else None
-        if row is None:
-            binding["unresolved"] = f"the variant {variant!r} has no row of the variation table {template.variation_table!r}"
-            return binding
-        binding["row"] = row["row"]
-        binding["npc"] = row["npc"]
-        if not row["npc"]:
-            binding["unresolved"] = f"the row of the variant {variant!r} has no NPCId"
-            return binding
-        rule = PERSON_PRESENCE.get(slice_path)
-        if rule is not None:
-            condition = row.get(rule[0], "")
-            if not condition and rule[0] == "SwapAchievementId":
-                condition = template.swap_achievement  # No action value: the achievement of the slice stays.
-            if not condition:
-                binding["unresolved"] = f"the row of the variant {variant!r} has no {rule[0]}"
                 return binding
-            binding["presence"] = {"mode": rule[1], "condition": condition}
-        elif template.swap_achievement:
-            # A GatherableController that shows the child by an achievement, with no rule of this tool. A swap column with no action and no
-            # such controller (npc_variantmaster) changes nothing that shows: the person is always there.
-            binding["unresolved"] = f"the slice {slice_path} has a swap achievement and no presence rule (PERSON_PRESENCE)"
+            presence, cause = presence_rule(slice_path, template, None)
+        elif not variant and not template.variation_table and template.npc_key:
+            binding = {"npc": template.npc_key, "variant": "", "table": "", "template": True}
+            presence, cause = presence_rule(slice_path, template, None)
+        else:
+            binding = {"npc": "", "variant": variant, "table": template.variation_table}
+            rows = variation_tables.get(template.variation_table)
+            row = rows.get(variant) if rows is not None and variant else None
+            if row is None:
+                binding["unresolved"] = f"the variant {variant!r} has no row of the variation table {template.variation_table!r}"
+                return binding
+            binding["row"] = row["row"]
+            binding["npc"] = row["npc"]
+            if not row["npc"]:
+                binding["unresolved"] = f"the row of the variant {variant!r} has no NPCId"
+                return binding
+            presence, cause = presence_rule(slice_path, template, row)
+        if cause:
+            binding["unresolved"] = cause
+        elif presence is not None:
+            binding["presence"] = presence
+        # The cross-check of the data: the byte m_achievementServerState against the state child of the person.
+        if template.swap_controllers and template.person_state and template.swap_state >= 0 \
+                and SWAP_STATE_OF_BYTE.get(template.swap_state) != template.person_state:
+            counts["personSwapStateDiffers"] += 1
         return binding
+
+    # Stage QG4: the persons that are not objects of the file, each with its cause (APART_CAUSES), its world, its slice, and the chain of
+    # slices from its placement (the support manifest names the cause of an NPC with no person slot).
+    apart: list[dict] = []
+    apart_keys: set[str] = set()
+    alias_cache: dict[str, list[str]] = {}
+    nested_cache: dict[str, list[tuple]] = {}
+
+    def add_apart(cause: str, world: str, layer: str, identifier: str, child_path: str, binding: dict, via: list[str]) -> None:
+        entry = {"npc": binding.get("npc", ""), "cause": cause, "world": world, "slice": child_path, "via": via,
+                 "placement": f"{layer} {identifier}"}
+        if "unresolved" in binding:
+            entry["unresolved"] = binding["unresolved"]
+        text = json.dumps(entry, sort_keys=True)
+        if text not in apart_keys:
+            apart_keys.add(text)
+            apart.append(entry)
+
+    def alias_slices(asset: tuple[bytes, int] | None) -> list[str]:
+        """@return The slices of an alias asset (a choice of slices at run time; creature_data.read_alias) that the game copy has."""
+        path = catalog.path(asset) if asset is not None else None
+        if path is None or not sources.has(path):
+            return []
+        if path not in alias_cache:
+            alias_cache[path] = [child for child in (catalog.path(entry) for entry, _ in read_alias(list(sources.stream(path))))
+                                 if child is not None and sources.has(child)]
+        return alias_cache[path]
+
+    def nested_persons(slice_path: str, stack: frozenset[str]) -> list[tuple]:
+        """@return The person children below the PrefabSpawners of a slice and of its child slices (PERSON_DEPTH levels; no slice that
+        spawns itself): (person slice, its template, its spawner, the child slices between, each spawner of the chain with
+        m_spawnOnInitialize, a choice of an alias asset in the chain). A station or a camp child is not a person (stage 2.5b)."""
+        if slice_path in nested_cache:
+            return nested_cache[slice_path]
+        template = load_template(slice_path)
+        found: list[tuple] = []
+        for spawner in template.spawner_list:
+            if spawner["client"]:
+                continue
+            path = catalog.path(spawner["asset"]) if spawner["asset"] is not None else None
+            candidates = [(path, False)] if path is not None else [(child, True) for child in alias_slices(spawner["aliasAsset"])]
+            for child_path, alias in candidates:
+                if child_path in stack or not sources.has(child_path):
+                    continue
+                child = load_template(child_path)
+                if child.is_station():
+                    continue
+                if child.is_person():
+                    found.append((child_path, child, spawner, [], spawner["onInit"], alias))
+                elif len(stack) < PERSON_DEPTH and child.spawner_list:
+                    for person_path, person, own, via, on_init, chosen in nested_persons(child_path, stack | {child_path}):
+                        found.append((person_path, person, own, [child_path] + via, on_init and spawner["onInit"], chosen or alias))
+        nested_cache[slice_path] = found
+        return found
+
+    def apart_cause(placement_slice: str, via: list[str], on_init: bool, alias: bool) -> str:
+        if placement_slice.startswith(LEVEL_SCRIPT_FOLDER) or any(path.startswith(LEVEL_SCRIPT_FOLDER) for path in via):
+            return "levelScript"
+        return "alias" if alias else "event" if not on_init else "nested"
 
     def person_children(layer: str, region: str, identifier: str, matrix: tuple[float, ...], template: Template, spawner: dict,
                         child_path: str, child: Template) -> None:
@@ -1185,6 +1360,9 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
         counts["persons"] += 1
         counts["personsUnresolved"] += 1 if "unresolved" in binding else 0
         counts["personSlotsWithTwoIds"] += 1 if len(groups) > 1 else 0
+        counts["personsFromTemplate"] += 1 if binding.get("template") else 0
+        counts["personsAlsoOnTrigger"] += 1 if spawner.get("onTrigger") else 0
+        counts["personsOfLevelScripts"] += 1 if template.path.startswith(LEVEL_SCRIPT_FOLDER) else 0
         if child.root is None:
             raise Failure(f"{child_path}: the slice of a person child has no root entity")
         for number, group in enumerate(groups):
@@ -1192,6 +1370,8 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 # Two person slots with one client id (one place, one yaw bucket, the same low bits of the slice asset): the client has
                 # one entity for the id, and the backend cannot tell the two slots apart. The first slot keeps the id.
                 exclude(CAUSE_PERSON_ID_TAKEN)
+                if number == 0:
+                    add_apart("idTaken", WORLD, layer, identifier, child_path, binding, [template.path])
                 continue
             person_groups.add(group)
             k = child.root ^ group
@@ -1334,6 +1514,16 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                         continue
                     child_path = child_slice(spawner, f"{layer}: the placement {identifier}")
                     if child_path is None:
+                        # Stage QG4: a person of an alias asset (a choice of slices at run time) is not a fixed person.
+                        for chosen in alias_slices(spawner["aliasAsset"]) if spawner["alias"] else []:
+                            persons = [(chosen, load_template(chosen), spawner, [], spawner["onInit"], True)]
+                            if not persons[0][1].is_person():
+                                persons = [(path, person, own, [chosen] + via, on_init, True)
+                                           for path, person, own, via, on_init, _ in nested_persons(chosen, frozenset({chosen}))]
+                            for path, person, own, via, _, _ in persons:
+                                if person.is_person():
+                                    add_apart("alias", WORLD, layer, identifier, path, person_binding(path, person, own["variant"]),
+                                              [slice_path] + via)
                         continue
                     child = load_template(child_path)
                     if not child.is_station() and child.is_person():
@@ -1341,9 +1531,15 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                             person_children(layer, region, identifier, matrix, template, spawner, child_path, child)
                         else:
                             exclude(CAUSE_PERSON_NO_INIT)
+                            add_apart(apart_cause(slice_path, [], False, False), WORLD, layer, identifier, child_path,
+                                      person_binding(child_path, child, spawner["variant"]), [slice_path])
                         continue
                     if not child.is_station():
                         exclude(CAUSE_SPAWNER)
+                        # Stage QG4: the persons below the child slice (a nested PrefabSpawner) stay apart with their cause.
+                        for path, person, own, via, on_init, alias in nested_persons(child_path, frozenset({child_path})):
+                            add_apart(apart_cause(slice_path, [child_path] + via, on_init and spawner["onInit"], alias), WORLD, layer,
+                                      identifier, path, person_binding(path, person, own["variant"]), [slice_path, child_path] + via)
                         continue
                     world = multiply(matrix, template.matrices.get(spawner["entity"], IDENTITY))
                     spawned.append({"key": f"{identifier}/{spawner['entity']:016x}", "parent": identifier, "parentActor": actor.hex(),
@@ -1381,6 +1577,41 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                     counts["personsDirect"] += 1
                     counts["personsUnresolved"] += 1 if "unresolved" in entry["person"] else 0
                 objects.append(entry)
+    # Stage QG4: the persons of the placements of the other worlds (the instances, the introduction worlds): not objects of the file (the
+    # backend has the open world only), in "personsApart" with their world. Only a whole run has them (no --region, no --radius).
+    if radius is None and len(regions) == len(capital_regions(sources)):
+        other_worlds = sorted({path[len(WORLDS_FOLDER):].split("/", 1)[0] for path in sources.paths(WORLDS_FOLDER, ".capitals.json")}
+                              - {WORLD})
+        for other in other_worlds:
+            for path in sources.paths(f"{WORLDS_FOLDER}{other}/regions/", ".capitals.json"):
+                data = sources.read(path)
+                try:
+                    document = json.loads(data.decode("utf-8-sig")) if data is not None else {}
+                except (ValueError, AttributeError) as error:
+                    raise Failure(f"{path}: the placements of the layer did not parse: {error}") from error
+                layer = path[len(WORLDS_FOLDER):-len(".capitals.json")]
+                placements = document.get("Capitals") if isinstance(document, dict) else None
+                for placement in placements if isinstance(placements, list) else []:
+                    if not isinstance(placement, dict) or not str(placement.get("sliceName") or "").strip() \
+                            or "<plot>" in str(placement.get("sliceName")).lower():
+                        continue
+                    slice_path = spawner_path(placement, catalog, sources)
+                    if slice_path is None or not sources.has(slice_path):
+                        continue
+                    identifier = str(placement.get("id", ""))
+                    try:
+                        template = load_template(slice_path)
+                        if template.is_person():
+                            add_apart("otherWorld", other, layer, identifier, slice_path, person_binding(slice_path, template, None), [])
+                        for person_path, person, own, via, _, _ in nested_persons(slice_path, frozenset({slice_path})):
+                            add_apart("otherWorld", other, layer, identifier, person_path,
+                                      person_binding(person_path, person, own["variant"]), [slice_path] + via)
+                    except Failure:
+                        # A slice of another world that the reader of this tool refuses: a count, not a stop (only a list of causes).
+                        counts["otherWorldSlicesNotRead"] = counts.get("otherWorldSlicesNotRead", 0) + 1
+        counts["otherWorlds"] = len(other_worlds)
+    apart.sort(key=lambda entry: (entry["npc"].lower(), entry["cause"], entry["world"], entry["placement"], entry["slice"]))
+    counts["personsApart"] = dict(sorted({cause: sum(1 for entry in apart if entry["cause"] == cause) for cause in APART_CAUSES}.items()))
     fixtures: dict[str, int] = {}
     for name, fixture_path in FIXTURES.items():
         if not sources.has(fixture_path):
@@ -1429,7 +1660,8 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     counts["unresolvedNames"] = len(unresolved)
     return {"format": FORMAT, "world": WORLD, "counts": counts, "excluded": dict(sorted(excluded.items())),
             "unresolved": dict(sorted(unresolved.items())), "options": option_list, "achievements": achievement_list,
-            "templates": template_list, "spawned": spawned, "fixtures": fixtures, "lootContainers": loot_containers, "objects": objects}
+            "templates": template_list, "spawned": spawned, "fixtures": fixtures, "lootContainers": loot_containers, "objects": objects,
+            "personsApart": apart}
 
 
 def main() -> int:
@@ -1490,7 +1722,9 @@ def main() -> int:
     print("  station keys: " + ", ".join(f"{key} {count}" for key, count in counts["spawnedByKey"].items()))
     print(f"  persons (stage 2.5c): {counts['persons']} person children that the client makes ({counts['personSlotsWithTwoIds']} slots "
           f"with more than one id), {counts['personsDirect']} direct persons, {counts['personsUnresolved']} with no binding (the backend "
-          f"refuses their use)")
+          f"refuses their use); stage QG4: {counts['personsFromTemplate']} with the NPC of their slice (an empty variant)")
+    print("  persons apart (stage QG4): " + ", ".join(f"{cause} {count}" for cause, count in counts["personsApart"].items())
+          + f" (in {counts.get('otherWorlds', 0)} other worlds)")
     if counts.get("stationOverrides"):
         changes = sorted({f"{entry['override']['from']} -> {entry['override']['to']}" for entry in document["spawned"] if "override" in entry})
         print(f"  decision D1: {counts['stationOverrides']} station children get the _t2 variant ({', '.join(changes)})")

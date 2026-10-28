@@ -104,7 +104,13 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   game data, the rule of the client in `equipmentcommon.lua`) is refused (`gearScoreAboveLimit`, the message "equip item
   fail" for a request of a client). With no expansion data there is no such limit. The item level of a gear score (the first
   level whose MaxEquippableGearScore takes it: 700 needs level 65) is a rule of the client that the backend does not check
-  yet ([DLC and entitlements](dlc-and-entitlements.md)).
+  at the equip yet ([DLC and entitlements](dlc-and-entitlements.md)). Stage QG4: `ProgressionTables::item_level` has the rule (the
+  member `equipGearScores` of the progression tables); the artifact grant of the quest system uses it.
+- Stage QG4, the equip of an artifact [data: OnEquipObjectiveId; [Quests](quests.md), the quest givers of stage QG4]: after the commit of
+  each change of the items (`Inventory::finish`), each paperdoll slot with the action ItemEquipped and an item with an artifact objective
+  of the item catalog goes to `Quests::item_equipped` (the item id and the gear score of the instance). The quest system grants the
+  objective at its next tick (the item level, the availability). The inventory does not wait for the quest system, and a refused grant
+  changes no item.
 - The gear score limit of a give (stage B0, [Build presets](build-presets.md)): the larger of the largest gear score of the item
   table and the upgrade limit of the item (MaxCraftUpgradeGS of the item catalog format 3: 800 for the 73 artifacts), the upgrade
   limit not above the MaxEquipGS of the owned expansion (`Inventory::give_limit`; game data). A value outside the range gets the

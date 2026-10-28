@@ -29,7 +29,36 @@ std::int64_t cell_of(float value) {
     return static_cast<std::int64_t>(std::floor(value / kCell));
 }
 
+/**
+ * Code review of stage QG3, finding QG3R-R3: the largest count of cells of one volume in the grid (a square of 32 km: twice the open world),
+ * and of all the volumes of one file. A volume above it is refused at the load (a test volume of `set` goes into the list of the volumes
+ * that each lookup tests): a small file cannot take all the memory at the start.
+ */
+constexpr double kMaxVolumeCells = 16384.0;
+constexpr double kMaxGridEntries = 2000000.0;
+/** The largest count of the volumes that the grid cannot hold (QG3R-R2: a turned volume with no height limit). */
+constexpr std::size_t kMaxUnboundedVolumes = 64;
+
+/**
+ * Code review of stage QG3, finding QG3R-R2: a volume with no height limit (ignoreHeight) whose local height axis is not vertical has no
+ * horizontal limit along that axis: the sphere of `reach` does not hold it, and the place view tests it at each lookup.
+ */
+bool unbounded(const TriggerVolume& volume) {
+    return volume.ignoreHeight && (volume.axes[6] != 0.0F || volume.axes[7] != 0.0F);
+}
+
 /** @return The radius of a sphere around the center that holds the volume (the cells of the grid). */
+float reach(const TriggerVolume& volume);
+
+/** @return The count of the cells of the grid that the sphere of a volume covers (QG3R-R3: in double, before any integer conversion). */
+double cell_count(const TriggerVolume& volume) {
+    const double radius = reach(volume);
+    const double side = std::floor((static_cast<double>(volume.center[0]) + radius) / kCell) - std::floor((static_cast<double>(volume.center[0]) - radius) / kCell) + 1.0;
+    const double depth = std::floor((static_cast<double>(volume.center[1]) + radius) / kCell) - std::floor((static_cast<double>(volume.center[1]) - radius) / kCell) + 1.0;
+    const double cells = side * depth;
+    return std::isfinite(cells) ? cells : kMaxVolumeCells * 2.0;
+}
+
 float reach(const TriggerVolume& volume) {
     switch (volume.shape) {
     case TriggerShape::aabb:
@@ -95,6 +124,7 @@ bool TriggerData::fail(std::string cause) {
     m_byTag.clear();
     m_elsewhere.clear();
     m_cells.clear();
+    m_unbounded.clear();
     m_otherWorld = 0;
     m_error = std::move(cause);
     return false;
@@ -124,7 +154,15 @@ bool TriggerData::load_text(const std::string& text) {
     if (!document.contains("volumes") || !document["volumes"].is_array()) {
         return fail("the file has no list volumes");
     }
+    // Code review of stage QG3, finding QG3R-R1: the world of the file (the member world at its root: the trigger tool of before stage QG3
+    // wrote it) is the world of each volume with no world of its own. No member: the open world.
+    if (document.contains("world") && !document["world"].is_string()) {
+        return fail("the member world of the file is not a text");
+    }
+    const std::string fileWorld = document.contains("world") ? document["world"].get<std::string>() : std::string(kOpenWorld);
     std::vector<TriggerVolume> volumes;
+    double entries = 0.0;
+    std::size_t unboundedCount = 0;
     for (const json& entry : document["volumes"]) {
         if (!entry.is_object() || !entry.contains("tag") || !entry["tag"].is_string() || !entry.contains("shape") || !entry["shape"].is_string()) {
             return fail("a volume does not have the members tag and shape");
@@ -132,9 +170,10 @@ bool TriggerData::load_text(const std::string& text) {
         TriggerVolume volume;
         volume.tag = lower_text(entry["tag"].get<std::string>());
         // Stage QG3: a volume of another world (an instance) is never tested in the open world.
-        if (entry.contains("world") && (!entry["world"].is_string() || entry["world"].get<std::string>() != kOpenWorld)) {
+        const bool ownWorld = entry.contains("world");
+        if ((ownWorld && (!entry["world"].is_string() || entry["world"].get<std::string>() != kOpenWorld)) || (!ownWorld && fileWorld != kOpenWorld)) {
             ++m_otherWorld;
-            const std::string world = entry["world"].is_string() ? entry["world"].get<std::string>() : std::string("?");
+            const std::string world = !ownWorld ? fileWorld : entry["world"].is_string() ? entry["world"].get<std::string>() : std::string("?");
             std::vector<std::string>& worlds = m_elsewhere[volume.tag];
             if (std::find(worlds.begin(), worlds.end(), world) == worlds.end()) {
                 worlds.push_back(world);
@@ -181,6 +220,19 @@ bool TriggerData::load_text(const std::string& text) {
         if (entry.contains("via") && entry["via"].is_string()) {
             volume.via = entry["via"].get<std::string>();
         }
+        // Code review of stage QG3, findings QG3R-R2 and QG3R-R3: the cells of the grid of the volume, before the grid (a bound for one
+        // volume and for the file); a volume with no horizontal limit goes into a short list that each lookup tests.
+        if (unbounded(volume)) {
+            if (++unboundedCount > kMaxUnboundedVolumes) {
+                return fail("the file has more than " + std::to_string(kMaxUnboundedVolumes) + " turned volumes with no height limit");
+            }
+        } else {
+            const double cells = cell_count(volume);
+            entries += cells;
+            if (cells > kMaxVolumeCells || entries > kMaxGridEntries) {
+                return fail("the volume " + volume.tag + " covers too many cells of the grid of the place view (" + std::to_string(cells) + ")");
+            }
+        }
         volumes.push_back(std::move(volume));
     }
     // Stage QG3: the volumes of the other worlds (the instances): their tags and worlds, for the cause of a task that waits.
@@ -211,9 +263,16 @@ void TriggerData::set(std::vector<TriggerVolume> volumes) {
 void TriggerData::index() {
     m_byTag.clear();
     m_cells.clear();
+    m_unbounded.clear();
     for (std::size_t index = 0; index < m_volumes.size(); ++index) {
         const TriggerVolume& volume = m_volumes[index];
         m_byTag[volume.tag].push_back(static_cast<std::uint32_t>(index));
+        // QG3R-R2 and QG3R-R3: a volume that the grid cannot hold (no horizontal limit, or too many cells: only `set` of a test can give
+        // the second) is in the list that each lookup tests.
+        if (unbounded(volume) || cell_count(volume) > kMaxVolumeCells) {
+            m_unbounded.push_back(static_cast<std::uint32_t>(index));
+            continue;
+        }
         const float radius = reach(volume);
         for (std::int64_t x = cell_of(volume.center[0] - radius); x <= cell_of(volume.center[0] + radius); ++x) {
             for (std::int64_t y = cell_of(volume.center[1] - radius); y <= cell_of(volume.center[1] + radius); ++y) {
@@ -230,6 +289,14 @@ const std::vector<std::string>* TriggerData::elsewhere(std::string_view tag) con
 
 std::vector<const TriggerVolume*> TriggerData::at(float x, float y, float z) const {
     std::vector<const TriggerVolume*> result;
+    for (const std::uint32_t index : m_unbounded) {
+        if (m_volumes[index].contains(x, y, z)) {
+            result.push_back(&m_volumes[index]);
+        }
+    }
+    if (!std::isfinite(x) || !std::isfinite(y) || std::fabs(x) > 1.0e9F || std::fabs(y) > 1.0e9F) {
+        return result;
+    }
     const auto found = m_cells.find(cell_key(cell_of(x), cell_of(y)));
     if (found == m_cells.end()) {
         return result;

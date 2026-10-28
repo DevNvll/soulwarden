@@ -45,6 +45,7 @@ Output: {"format": 3, "levelCap": N, "tradeSkillCap": N,
 "entitlements": [[alias, index, rewardType, rewards, achievement], ...],
 "achievements": [[id, index], ...],
 "levels": [[experience, attributePoints, health, resetCost], ...],
+"equipGearScores": [[maxEquippableGearScore, ignoreItemRarity], ...],
 "attributes": {"minimum": N, "maximum": N, "constitutionHealth": [...], "abilities": {"focus": [[VALUE, [ABILITY, ...]], ...], ...}},
 "vitals": {"health": N, "stamina": N, "mana": N},
 "rankTables": {"<name>": {"experience": [...], "resetCost": [...]}, ...},
@@ -63,6 +64,9 @@ RequiredCategoricalProgressionLevel, and the values of its row of the Territory 
 sharedassets/genericassets/playerbaseattributes.pbadb (Territory Bonus Id, Initial Bonus, Reduction Modifier, Min Value: f32 values, written
 as the exact number of the f32). The tool stops when a rank names a card that is not a territory card, a territory card has no row of
 the Territory Bonus Data, a value is not finite or is below 0, or a territory of a standing has no TerritoryStandingXpModifier.
+Stage QG4 (format 4 with a new member; an older file of format 4 has none): entry K of `equipGearScores` is MaxEquippableGearScore and
+IgnoreItemRarity of the row K of XPLevels: the item level of a gear score is K + 1 for the first K whose value admits it (an artifact of
+gear score 700: 65; research quest-engine.md Q7, client 0x5C4C960 and 0x4403360). The tool stops when the column goes down.
 Entry K of `levels` (from 0) is the level K + 1 of the screen. `levelCap` is a level of the
 screen. Entry K of `constitutionHealth` is the value `minimum` + K. `abilities` (stage 3.5b.2) has, for each attribute, the
 threshold abilities of the EquipAbilities column: a character with the attribute at VALUE or above has them (the backend reads
@@ -353,6 +357,14 @@ def build_tables(contents: list[bytes], bonus: dict[str, list] | None = None) ->
                        whole(levels_sheet.cell(row, "Health")), whole(levels_sheet.cell(row, "AttributeRespecCost"))])
     if not levels or levels[0][0] != 0 or any(levels[row][0] <= levels[row - 1][0] for row in range(1, len(levels))):
         raise Failure(f"the experience column of the table {LEVEL_TABLE} does not start at 0 and go up")
+    # Stage QG4: the item level of a gear score (research quest-engine.md Q7: GetLevelRequirement 0x5C4C960 and the lookup 0x4403360 take
+    # the first row whose MaxEquippableGearScore admits the gear score of an item with an empty RequiredLevel; IgnoreItemRarity of the row).
+    equip_gear_scores = []
+    for row in range(levels_sheet.row_count):
+        cap = whole(levels_sheet.cell(row, "MaxEquippableGearScore"))
+        if equip_gear_scores and cap < equip_gear_scores[-1][0]:
+            raise Failure(f"the column MaxEquippableGearScore of the table {LEVEL_TABLE} goes down at the level {row}")
+        equip_gear_scores.append([cap, bool(levels_sheet.cell(row, "IgnoreItemRarity"))])
 
     expansions = one_table(sheets, EXPANSION_TABLE)
     expansion = row_of(expansions, "ExpansionId", NO_EXPANSION_ROW)
@@ -519,7 +531,7 @@ def build_tables(contents: list[bytes], bonus: dict[str, list] | None = None) ->
     if not abilities:
         raise Failure(f"the table {POINT_TABLE} has no node of a weapon tree")
     return {"format": 4, "levelCap": level_cap, "tradeSkillCap": trade_skill_cap, "expansions": expansion_rows,
-            "entitlements": entitlements, "achievements": achievements, "levels": levels,
+            "entitlements": entitlements, "achievements": achievements, "levels": levels, "equipGearScores": equip_gear_scores,
             "attributes": {"minimum": minimum, "maximum": minimum + len(health) - 1, "constitutionHealth": health,
                            "abilities": attribute_abilities},
             "vitals": vitals, "rankTables": rank_tables, "progressions": progressions, "abilities": abilities,

@@ -652,6 +652,13 @@ ItemResult Inventory::finish(Plan& plan, const char* what) {
         if (!touched.bag.empty() || !touched.equipment.empty()) {
             m_world.consumables().items_changed(*entity);
         }
+        // Stage QG4: an equip of an item with OnEquipObjectiveId (an artifact) grants its objective (the quest system, at the next tick).
+        for (const std::uint32_t slot : touched.equipment) {
+            const EquipmentSlot& equipped = entity->equipment.slots[slot];
+            if (equipped.action == sync::kItemEquipped && equipped.item) {
+                m_world.quests().item_equipped(*entity, equipped.item->itemId, equipped.item->gearScore);
+            }
+        }
     }
     result.slots.assign(touched.bag.begin(), touched.bag.end());
     result.equipmentSlots.assign(touched.equipment.begin(), touched.equipment.end());

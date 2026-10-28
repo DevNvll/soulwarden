@@ -33,6 +33,10 @@ compares the status and the output file of each case:
     yaw at a border of a bucket gives two ids; a negative yaw counts from 360; a variant with no row, a row with no NPC id, and a swap
     slice with no presence rule are bindings with a cause; a client-authoritative spawner and a spawner with m_spawnOnInitialize false
     give no person; a second slot with a taken id is not in the file; a direct person has the NPC id of its NPC component.
+    Stage QG4 (also --persons): an empty variant with a slice that has its own NPC component and no variation table gets the NPC of the
+    slice; the mode of a swap person is its state child (Healthy hideWhen, Depleted showWhen, another state: a cause); of two
+    controllers the one of the NPC entity decides; a person below a nested spawner, of a dungeon level script, of a spawner with no init,
+    and of another world is no object and is in personsApart with its cause.
 The test program of the backend runs it (cases IT10, IR5, RY6 to RY8, NC1).
 
 Usage: check_interactions_tool.py [WORK_FOLDER] [--review | --review-stations | --persons]
@@ -485,7 +489,21 @@ PERSON_ROOT = 0x0000071100000AB0
 PERSON_INTERACT_ENTITY = 0x0000071300000AB0
 PERSON_INTERACT = 0x3518710D72990001
 PERSON_SPAWNER_ENTITY = 0x5000000000000A01
+PERSON_STATE_ENTITY = 0x0000071200000AB0
 PERSON_PLACE = (2000.3, 3000.6, 40.27)
+# Stage QG4: a direct NPC template (an NPC component, no variation table), a swap slice with the state 8 (shown with the bit), a slice with
+# two swap controllers (the cage on the root, the person on the NPC entity), a holder slice with a nested person spawner, a level script,
+# and a placement of another world.
+PERSON_TEMPLATE_SLICE = "slices/test/npc_template.dynamicslice"
+PERSON_HIDDEN_SLICE = "slices/test/swap_hidden.dynamicslice"
+PERSON_CAGE_SLICE = "slices/test/person_cage.dynamicslice"
+PERSON_HOLDER_SLICE = "slices/test/person_holder.dynamicslice"
+PERSON_SCRIPT_SLICE = "slices/dungeon/levelscripts/test_script.dynamicslice"
+PERSON_TEMPLATE_ASSET = (uuid.UUID("2b0c0d0e-0000-4000-8000-0000000000f3").bytes, 2)
+PERSON_HIDDEN_ASSET = (uuid.UUID("2b0c0d0e-0000-4000-8000-0000000000f4").bytes, 2)
+PERSON_CAGE_ASSET = (uuid.UUID("2b0c0d0e-0000-4000-8000-0000000000f5").bytes, 2)
+PERSON_HOLDER_ASSET = (uuid.UUID("2b0c0d0e-0000-4000-8000-0000000000f6").bytes, 2)
+OTHER_WORLD_LAYER = tool.WORLDS_FOLDER + "test_dungeon/regions/r_+00_+00/capitals/test/test.capitals.json"
 
 
 def single(value: float) -> float:
@@ -510,21 +528,38 @@ def independent_group(x: float, y: float, z: float, yaw: float, asset: bytes) ->
     return value
 
 
-def person_child_slice(swap: bool = True, npc_key: str = "0317_Generic") -> list[Element]:
+def swap_controller(swap: bool, state: int | None, achievement: str = "DevWorld_Default_Swap") -> Element:
+    """A GatherableController with the achievement swap (stage QG4: m_achievementServerState in its server facet)."""
+    children = [element("m_enableUseAchievementForClientState", b"\x01" if swap else b"\x00"), text("m_achievementName", achievement)]
+    if state is not None:
+        children.insert(0, element("BaseClass1", children=[element("m_serverFacetPtr", children=[
+            element("m_achievementServerState", bytes([state]))])]))
+    return element(None, children=children)
+
+
+def person_child_slice(swap: bool = True, npc_key: str = "0317_Generic", state: int | None = 4, variation_table: bool = True,
+                       npc_controller: int | None = None, child: str | None = None) -> list[Element]:
     """A person child (stage 2.5c): the root with the NPC component (a generic key), the variation component of the table NPC with the
-    columns NPCId and SwapAchievementId, the GatherableController with the achievement swap, and the Interact entity (slot 5)."""
+    columns NPCId and SwapAchievementId, the GatherableController with the achievement swap, and the Interact entity (slot 5). Stage QG4:
+    `state` the m_achievementServerState of the controller (4 in masternpc_swap_defaultshown), no variation table (a direct NPC
+    template), a second controller on the NPC entity with the state `npc_controller` (a cage and its person), and the state child above the
+    person entity (`child`; default: the state of the byte, Healthy for 4 and Depleted for 8; no child with no swap)."""
     variation = element(None, children=[text("m_variationTableUniqueName", "NPC"),
                                         element("m_variantData", children=[element(None, children=[text("m_colName", "NPCId")]),
                                                                            element(None, children=[text("m_colName", "SwapAchievementId")])])])
-    controller = element(None, children=[element("m_enableUseAchievementForClientState", b"\x01" if swap else b"\x00"),
-                                         text("m_achievementName", "DevWorld_Default_Swap")])
-    return [element(None, children=[
-        entity(PERSON_ROOT, "MasterNpc", [transform(NO_ENTITY, (0.0, 0.0, 0.0)), variation, controller]),
-        entity(PERSON_INTERACT_ENTITY, "Interact", [transform(PERSON_ROOT, (0.0, 0.0, 1.0)),
-                                                    element(None, type_id=tool.NPC_CLASS, children=[text("m_npcKey", npc_key)]),
-                                                    interact(["OpenConversation"], slot=5, identifier=PERSON_INTERACT,
-                                                             option_entity=PERSON_INTERACT_ENTITY)]),
-    ])]
+    root = [transform(NO_ENTITY, (0.0, 0.0, 0.0))] + ([variation] if variation_table else []) + ([swap_controller(swap, state)] if swap else [])
+    state_child = child if child is not None else {4: "Healthy", 8: "Depleted", 6: "Locked"}.get(state or 0, "") if swap else ""
+    person = [transform(PERSON_STATE_ENTITY if state_child else PERSON_ROOT, (0.0, 0.0, 1.0)),
+              element(None, type_id=tool.NPC_CLASS, children=[text("m_npcKey", npc_key)]),
+              interact(["OpenConversation"], slot=5, identifier=PERSON_INTERACT, option_entity=PERSON_INTERACT_ENTITY)]
+    if npc_controller is not None:
+        person.append(swap_controller(True, npc_controller, "Test_Person_Controller"))
+    entities = [entity(PERSON_ROOT, "MasterNpc", root)]
+    if state_child:
+        # The state child of the controller (the client shows the entities below the child of the state: static read Q1).
+        entities.append(entity(PERSON_STATE_ENTITY, state_child, [transform(PERSON_ROOT, (0.0, 0.0, 0.0))]))
+    entities.append(entity(PERSON_INTERACT_ENTITY, "Interact", person))
+    return [element(None, children=entities)]
 
 
 def person_spawner_slice(asset: tuple[bytes, int], variant: str, client: bool, on_init: bool) -> list[Element]:
@@ -553,14 +588,33 @@ class PersonSources(MadeUpSources):
                        "sliceAssetId": "{2B0C0D0E-0000-4000-8000-0000000000A2}:2"}]
         if mode == "person-taken-id":
             placements.append(dict(placements[0], id="2b0c0d0e-0000-4000-8000-000000000003"))
-        variant = {"person-no-row": "Test_No_Row", "person-no-npc": "Test_No_Npc"}.get(mode, "Test_Person")
-        child = PERSON_UNKNOWN_ASSET if mode == "person-swap-unknown" else PERSON_CHILD_ASSET
+        variant = {"person-no-row": "Test_No_Row", "person-no-npc": "Test_No_Npc", "person-template": ""}.get(mode, "Test_Person")
+        child = {"person-swap-unknown": PERSON_UNKNOWN_ASSET, "person-template": PERSON_TEMPLATE_ASSET, "person-swap-hidden": PERSON_HIDDEN_ASSET,
+                 "person-two-controllers": PERSON_CAGE_ASSET, "person-nested": PERSON_HOLDER_ASSET}.get(mode, PERSON_CHILD_ASSET)
         self.slices[PERSON_SPAWNER_SLICE] = person_spawner_slice(child, variant, mode == "person-client", mode != "person-not-init")
         self.slices[PERSON_CHILD_SLICE] = person_child_slice()
-        self.slices[PERSON_UNKNOWN_SLICE] = person_child_slice()
+        self.slices[PERSON_UNKNOWN_SLICE] = person_child_slice(state=6)
         self.slices[PERSON_DIRECT_SLICE] = person_child_slice(swap=False, npc_key="Test_Direct_Npc")
-        for path in (PERSON_SPAWNER_SLICE, PERSON_CHILD_SLICE, PERSON_UNKNOWN_SLICE, PERSON_DIRECT_SLICE):
+        self.slices[PERSON_TEMPLATE_SLICE] = person_child_slice(swap=False, npc_key="Test_Template_Npc", variation_table=False)
+        self.slices[PERSON_HIDDEN_SLICE] = person_child_slice(state=8)
+        self.slices[PERSON_CAGE_SLICE] = person_child_slice(state=4, npc_controller=8, child="Depleted")
+        # A holder slice with no Interact: its spawner (at the init) makes the person child below it (a nested PrefabSpawner).
+        holder = spawner(PERSON_CHILD_ASSET, False, True)
+        holder.children.append(text("m_sliceVariant", "Test_Person"))
+        self.slices[PERSON_HOLDER_SLICE] = [element(None, children=[entity(0x5000000000000B01, "Holder",
+                                                                           [transform(NO_ENTITY, (0.0, 0.0, 0.0)), holder])])]
+        self.slices[PERSON_SCRIPT_SLICE] = person_spawner_slice(PERSON_CHILD_ASSET, "Test_Person", False, False)
+        for path in (PERSON_SPAWNER_SLICE, PERSON_CHILD_SLICE, PERSON_UNKNOWN_SLICE, PERSON_DIRECT_SLICE, PERSON_TEMPLATE_SLICE,
+                     PERSON_HIDDEN_SLICE, PERSON_CAGE_SLICE, PERSON_HOLDER_SLICE, PERSON_SCRIPT_SLICE):
             self.files[path] = tool.INTERACT_BYTES + tool.SPAWNER_CLASS.bytes + b"made-up"
+        if mode == "person-level-script":
+            placements.append({"id": "2b0c0d0e-0000-4000-8000-000000000004", "worldPosition": {"x": 2020.0, "y": 3000.0, "z": 40.0},
+                               "rotation": {"w": 1.0}, "sliceName": "Slices/Dungeon/LevelScripts/Test_Script.slice",
+                               "sliceAssetId": "{2B0C0D0E-0000-4000-8000-0000000000A3}:2"})
+        if mode == "person-other-world":
+            self.files[OTHER_WORLD_LAYER] = json.dumps({"Capitals": [{
+                "id": "2b0c0d0e-0000-4000-8000-000000000005", "worldPosition": {"x": 10.0, "y": 20.0, "z": 30.0}, "rotation": {"w": 1.0},
+                "sliceName": "Slices/Test/Direct_Person.slice", "sliceAssetId": "{2B0C0D0E-0000-4000-8000-0000000000A2}:2"}]}).encode()
         self.files[LAYER] = json.dumps({"Capitals": placements}).encode()
         self.files[tool.TABLES_FOLDER + "javelindata_variations_npcs.datasheet"] = sheet("NPC", tool.VARIATION_TABLE_TYPE, [
             {"VariantID": "Test_Person", "NPCId": "Test_Person_Npc", "SwapAchievementId": "Test_Swap"},
@@ -578,6 +632,12 @@ PERSON_CASES = [
     ("person-client", "a client-authoritative spawner: no person"),
     ("person-not-init", "a spawner with m_spawnOnInitialize false: no person (the client does not make it)"),
     ("person-taken-id", "two slots with one client id: the second slot is not in the file"),
+    ("person-template", "stage QG4: an empty variant and a slice with its own NPC component and no variation table: the NPC of the slice"),
+    ("person-swap-hidden", "stage QG4: a person below the state child Depleted (shown with a true conditional): showWhen with the row value"),
+    ("person-two-controllers", "stage QG4: two swap controllers: the controller of the NPC entity and its state child Depleted decide"),
+    ("person-nested", "stage QG4: a person below a nested PrefabSpawner: no object, in personsApart (nested)"),
+    ("person-level-script", "stage QG4: a person of a dungeon level script: in personsApart (levelScript)"),
+    ("person-other-world", "stage QG4: a person of a placement of another world: in personsApart (otherWorld, its world)"),
 ]
 
 
@@ -586,9 +646,28 @@ def check_person(mode: str, document: dict) -> bool:
     direct = [entry for entry in document["objects"] if entry.get("person", {}).get("direct")]
     if len(direct) != 1 or direct[0]["person"].get("npc") != "Test_Direct_Npc" or document.get("format") != tool.FORMAT:
         return False
+    apart = document.get("personsApart", [])
     if mode in ("person-client", "person-not-init"):
         cause = tool.CAUSE_PERSON_NO_INIT if mode == "person-not-init" else tool.CAUSE_SPAWNER
-        return not objects and document["excluded"].get(cause, 0) >= 1
+        events = [entry for entry in apart if entry["cause"] == "event" and entry["npc"] == "Test_Person_Npc"]
+        return not objects and document["excluded"].get(cause, 0) >= 1 and len(events) == (1 if mode == "person-not-init" else 0)
+    if mode == "person-nested":
+        return (not objects and [(entry["npc"], entry["cause"], entry["slice"]) for entry in apart]
+                == [("Test_Person_Npc", "nested", PERSON_CHILD_SLICE)] and apart[0]["via"] == [PERSON_SPAWNER_SLICE, PERSON_HOLDER_SLICE])
+    if mode == "person-level-script":
+        return [(entry["npc"], entry["cause"]) for entry in apart] == [("Test_Person_Npc", "levelScript")] and len(objects) == 1
+    if mode == "person-other-world":
+        return ([(entry["npc"], entry["cause"], entry["world"]) for entry in apart] == [("Test_Direct_Npc", "otherWorld", "test_dungeon")]
+                and len(objects) == 1 and document["counts"]["otherWorlds"] == 1)
+    if mode in ("person-template", "person-swap-hidden", "person-two-controllers"):
+        binding = objects[0]["person"] if len(objects) == 1 else {}
+        expected = {"person-template": {"npc": "Test_Template_Npc", "variant": "", "table": "", "template": True},
+                    "person-swap-hidden": {"npc": "Test_Person_Npc", "variant": "Test_Person", "table": "NPC", "row": 0,
+                                           "presence": {"mode": "showWhen", "condition": "Test_Swap"}},
+                    "person-two-controllers": {"npc": "Test_Person_Npc", "variant": "Test_Person", "table": "NPC", "row": 0,
+                                               "presence": {"mode": "showWhen", "condition": "Test_Swap"}}}[mode]
+        expected.update({"clientChild": True, "spawner": "2b0c0d0e-0000-4000-8000-000000000001"})
+        return binding == expected and document["counts"]["personsFromTemplate"] == (1 if mode == "person-template" else 0) and not apart
     if mode == "person-taken-id":
         return len(objects) == 1 and document["excluded"].get(tool.CAUSE_PERSON_ID_TAKEN) == 1 and document["counts"]["persons"] == 2
     asset = (PERSON_UNKNOWN_ASSET if mode == "person-swap-unknown" else PERSON_CHILD_ASSET)[0]
@@ -623,7 +702,8 @@ def check_person(mode: str, document: dict) -> bool:
 def run_person_cases(work: Path) -> int:
     tool.Sources = PersonSources
     assets = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE, BAG_ASSET: BAG_SLICE,
-              PERSON_CHILD_ASSET: PERSON_CHILD_SLICE, PERSON_UNKNOWN_ASSET: PERSON_UNKNOWN_SLICE}
+              PERSON_CHILD_ASSET: PERSON_CHILD_SLICE, PERSON_UNKNOWN_ASSET: PERSON_UNKNOWN_SLICE, PERSON_TEMPLATE_ASSET: PERSON_TEMPLATE_SLICE,
+              PERSON_HIDDEN_ASSET: PERSON_HIDDEN_SLICE, PERSON_CAGE_ASSET: PERSON_CAGE_SLICE, PERSON_HOLDER_ASSET: PERSON_HOLDER_SLICE}
     tool.Catalog = lambda data: SimpleNamespace(path=lambda asset: assets.get(asset), paths=assets)
     failures = 0
     # The rule itself: the tool function against the independent bit builder.
