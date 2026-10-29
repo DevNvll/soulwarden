@@ -478,6 +478,14 @@ backend. The tool of each system is also in the document of that system.
   out), to `interaction-data.json` the member `encounterObjects` (`{SLICE: {"template", "variationSlot", "variant"}}`: 48 templates, 42 with
   a variation), and to `gathering-data.json` the member `encounterObjects` (`{SLICE: [TEMPLATE, ROW, TAG, ONLY_ON_QUEST]}`: 37). The formats
   stay; the counts of the other entries do not change.
+  Stage QG5c4 (still format 1): a stage objective has `more` (the other objectives of `m_objectives`, each with the fields of an objective),
+  an EntityActiveStateChangedObjective has `target` (HEX16), `targetName`, `completeOn` (`deactivated` or `activated`), `triggers` (each with
+  `entity`, `position`, `filter`, `deadTargets`, and `shapes`), and `changedBy` (the gatherables of the slice whose gather reaches the
+  change); a detector shape can have `shapeEntity` (the name of the entity of `m_shapeEntityID`, its offset in `center`; `missing` for an
+  id that the slice does not have) and `fromTrigger` (the trigger shape of a tower); the parent has `startField`; a creature member can
+  have `parts` (more than one creature spawner) and an unknown member `nested` (an encounter slice). The parent spawner of a recipe comes
+  from the spawner entity, not from the SliceComponent of the root entity of the parent slice (the 3 twin recipes of stage QG5c3 are
+  gone). The build: 395 encounters, 64 recipes, 52 with no cause of the tool; members 287 creatures, 71 objects, 106 unknown; 16 s.
   Stage QG5c3 (still format 1): the detector has `shapes` (each DetectionVolumeComponent of the entity of the ParticipantTracker: `shape`
   sphere, cylinder, or aabb, `radius`, `height`, `extents`, `center`; `radius` stays the largest sphere or cylinder), a stage has its
   `children` (indexes of the stages) and `childrenOptional`, the objective `SliceSpawnedObjective` is read, and a member has `direct` (a
@@ -610,6 +618,12 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   stage QG5c2 loads the three files and takes 22 recipes, some of which it cannot run (it does not know the child stages, the spawned
   objective, and the proximity objects: an instance can stay in a stage): put the backend and the files together (`tools/release.sh` takes
   both).
+- Stage QG5c4 changes `encounter-data.json` (the new members above; 64 recipes), `creatures.json` (the member kind of the boss ghost of the
+  tarot tower 20325: 142 member kinds; the spawn points and their kinds keep their values), and `gathering-data.json` (9 quest rows of a
+  gathering type that is not a tool type with `NoToolNecessary` lose their cause; the `gathering/` folder has the same bytes);
+  `interaction-data.json` does not change. A backend of stage QG5c3 must not take the new `encounter-data.json`: it reads the
+  EntityActiveStateChangedObjective as an objective of no kind and takes the tarot towers, which then wait at their setup. Put the backend
+  and the files together (`tools/release.sh` takes both).
 
 - Stage BT2 changes `creatures.json` (still format 4, `tools/gamedata/creatures.sh`): each slice that names a server tree has the member
   `serverTrees` (the asset paths of `m_behaviorTreeAssets` of its `BehaviorTreeComponent`, the entity "AI Functionality"; lower case, with

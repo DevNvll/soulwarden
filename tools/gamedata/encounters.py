@@ -71,11 +71,15 @@ from encounter_recipes import read_recipes  # noqa: E402
 
 OUTPUT_NAME = "encounter-data.json"
 FORMAT = 1
-QG5C4 = "stage QG5c4"
 AMBUSH = "an ambush"
 SUMMONED = "a summoned opponent"
+SEQUENCE = "an interaction sequence"
+DEFENSE = "a defense"
+WORLD_EVENT = "a world event of the open world"
 # The pattern of each recipe that is not a kill wave after an interaction (research quest-encounters.md, Appendix A and C), with no
-# refusal: the label of the counts. Stage QG5c3 runs them (each with the causes of its data).
+# refusal: the label of the counts. Stage QG5c3 runs them (each with the causes of its data); stage QG5c4 the interaction sequences, the
+# defenses, and the world events of the open world (each with the causes of its data: research quest-encounters.md section 1, "a defense
+# title does not prove an NPC health objective": the placed defenses have no defended target with a health and no failure condition).
 PATTERNS = {
     "slices/worldevents/brimstonesands/enc_worldevent_1625_aeambush.dynamicslice": AMBUSH,
     "slices/worldevents/brightwood/enc_worldevent_99b_msq_yonasretreat.dynamicslice": AMBUSH,
@@ -87,34 +91,37 @@ PATTERNS = {
     "slices/worldevents/everfall/enc_worldevent_windsward_cq3_templarinvectus.dynamicslice": SUMMONED,
     "slices/worldevents/dunwood/grivaros/enc_worldevent_grivaros.dynamicslice": SUMMONED,
     "slices/worldevents/dunwood/bathory/enc_worldevent_bathory_guardian.dynamicslice": SUMMONED,
+    "slices/worldevents/brimstonesands/interact/enc_worldevent_1656_0401_drusillabanner.dynamicslice": SEQUENCE,
+    "slices/worldevents/brimstonesands/interact/enc_worldevent_1624_diskatumwave.dynamicslice": SEQUENCE,
+    "slices/pois/ancient/design/brazier/enc_worldevent_master_brazier2.dynamicslice": SEQUENCE,
+    "slices/worldevents/cutlasskeys/encounters/enc_worldevent_10a_q4_shipwreck.dynamicslice": SEQUENCE,
+    "slices/worldevents/firstlight/encounters/enc_defense_09a_m5_waveevent.dynamicslice": DEFENSE,
+    "slices/worldevents/firstlight/encounters/enc_worldevent_09a_s17_wagonattack.dynamicslice": DEFENSE,
+    "slices/worldevents/firstlight/interact/cc/enc_worldevent_09a_s9_hacker.dynamicslice": DEFENSE,
+    "slices/worldevents/edengrove/wave_events/enc_worldevent_1434_pyre.dynamicslice": DEFENSE,
+    # The boat reinforcements of Monarch's Bluffs: a world event of the open world; the encounter starts by itself at its placement, and the
+    # look through the spyglass of its setup brings the boat. Its only quest event is the game event of the cannon gimmick
+    # (IO_Gimmick_BreakingWallsCannon_interact), which the placed cannons give too (stage QG5b).
+    "slices/worldevents/monarchsbluffs/scallywagshore/enc_worldevent_boatreinforcements_bryseddshore.dynamicslice": WORLD_EVENT,
+    "slices/worldevents/monarchsbluffs/scallywagshore/enc_worldevent_boatreinforcements_scallywagshore.dynamicslice": WORLD_EVENT,
+}
+# Stage QG5c4: the pattern of the recipes of a folder (the eight tarot towers of Dunwood).
+PATTERN_FOLDERS = {
+    "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/": SEQUENCE,
 }
 # The recipes of the patterns of a later stage and their stage (refused).
 LATER = {
     "slices/worldevents/dunwood/enc_worldevent_carmilla_mindthief.dynamicslice": ("a summoned opponent with phases", "a later stage (BT3)"),
-    "slices/worldevents/brimstonesands/interact/enc_worldevent_1656_0401_drusillabanner.dynamicslice": ("an interaction sequence", QG5C4),
-    "slices/worldevents/brimstonesands/interact/enc_worldevent_1624_diskatumwave.dynamicslice": ("an interaction sequence", QG5C4),
-    "slices/pois/ancient/design/brazier/enc_worldevent_master_brazier2.dynamicslice": ("an interaction sequence", QG5C4),
-    "slices/worldevents/cutlasskeys/encounters/enc_worldevent_10a_q4_shipwreck.dynamicslice": ("an interaction sequence", QG5C4),
-    "slices/worldevents/firstlight/encounters/enc_defense_09a_m5_waveevent.dynamicslice": ("a defense", QG5C4),
-    "slices/worldevents/firstlight/encounters/enc_defense_09a_m5_angryearth.dynamicslice": ("a defense", QG5C4),
-    "slices/worldevents/firstlight/encounters/enc_worldevent_09a_s17_wagonattack.dynamicslice": ("a defense", QG5C4),
-    "slices/worldevents/firstlight/interact/cc/enc_worldevent_09a_s9_hacker.dynamicslice": ("a defense", QG5C4),
-    "slices/worldevents/edengrove/wave_events/enc_worldevent_1434_pyre.dynamicslice": ("a defense", QG5C4),
-    # The boat reinforcements of Monarch's Bluffs: a world event of the open world; its only quest event is the game event of the cannon
-    # gimmick (IO_Gimmick_BreakingWallsCannon_interact), which the placed cannons give (stage QG5b).
-    "slices/worldevents/monarchsbluffs/scallywagshore/enc_worldevent_boatreinforcements_bryseddshore.dynamicslice":
-        ("a world event of the open world", "a later stage (the world events)"),
-    "slices/worldevents/monarchsbluffs/scallywagshore/enc_worldevent_boatreinforcements_scallywagshore.dynamicslice":
-        ("a world event of the open world", "a later stage (the world events)"),
 }
 LATER_FOLDERS = {
-    "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/": ("an interaction sequence", QG5C4),
     "slices/darkness/": ("a seasonal event (the Darkness)", "a later stage (the scheduled and seasonal events)"),
     "slices/worldevents/seasons/": ("a seasonal event", "a later stage (the scheduled and seasonal events)"),
 }
 TIMED = "InvasionWaveObjective"
 DESTROYED = "SliceDestroyedObjective"
 SPAWNED = "SliceSpawnedObjective"
+# Stage QG5c4: the objective that waits for a change of the active state of an entity of the slice (its trigger: a detection volume).
+STATE = "EntityActiveStateChangedObjective"
 # The detector shapes that the runner tests (encounter_recipes.detector_shape) and the size that each one needs.
 SHAPES = ("sphere", "cylinder", "aabb")
 
@@ -132,7 +139,8 @@ def pattern_label(recipe: dict) -> str:
     later = pattern_of(recipe)
     if later is not None:
         return later[0]
-    return PATTERNS.get(recipe["slice"], "a kill wave")
+    folder = next((value for folder, value in PATTERN_FOLDERS.items() if recipe["slice"].startswith(folder)), None)
+    return PATTERNS.get(recipe["slice"], folder or "a kill wave")
 
 
 def descendants(recipe: dict, index: int) -> list[int]:
@@ -186,14 +194,72 @@ def makes(member: dict | None) -> bool:
     return member is not None and (member["kind"] in ("creature", "object") or member.get("lifetime", 0.0) > 0.0)
 
 
+def comes(stage: dict, spawn: dict) -> bool:
+    """@return False for a spawn that its stage never makes: its delay is at or after the time limit of its stage (the end of the stage comes
+    first; code review of stage QG5c3, finding QG5C3R-R3)."""
+    limit = stage["objective"].get("timeLimit", 0) or 0
+    return not (limit > 0 and spawn.get("delay", 0) >= limit)
+
+
+def objectives_of(stage: dict) -> list[dict]:
+    """@return Each objective of a stage: the first one and (stage QG5c4) "more", the others in their order."""
+    return [stage["objective"], *stage["objective"].get("more", [])]
+
+
 def needs(stage: dict, member_path: str, members: dict[str, dict]) -> bool:
-    """@return True when the objective of a stage counts a spawn of this member: a destroyed or a spawned stage that tracks it or tracks
+    """@return True when an objective of a stage counts a spawn of this member: a destroyed or a spawned objective that tracks it or tracks
     no slice. A timed stage needs no spawn (it ends at its time)."""
-    objective = stage["objective"]
-    if objective["type"] not in (DESTROYED, SPAWNED):
-        return False
-    tracked = objective.get("trackedSlice") or objective.get("trackedAlias")
-    return not tracked or tracks(tracked, member_path, members)
+    for objective in objectives_of(stage):
+        if objective["type"] not in (DESTROYED, SPAWNED):
+            continue
+        tracked = objective.get("trackedSlice") or objective.get("trackedAlias")
+        if not tracked or tracks(tracked, member_path, members):
+            return True
+    return False
+
+
+def objective_causes(name: str, objective: dict, kind: str, tracked: str | None, below: list[dict], members: dict[str, dict]) -> list[str]:
+    """@return The causes of one objective of the stage `name` (the rules of the docstring); `below` is the stage and its child stages."""
+    causes: list[str] = []
+    if kind == STATE:
+        # Stage QG5c4: the stage ends at the change of the active state of its target entity (m_completeOnDeactivated or
+        # m_completeOnActivated) that a detection volume of the slice sends when a player enters it (encounter_recipes.state_senders).
+        triggers = objective.get("triggers") or []
+        target = objective.get("targetName") or objective.get("target")
+        if not objective.get("completeOn"):
+            causes.append(f"the stage {name} waits for no change of its entity (m_completeOnActivated 0 and m_completeOnDeactivated 0)")
+        elif not triggers and objective.get("changedBy"):
+            causes.append(f"the stage {name} waits for a change of the entity {target} that the gather of {objective['changedBy'][0]} of "
+                          "the encounter slice sends (an object of the root record): a later stage")
+        elif not triggers:
+            causes.append(f"the stage {name} waits for a change of the entity {target} that no detection volume of the encounter slice sends")
+        elif not all(good_shape(shape) for trigger in triggers for shape in trigger["shapes"]) \
+                or not all("player" in trigger.get("filter", "").lower() for trigger in triggers):
+            causes.append(f"the trigger of the stage {name} is not a shape that the runner tests, or not a volume of the players")
+    elif kind == TIMED:
+        if objective["timeLimit"] <= 0 or not objective["succeedOnTimeout"]:
+            causes.append(f"the wave stage {name} has no timed success")
+    elif kind in (DESTROYED, SPAWNED):
+        if objective["requiredCount"] <= 0:
+            causes.append(f"the stage {name} needs no {'destroyed' if kind == DESTROYED else 'spawned'} slice")
+        if tracked and not any(tracks(tracked, spawn["member"], members) for part in below for spawn in part["spawns"]):
+            causes.append(f"the stage {name} tracks a slice that it and its child stages do not spawn")
+        # Code review of stage QG5c2, finding QG5C2R-R3: the spawns that can count for the objective (its own and those of its child
+        # stages that it tracks, not a visual: a creature, a start object, or a member that ends itself) must reach its count, or a time
+        # limit with succeedOnTimeout ends it. A stage with no spawn below it and no tracked slice counts each death of a member of its
+        # instance (stage QG5c3: Kill Helvan Boss) and needs that time limit.
+        # Code review of stage QG5c3, finding QG5C3R-R3: a spawn due at or after the time limit of its own stage never comes (the end of
+        # the stage cancels its due entry), so it gives no count.
+        timed_end = objective["timeLimit"] > 0 and objective["succeedOnTimeout"]
+        possible = sum(spawn["count"] for part in below for spawn in part["spawns"]
+                       if (not tracked or tracks(tracked, spawn["member"], members)) and makes(members.get(spawn["member"]))
+                       and comes(part, spawn))
+        if not timed_end and objective["requiredCount"] > possible:
+            causes.append(f"the stage {name} needs {objective['requiredCount']} {'destroyed' if kind == DESTROYED else 'spawned'} "
+                          f"slices, and its spawns can give only {possible}")
+    else:
+        causes.append(f"the objective {kind} of the stage {name}: a later stage")
+    return causes
 
 
 def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
@@ -209,42 +275,22 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
         causes.append("the detector of the participants is not a sphere, a cylinder, or an axis box with a size")
     parent = recipe.get("parent") or {}
     if parent.get("kind", "area") != "area" or not parent.get("spawnOnEnable", True):
-        causes.append(f"the parent spawner (a {parent.get('kind', '?')} spawner) does not spawn at its enable (m_spawnOnEnable 0): an "
-                      "other spawner or a condition starts it")
-    creature = False
+        # Stage QG5c4: the rules of the spawner entity (encounter_recipes.spawner_rules): a prefab or a point spawner starts with
+        # m_spawnOnInitialize; the prefab spawners of the Bathory hall and of the rotating bookcase have it 0 and m_spawnOnTrigger 0 (an
+        # event of their parent slice starts them).
+        start = parent.get("startField", "m_spawnOnEnable")
+        causes.append(f"the parent spawner (a {parent.get('kind', '?')} spawner) does not spawn at its start ({start} 0, m_spawnOnTrigger "
+                      f"{int(parent.get('spawnOnTrigger', False))}): an event of its parent slice starts it")
     for index, stage in enumerate(recipe["stages"]):
-        objective = stage["objective"]
-        kind = objective["type"]
         name = stage["name"]
-        tracked = objective.get("trackedSlice") or objective.get("trackedAlias")
         below = [recipe["stages"][at] for at in descendants(recipe, index)]
-        if kind == TIMED:
-            if objective["timeLimit"] <= 0 or not objective["succeedOnTimeout"]:
-                causes.append(f"the wave stage {name} has no timed success")
-        elif kind in (DESTROYED, SPAWNED):
-            if objective["requiredCount"] <= 0:
-                causes.append(f"the stage {name} needs no {'destroyed' if kind == DESTROYED else 'spawned'} slice")
-            if tracked and not any(tracks(tracked, spawn["member"], members) for part in below for spawn in part["spawns"]):
-                causes.append(f"the stage {name} tracks a slice that it and its child stages do not spawn")
-            # Code review of stage QG5c2, finding QG5C2R-R3: the spawns that can count for the stage (its own and those of its child
-            # stages that it tracks, not a visual: a creature, a start object, or a member that ends itself) must reach its count, or a
-            # time limit with succeedOnTimeout ends it. A stage with no spawn below it and no tracked slice counts each death of a member of
-            # its instance (stage QG5c3: Kill Helvan Boss) and needs that time limit.
-            timed_end = objective["timeLimit"] > 0 and objective["succeedOnTimeout"]
-            possible = sum(spawn["count"] for part in below for spawn in part["spawns"]
-                           if (not tracked or tracks(tracked, spawn["member"], members)) and makes(members.get(spawn["member"])))
-            if not timed_end and objective["requiredCount"] > possible:
-                causes.append(f"the stage {name} needs {objective['requiredCount']} {'destroyed' if kind == DESTROYED else 'spawned'} "
-                              f"slices, and its spawns can give only {possible}")
-        else:
-            causes.append(f"the objective {kind} of the stage {name}: a later stage")
-        if objective.get("failureCondition"):
-            causes.append(f"a failure condition of the stage {name}")
-        if objective.get("background"):
-            causes.append(f"a background activation of the stage {name}")
-        for action in stage["startActions"] + stage["endActions"]:
-            if action["type"] not in ("EntityEventAction", "KillSpawnsAction"):
-                causes.append(f"the action {action['type']} of the stage {name}: a later stage")
+        nested = [spawn["member"].rsplit("/", 1)[-1] for part in below for spawn in part["spawns"]
+                  if members.get(spawn["member"], {}).get("nested")]
+        if nested:
+            # Stage QG5c4: a spawn that is an encounter itself (the four sub-encounters of the braziers, each with its destructible
+            # brazier): the stage tracks a slice of the nested encounter.
+            causes.append(f"the stage {name} spawns a nested encounter ({nested[0]}: its own manager and stages): a later stage")
+        # The members of the stage first (stage QG5c4: a group member is the first cause of the count that it cannot give).
         for spawn in stage["spawns"]:
             member = members.get(spawn["member"], {"kind": "unknown", "cause": "no slice"})
             short = spawn["member"].rsplit("/", 1)[-1]
@@ -262,14 +308,35 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
             elif member["kind"] == "object":
                 if member.get("cause"):
                     causes.append(f"the start object {short}: {member['cause']}")
-                if kind != DESTROYED or (tracked and not tracks(tracked, spawn["member"], members)):
+                if not any(part["type"] == DESTROYED and (not (part.get("trackedSlice") or part.get("trackedAlias"))
+                                                          or tracks(part.get("trackedSlice") or part.get("trackedAlias"), spawn["member"],
+                                                                    members))
+                           for part in objectives_of(stage)):
                     causes.append(f"the start object {short} is in a stage that does not track it")
-            else:
-                creature = True
+            elif member.get("parts", 1) > 1 and needed:
+                # Stage QG5c4: a member slice with more than one creature spawner (the boat landings: an officer and a navigator on their
+                # paths); the runner makes one creature for each member.
+                causes.append(f"the creature member {short} has {member['parts']} creature spawners (a group on paths): a later stage")
             if spawn["count"] <= 0:
                 causes.append(f"a spawn of the stage {name} has no count")
-    if not creature:
-        causes.append(f"no creature member: not a kill wave (an interaction sequence: {QG5C4})")
+        # Stage QG5c4: each objective of the stage (the stage ends when each one is met: one objective for each tracked member slice).
+        for number, objective in enumerate(objectives_of(stage)):
+            kind = objective["type"]
+            label = name if number == 0 else f"{name} (its objective {number + 1})"
+            tracked = objective.get("trackedSlice") or objective.get("trackedAlias")
+            if number > 0 and (kind not in (DESTROYED, SPAWNED) or objective["timeLimit"] > 0):
+                causes.append(f"the objective {number + 1} of the stage {name} is not a destroyed or a spawned objective with no time limit")
+                continue
+            causes.extend(objective_causes(label, objective, kind, tracked, below, members))
+            if objective.get("failureCondition"):
+                causes.append(f"a failure condition of the stage {label}")
+            if objective.get("background"):
+                causes.append(f"a background activation of the stage {label}")
+        for action in stage["startActions"] + stage["endActions"]:
+            if action["type"] not in ("EntityEventAction", "KillSpawnsAction"):
+                causes.append(f"the action {action['type']} of the stage {name}: a later stage")
+    # Stage QG5c4: a recipe with no creature member (an interaction sequence: the Disk of Atum of 1624_0401) is no cause; its stages count
+    # its start objects.
     return list(dict.fromkeys(causes))
 
 

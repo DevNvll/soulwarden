@@ -441,7 +441,7 @@ button on "Confirm").
   the backend and the file together. From stage QG5c2 the file also has the member kinds of the encounter recipes (133 kinds with no
   spawn point, each with its member slice; the list `members`: 22 members are left out with their cause); a backend of stage QG5c1
   loads the file and does not use them. From stage QG5c3 the file has 141 member kinds (also the creature slices that are members
-  themselves), and 18 members are left out. The pak entries that it reads have Oodle data: set
+  themselves), and 18 members are left out; from stage QG5c4 142 kinds and 17 left out (the boss ghost of the tarot tower 20325). The pak entries that it reads have Oodle data: set
   `SOULWARDEN_OODLE_LIB` to an Oodle library of your computer (a `liboo2core.so`), or
   `SOULWARDEN_OODLE_DLL` to an Oodle library for Windows (the helper of
   `tools/research/oodle_loader.c`). The tool needs about 1 minute.
@@ -514,7 +514,8 @@ button on "Confirm").
   Without the files the backend starts and refuses each gather ([Gathering](systems/gathering.md)). The loot tables of `loot.sh`
   from stage 3.6a have the gathering roots: with an older `loot-tables.json` each gather is refused. From stage QG5c2 the file has the
   member `encounterObjects`: the gatherable row, the tag, and the template of each start object of the encounter recipes (37; 43 from
-  stage QG5c3, with the proximity start objects of the ambushes).
+  stage QG5c3, with the proximity start objects of the ambushes). From stage QG5c4 a row of a gathering type that is not a tool type is
+  gathered when its restriction is `NoToolNecessary` (9 quest rows: the two chests of the shipwreck of `C10A_Q4`).
 - `tools/gamedata/encounters.sh` makes the encounter recipes of the quests (stage QG5c2; `~/.local/share/soulwarden/gamedata/encounter-data.json`,
   format 1, about 0.9 MB, 20 s; [Encounters](systems/encounters.md)): each encounter of a placement of the main world whose events a quest
   task names (67 of 403), with its manager, its participant tracker and detector, its stages in the order of the manager, the spawns of each
@@ -523,7 +524,12 @@ button on "Confirm").
   pattern (`pattern`), the child stages of a stage, the detector shapes of the tracker entity (sphere, cylinder, box), the radius of a
   proximity start object, and the lifetime of a timed member. The supported build: 31 recipes with a cause and 36 with none; the
   backend refuses 4 of these 36 at its load (the client does not show their creature), so 32 run (14 in stage QG5c2). A backend of
-  stage QG5c2 loads the file of stage QG5c3 and runs 22 recipes. The encounters also need
+  stage QG5c2 loads the file of stage QG5c3 and runs 22 recipes. From stage QG5c4 a stage has each of its objectives (`more`), an
+  entity-state objective has its trigger (`triggers`), a detector shape at an other entity has its offset (`shapeEntity`, and the trigger
+  shapes of the towers: `fromTrigger`), the parent has the start field of its kind (`startField`), and a member can be a group
+  (`parts`) or a nested encounter (`nested`). The supported build of stage QG5c4: 64 recipes (the 3 twin spawners are gone), 12 with a
+  cause of the tool and 52 with none; the backend refuses 5 of these 52 at its load, so 47 run. A backend of stage QG5c3 must not take the
+  file of stage QG5c4: it would take the tarot towers and wait at their setup. Put the backend and the file together. The encounters also need
   `creatures.json` (the member kinds), `interaction-data.json`, and `gathering-data.json` (the start objects) of stage QG5c2 or later; a
   recipe whose member is not in them is refused with its cause. Without the file the world has no encounter, and the rest of the backend works.
 - `tools/gamedata/crafting.sh` makes the crafting data (stage 3.7a; `~/.local/share/soulwarden/gamedata/crafting-data.json`): the
@@ -961,8 +967,8 @@ button on "Confirm").
   client plays no cinematic video: `tools/world quest cinematic NAME ID start|end` (route `POST /v1/dev/quests/cinematic`) gives the quest
   system the notice of the messages 6606 and 6542.
 - Encounters of the quests (stage QG5c2, [Encounters](systems/encounters.md), protocol notes 4.62). The world runs the encounter recipes
-  of `encounter-data.json` that the runner takes (32 in the supported build: the kill waves, the summoned opponents, and the ambushes;
-  14 in stage QG5c2). An instance comes at
+  of `encounter-data.json` that the runner takes (47 in the supported build of stage QG5c4: the kill waves, the summoned opponents, the
+  ambushes, the interaction sequences, the defenses of the data, and the tarot towers; 32 in stage QG5c3, 14 in stage QG5c2). An instance comes at
   its placement when a character is 150 m or less from it (the cells near the characters; no scan of the world), with its root entity
   (the metadata, the place, the manager status, the stage states, and the objective of the root). A character in the detector sphere of
   the recipe (for example 30 m) is a participant: its HUD shows the encounter (the player Objectives field 5) with the step of the stage
@@ -973,12 +979,15 @@ button on "Confirm").
   after the respawn time of the parent spawner. From stage QG5c3: a summoned opponent comes when a character uses the start object;
   an ambush starts when a character walks into the sphere of its proximity start object (the scan of the runner, each 500 ms); the
   child stages of a stage run one after the other, and the parent counts the kills of their spawns; a timed member ends after its
-  lifetime; the detector is the union of the shapes of the tracker entity, tested with the capsule of the character. The interaction
-  sequences and the defenses (stage QG5c4), the phase bosses (stage BT3), and the scheduled and seasonal events are refused with their
-  causes. In a development run
+  lifetime; the detector is the union of the shapes of the tracker entity, tested with the capsule of the character. From stage QG5c4:
+  an entity-state stage ends when a character is in its trigger (the sphere of 20 m at the top of a tarot tower); a stage ends when each
+  of its objectives is met; a recipe with no creature member runs; the HUD row goes to the next step (a satisfied task has its target),
+  and the time row of a timed step counts down (field 0 of the root Objectives). The phase bosses (stage BT3), the scheduled and
+  seasonal events, the nested encounters (the braziers), the group members (the boat landings), and a stage that waits for a gather of
+  the root slice (the horn of 09A_M5) are refused with their causes. In a development run
   `tools/world encounter NAME [METERS]` (route `GET /v1/dev/encounters`) prints the instances near a character with their stage, their
   participants, their members, and the counts (from stage QG5c3 also `objectsFound`, `proximityLooks`, `timedEnds`, and
-  `spawnsSkipped`); `tools/world encounter recipes` (route `GET /v1/dev/encounters/recipes`) prints each recipe:
+  `spawnsSkipped`; from stage QG5c4 also `triggersFound`, `triggerLooks`, `objectivesVoided`, and `findRetries`); `tools/world encounter recipes` (route `GET /v1/dev/encounters/recipes`) prints each recipe:
   taken or refused with its causes; `tools/world encounter reset NAME KEY` (route `POST /v1/dev/encounters/reset`) ends the instance of a
   placement; `tools/world encounter use NAME` (route `POST /v1/dev/encounters/use`) is a development aid: the start object 10 m or less
   from the character counts as gathered. The admin routes have the same commands (`server/http/character_commands.h`).

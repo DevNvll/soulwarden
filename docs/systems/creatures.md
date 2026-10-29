@@ -424,6 +424,9 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
   list of the ghosts (74 actions, the same as `ghost_charred`) with the plague nova, and their damage table has no row of the spell, as
   for the 14 ghost slices of the list [data]. Their behavior data is complete now, and their members have kinds (the four ghosts of
   Torment, the boss ghost "Scourge of the Storm": live QG5c3 L1, its name plate and its health bar).
+- Stage QG5c4: the boss ghost of the tarot tower 20325 (`worldevent_ai_ghost_shackled_20325.dynamicslice`, the body of the member
+  `worldevent_ai_tarottower_boss_20325`) is in `AREA_EXCEPTIONS` too (the same shared action list and no damage row of the plague nova; the
+  other ghosts of that tower were in the list) [data]. The build has 142 member kinds, and 17 members stay out with their cause.
 
 ## Open points
 

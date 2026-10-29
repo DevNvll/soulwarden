@@ -212,6 +212,10 @@ AREA_EXCEPTIONS: dict[tuple[str, str, str], str] = {
     ("slices/worldevents/firstlight/encounters/worldevent_ai_09a_s18_ghost_shade_boss.dynamicslice", "Spell_Plagued_Plague_Nova",
      "the damage row of the spell is not a row of the damage table of the slice"):
         "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    # Stage QG5c4: the boss ghost of the tarot tower 20325 (an encounter member; the other ghosts of that tower are above).
+    ("slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_ghost_shackled_20325.dynamicslice",
+     "Spell_Plagued_Plague_Nova", "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
     ("slices/characters/corrupted_dynasty_summoner.dynamicslice", "AOE_Ranged_Spell",
      "the damage row of the spell is not a row of the damage table of the slice"):
         "the action list of the summoner has the area cast; its damage table has no row of the spell (stage 3.4f-C: left out)",

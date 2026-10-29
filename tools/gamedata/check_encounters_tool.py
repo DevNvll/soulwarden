@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check of the encounter recipe tool (encounters.py) with made-up recipes and members (no file of the game). Stages QG5c2 and QG5c3.
+"""Check of the encounter recipe tool (encounters.py) with made-up recipes and members (no file of the game). Stages QG5c2 to QG5c4.
 
 The tool reads the recipes of the game copy (encounter_recipes.py) and gives each recipe the causes that the runner of the backend does not
 run (refusals: the rules of the docstring of encounters.py). This check gives the rule functions made-up recipes and compares each result.
@@ -9,17 +9,21 @@ The test program of the backend runs it (case QG5C2I; QG5C2A and QG5C3A have the
                      has no cause; a stage that tracks no slice (the members of its stage) is also taken
   manager            m_autoActivate 0 is a cause; stage QG5c3: a reset event is no cause (no slice sends it); a detector with no shape,
                      a sphere of the radius 0, or a shape that the runner does not test is a cause; a cylinder and an axis box are taken
-  parent             stage QG5c3: a point or a prefab parent, or an area parent with no spawn at its enable, is a cause
+  parent             stage QG5c3: a point or a prefab parent, or an area parent with no spawn at its enable, is a cause; stage QG5c4
+                     (spawner_rules): the area component of a spawner entity gives its rules also when the base SpawnerComponent with
+                     the slice comes first (Gazsala), a prefab spawner starts with m_spawnOnInitialize
   objectives         a wave stage with no timed success, a destroyed stage with no count, a destroyed stage that tracks a slice that it
                      does not spawn, an objective of an other class, a failure condition, a background activation, an action that is not
                      EntityEventAction or KillSpawnsAction: one cause each; stage QG5c3: a SliceSpawnedObjective is taken
   cardinality        finding QG5C2R-R3: a destroyed stage that needs more destroyed spawns than its spawns give is a cause, also with a
                      visual; a time limit with succeedOnTimeout ends it (no cause); a stage with no spawn below it and no tracked slice
-                     needs that time limit (Kill Helvan Boss)
+                     needs that time limit (Kill Helvan Boss); finding QG5C3R-R3: a child spawn due at or after the time limit of its
+                     stage gives no count
   children           stage QG5c3: a stage that tracks a slice that only its child stages spawn is taken; its count adds the spawns of
                      its child stages
   members            stage QG5c3: a proximity start object and a start object with two places are taken; a start object in a stage that
-                     does not track it, a member with no slice, a recipe with no creature member (an interaction sequence): a cause each
+                     does not track it, a member with no slice: a cause each; stage QG5c4: a recipe with no creature member (the Disk
+                     of Atum) is taken
   visual             a member that is not a creature and not a start object, in a stage that tracks a different slice or in a timed
                      stage, is a visual of the stage: no cause; stage QG5c3: in a stage that counts it, a member that ends itself
                      (lifetime) is taken, and an other one is a cause
@@ -31,6 +35,15 @@ The test program of the backend runs it (case QG5C2I; QG5C2A and QG5C3A have the
   later              a slice of LATER and a slice of a folder of LATER_FOLDERS get the cause of their stage; a slice of PATTERNS gets its
                      label and no cause of a later stage; an other slice none
   counts             a cause is in the list one time (two same causes of two spawns)
+  state              stage QG5c4: an EntityActiveStateChangedObjective with a trigger of the players is taken; with no trigger, with the
+                     gather of the slice only (the horn of 09A_M5), with no change, or with a trigger that is not of the players: a cause
+  senders            stage QG5c4 (encounter_recipes.state_senders): the detection event of a volume that deactivates the target, and a
+                     gatherable whose start event reaches the change through a delayed event; an other target or change: none
+  several            stage QG5c4: each objective of a stage has its checks (the count of the second objective, its tracked slice); a
+                     second objective that is timed is a cause; a start object that a second objective tracks is in its stage
+  nested             stage QG5c4: a stage that spawns a nested encounter (a member with its own manager) is a cause
+  group              stage QG5c4: a needed creature member with two creature spawners is a cause; a group that no stage needs is not
+  shape              stage QG5c4 (encounter_recipes.detector_shape): m_shapeEntityID of a detection volume is kept ("_shapeEntity")
   complete           finding QG5C2R-R2: build() stops when a read found no source of a file (no smaller document, no file)
 
 Usage: python3 -B check_encounters_tool.py [WORK_FOLDER] [CASE...]    (status 0: each case passed; the folder is not used)
@@ -153,7 +166,23 @@ def case_parent() -> bool:
     point = tool.refusals(recipe(parent={"kind": "point", "spawnOnEnable": False}), members())
     prefab = tool.refusals(recipe(parent={"kind": "prefab", "spawnOnEnable": False}), members())
     idle = tool.refusals(recipe(parent={"kind": "area", "spawnOnEnable": False}), members())
-    return all(has(causes, "does not spawn at its enable") for causes in (point, prefab, idle))
+    rules_ok = case_spawner_rules()
+    return rules_ok and all(has(causes, "does not spawn at its start") for causes in (point, prefab, idle))
+
+
+def case_spawner_rules() -> bool:
+    """Stage QG5c4: the rules of a spawner entity: the base SpawnerComponent (the slice) first, its area component second (Gazsala); a prefab
+    spawner with m_spawnOnInitialize 0 (the EncounterCondition of the rotating bookcase)."""
+    base = Node(None, None, [Node("m_sliceAsset", b"\x00" * 8)], reader.BASE_SPAWNER_CLASS)
+    area = Node(None, None, [Node("m_spawnOnEnable", b"\x01"), Node("m_liveCount", (1).to_bytes(4, "big")),
+                             Node("m_minRespawnRange", struct.pack(">d", 10.0)), Node("m_maxRespawnRange", struct.pack(">d", 10.0))])
+    prefab = Node(None, None, [Node("m_editPrefab", b"\x00"), Node("m_spawnOnInitialize", b"\x00"),
+                               Node("m_minRespawnCooldown", struct.pack(">f", 15.0)), Node("m_maxRespawnCooldown", struct.pack(">f", 15.0))])
+    gazsala = reader.spawner_rules({"name": "WorldEvent_09A_S13_SummonGazsala", "components": [base, area]}, base)
+    bookcase = reader.spawner_rules({"name": "EncounterCondition", "components": [prefab]}, prefab)
+    return (gazsala["kind"] == "area" and gazsala["spawnOnEnable"] and gazsala["liveCount"] == 1 and gazsala["respawn"] == [10.0, 10.0]
+            and bookcase["kind"] == "prefab" and not bookcase["spawnOnEnable"] and bookcase["startField"] == "m_spawnOnInitialize"
+            and bookcase["respawn"] == [15.0, 15.0])
 
 
 def case_objectives() -> bool:
@@ -184,7 +213,22 @@ def case_cardinality() -> bool:
     return (has(tool.refusals(three, members()), "needs 3 destroyed slices, and its spawns can give only 2")
             and has(tool.refusals(visual, members()), "can give only 2")
             and tool.refusals(timed, members()) == [] and tool.refusals(helvan, members()) == []
-            and has(tool.refusals(helvan_untimed, members()), "needs 1 destroyed slices, and its spawns can give only 0"))
+            and has(tool.refusals(helvan_untimed, members()), "needs 1 destroyed slices, and its spawns can give only 0")
+            and late_child())
+
+
+def late_child() -> bool:
+    """Finding QG5C3R-R3: a destroyed parent (1, no time limit) whose only matching spawn is in a timed child (1 s) at the delay 2 s is a
+    cause; the same spawn at 0.5 s is taken."""
+    value = recipe()
+    value["stages"][2]["spawns"] = []
+    value["stages"][2]["objective"].update(requiredCount=1)
+    value["stages"][2]["children"] = [4]
+    late = dict(spawn(MEMBER), delay=2.0)
+    value["stages"].append(stage("Subwave01", tool.TIMED, [late], objective={"timeLimit": 1.0}))
+    refused = has(tool.refusals(value, members()), "needs 1 destroyed slices, and its spawns can give only 0")
+    value["stages"][4]["spawns"] = [dict(spawn(MEMBER), delay=0.5)]
+    return refused and tool.refusals(value, members()) == []
 
 
 def case_children() -> bool:
@@ -206,13 +250,15 @@ def case_members() -> bool:
         (with_stage(1, objective={"type": tool.TIMED, "timeLimit": 3.0, "succeedOnTimeout": True}), "is in a stage that does not track it"),
         (with_stage(2, spawns=[spawn("slices/test/missing.dynamicslice"), spawn(MEMBER, 2)], objective={"trackedSlice": ""}),
          "the member missing.dynamicslice: no slice"),
-        (with_stage(2, spawns=[], objective={"trackedSlice": "", "requiredCount": 1, "timeLimit": 9.0, "succeedOnTimeout": True}),
-         "no creature member: not a kill wave"),
     ]
+    # Stage QG5c4: the Disk of Atum form: the start objects only (no creature member) are taken.
+    objects = recipe()
+    objects["stages"][2] = stage("Wave_02 - Objective: Kill AI", tool.DESTROYED, [spawn(START, 2)],
+                                 objective={"requiredCount": 2, "trackedSlice": START})
     ambush = with_stage(1, spawns=[spawn(PROXIMITY)], objective={"trackedSlice": PROXIMITY})
     places = with_stage(1, spawns=[spawn(START, 2, 3)], objective={"requiredCount": 2})
     return (all(has(tool.refusals(value, members()), text) for value, text in checks)
-            and tool.refusals(ambush, members()) == [] and tool.refusals(places, members()) == [])
+            and tool.refusals(ambush, members()) == [] and tool.refusals(places, members()) == [] and tool.refusals(objects, members()) == [])
 
 
 def case_visual() -> bool:
@@ -337,10 +383,113 @@ def case_complete() -> bool:
         tool.Catalog, tool.read_recipes, tool.slice_assets = saved
 
 
+def state_stage(**changes) -> dict:
+    """@return A made-up tarot tower setup: an EntityActiveStateChangedObjective with a trigger sphere of the players (20 m, 120 m up)."""
+    value = {"type": tool.STATE, "timeLimit": 0, "succeedOnTimeout": False, "failureCondition": False, "background": 0,
+             "target": "000076D766AB0000", "targetName": "Trigger_Start", "completeOn": "deactivated", "changedBy": [],
+             "triggers": [{"entity": "Trigger_Start", "position": [0.0, 0.0, 120.0], "filter": "PlayerOnly", "deadTargets": True,
+                           "shapes": [{"shape": "sphere", "radius": 20.0, "center": [0.0, 0.0, 0.0]}]}]}
+    value.update(changes)
+    return {"name": "Wave_00 - Setup", "children": [], "objective": value, "startActions": [], "endActions": [], "spawns": []}
+
+
+def case_state() -> bool:
+    def with_setup(**changes) -> list[str]:
+        value = recipe()
+        value["stages"][0] = state_stage(**changes)
+        return tool.refusals(value, members())
+
+    trigger = with_setup() == []
+    horn = has(with_setup(triggers=[], changedBy=["Gatherable_Complete"]), "that the gather of Gatherable_Complete of the encounter slice")
+    nothing = has(with_setup(triggers=[]), "that no detection volume of the encounter slice sends")
+    no_change = has(with_setup(completeOn=""), "waits for no change of its entity")
+    others = with_setup(triggers=[{"entity": "T", "position": [0.0, 0.0, 0.0], "filter": "AIOnly", "deadTargets": False,
+                                   "shapes": [{"shape": "sphere", "radius": 5.0, "center": [0.0, 0.0, 0.0]}]}])
+    return trigger and horn and nothing and no_change and has(others, "not a volume of the players")
+
+
+def case_senders() -> bool:
+    def event(target: int, kind: int) -> Node:
+        return Node(None, None, [Node("m_event", None, [entity_ref(target), Node("m_type", kind.to_bytes(4, "big"))])])
+
+    volume = Node(None, None, [Node("m_detectionVolumeEntity", None, [Node(None, None, [Node(None, (10).to_bytes(8, "big"))])]),
+                               Node("m_detectDeadTargets", b"\x01"), Node("m_eventsOnEnter", None, [event(10, 3)])],
+                  reader.DETECTION_EVENT_CLASS)
+    tower = {10: {"name": "Trigger_Start", "components": [volume]}}
+    # The horn: the gather start event triggers 30; 30 has a delayed event that deactivates 20 (Start_Trigger_Event).
+    controller = Node(None, None, [Node("m_gatheringStartEvent", None, [entity_ref(30), Node("m_type", b"\x00\x00\x00\x00")])],
+                      reader.CONTROLLER_CLASS)
+    horn = {20: {"name": "Start_Trigger_Event", "components": []}, 30: {"name": "Interaction_Event_Activate",
+                                                                       "components": [delayed(0.1, 20, 3, False, True)]},
+            40: {"name": "Gatherable_Complete", "components": [controller]}}
+    return (reader.state_senders(tower, 10, 3) == {"volumes": [(10, 10, True)], "gathers": []}
+            and reader.state_senders(tower, 10, 2)["volumes"] == [] and reader.state_senders(tower, 11, 3)["volumes"] == []
+            and reader.state_senders(horn, 20, 3) == {"volumes": [], "gathers": ["Gatherable_Complete"]}
+            and reader.state_senders(horn, 20, 2)["gathers"] == [])
+
+
+def case_several() -> bool:
+    other = "slices/test/worldevent_ai_other.dynamicslice"
+    table = members()
+    table[other] = dict(table[MEMBER], vitals="Test_Other", body="slices/test/other_body.dynamicslice",
+                        bodySlices=["slices/test/other_body.dynamicslice"])
+
+    def kill_stage(more: list[dict]) -> dict:
+        value = recipe()
+        value["stages"][2]["spawns"] = [spawn(MEMBER, 2), spawn(other, 1)]
+        value["stages"][2]["objective"]["more"] = more
+        return value
+
+    good = tool.refusals(kill_stage([objective(tool.DESTROYED, requiredCount=1, trackedSlice=other)]), table) == []
+    short = has(tool.refusals(kill_stage([objective(tool.DESTROYED, requiredCount=2, trackedSlice=other)]), table),
+                "(its objective 2) needs 2 destroyed slices, and its spawns can give only 1")
+    missing = has(tool.refusals(kill_stage([objective(tool.DESTROYED, requiredCount=1, trackedSlice="slices/test/x.dynamicslice")]), table),
+                  "(its objective 2) tracks a slice that it and its child stages do not spawn")
+    timed = has(tool.refusals(kill_stage([objective(tool.TIMED)]), table), "the objective 2 of the stage Wave_02")
+    # A start object that the second objective tracks is in a stage that tracks it.
+    value = recipe()
+    value["stages"][2]["spawns"] = [spawn(MEMBER, 2), spawn(START)]
+    value["stages"][2]["objective"]["more"] = [objective(tool.DESTROYED, requiredCount=1, trackedSlice=START)]
+    start = tool.refusals(value, table) == []
+    return good and short and missing and timed and start
+
+
+def case_nested() -> bool:
+    table = members()
+    nested = "slices/test/enc_test_brazier_off_to_on.dynamicslice"
+    table[nested] = {"kind": "unknown", "cause": "an encounter slice (a nested encounter with its own manager and stages)", "nested": True}
+    value = with_stage(2, spawns=[spawn(MEMBER, 2), spawn(nested)])
+    return has(tool.refusals(value, table), "spawns a nested encounter (enc_test_brazier_off_to_on.dynamicslice")
+
+
+def case_group() -> bool:
+    table = members()
+    table[MEMBER]["parts"] = 2
+    needed = has(tool.refusals(recipe(), table), "the creature member worldevent_ai_test.dynamicslice has 2 creature spawners")
+    # The same group in the timed setup (no stage counts it): no cause.
+    table_free = members()
+    table_free["slices/test/group.dynamicslice"] = dict(table[MEMBER])
+    free = recipe()
+    free["stages"][0]["spawns"] = [spawn("slices/test/group.dynamicslice")]
+    return needed and tool.refusals(free, table_free) == []
+
+
+def case_shape() -> bool:
+    sphere_node = Node(None, None, [Node("m_Radius", struct.pack(">f", 20.0))], reader.SPHERE_CLASS)
+    component = Node(None, None, [Node("m_shape", None, [sphere_node]),
+                                  Node("m_shapeEntityID", None, [Node(None, (298462372491139).to_bytes(8, "big"))])])
+    none = Node(None, None, [Node("m_shape", None, [sphere_node]),
+                             Node("m_shapeEntityID", None, [Node(None, (0xFFFFFFFF).to_bytes(8, "big"))])])
+    shape = reader.detector_shape(component)
+    return (shape["shape"] == "sphere" and shape["radius"] == 20.0 and shape.get("_shapeEntity") == 298462372491139
+            and "_shapeEntity" not in reader.detector_shape(none))
+
+
 CASES = {"taken": case_taken, "manager": case_manager, "parent": case_parent, "objectives": case_objectives,
          "cardinality": case_cardinality, "children": case_children, "members": case_members, "visual": case_visual,
          "lifetime": case_lifetime, "shapes": case_shapes, "alias": case_alias, "later": case_later, "counts": case_counts,
-         "complete": case_complete}
+         "complete": case_complete, "state": case_state, "senders": case_senders, "several": case_several, "nested": case_nested,
+         "group": case_group, "shape": case_shape}
 
 
 def main() -> int:

@@ -1792,6 +1792,12 @@ struct EncounterBody {
     std::uint64_t objectiveInstance{0};
     std::uint32_t objectiveCrc{0};
     std::vector<EncounterTaskState> tasks;
+    /**
+     * Stage QG5c4 (static read D of stage QG5c4, 0x3A41440): the start of each leaf task with a time limit (its index, the synced wall
+     * clock in Unix nanoseconds): field 0 of the root Objectives, the start of the timer of the HUD row (the player request finds it
+     * through the link of field 5).
+     */
+    std::vector<std::pair<std::uint8_t, std::uint64_t>> taskStarts;
 };
 
 /** Development aid: the slice of a probe entity (EntityKind::probe) and its interest distance. */

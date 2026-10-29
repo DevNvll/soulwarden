@@ -47,6 +47,7 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage QG5c1: the stationary targets and the named creatures of the kill tasks, the kept-out cause of a kill target in the manifest, the encounter states (the wire proof for QG5c2); the corrections of the review of QG5b | [Creatures](creatures.md) (the stationary targets), protocol notes 4.62 (the encounter states), `QuestSupport` (the kill branch: `CreatureData::kept_out`; the ranked producer with an item), `Quests::refresh` (the settle of the waits), `gamedata/gathering_data.cpp` (itemCount); `tests/target_tests.cpp` (QG5C1A to QG5C1C), `tests/review_qg5b_tests.cpp` (QGR5B1 to QGR5B3); the second computation `~/Games/soulwarden/work/evidence/quests/qg5c1/implement/scripts/support_check.py` |
 | Stage QG5c2: the encounters of the quests (the success event of each participant, the start object event of its gatherer), the event outcome, the pins of a linked root, the encounter rules of the manifest; the corrections of the review of QG5c1 | [Encounters](encounters.md), `Quests::event` (`QuestEventOutcome`, `QuestEvent::callerRetries`), `Quests::client_tracked`, `encounter_unlinked`, `QuestSupport` (the member kinds and the events of the taken recipes); `tests/encounter_tests.cpp` (QG5C2A to QG5C2I), `tests/review_qg5c1_tests.cpp` (QGR5C1A to QGR5C1C) |
 | Stage QG5c3: the producers of the manifest as a whole (R6), the start object row gates (R5), the participant and proximity events, the quest pins of a plan (R4) | `QuestSupport::Index::gatherSources`, `Quests::commit` (the pins of a plan); `tests/review_qg5c2_tests.cpp` (QGR5C2B, QGR5C2D, QGR5C2E), `tests/encounter_pattern_tests.cpp` (QG5C3G) |
+| Stage QG5c4: the alternative producers of a task (finding QG5C3R-R4), the encounter producers of the new patterns | `TaskFact::alternatives` (`world/quest_support.cpp`); `tests/review_qg5c3_tests.cpp` (QGR5C3D), `tests/encounter_sequence_tests.cpp` (QG5C4G) |
 | Stage QG5a: the quest chest drops, the proximity objects, the per-character state of a gathered quest object, the glyph locks, the new quest objects of the data tools; the corrections of the review of QG4 | `Quests::plan_chest_drops`, `roll_drop` (`world/quests.h`), `Chests::complete`; `QuestObjects::moved`, `tick`, `look` (`world/quest_objects.h`), `QuestObjectData` (member `proximity`); `Gathering::quest_object_due`, `GatherRefusal::gatheredQuestObject`, `GatheringType::azothStaff`; `tools/gamedata/gathering.py` (`QUEST_TABLES`, `quest_form`, `children`), `quest_objects.py` (`proximity`), `interactions.py` (`varied_bounds`, `quest_children`, `read_flow_npas`); `QuestSupport` (the chest source, `refusedEvents`); `tests/quest_object_gap_tests.cpp` (QG5A to QG5E), `tests/quest_event_tests.cpp` (QG5F), `tests/review_qg4_tests.cpp` (QGR4A1 to QGR4A3); the second computation `~/Games/soulwarden/work/evidence/quests/qg5a/implement/scripts/support_check.py` |
 | The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`; stage QG2a: `research/quest-gaps.md`, `research/quest-gaps-qg2b.md`, the static read of the category rule `evidence/quests/qg2a/implement/static/category/CATEGORY.md` |
 
@@ -800,6 +801,23 @@ QG5c2: `tests/review_qg5c2_tests.cpp`).
   `FactionIntro_Covenant_03`; a quest item with no source: `C10A_Q1_Build`). The second computation of the stage (a copy of
   `support_check.py` in `~/Games/soulwarden/work/evidence/quests/qg5c3/implement/scripts/`, with its own code of the rules of the runner of
   stage QG5c3 and of the findings R5 and R6) has the same counts: 32 recipes taken, 544 supported, 0 row, fact, history, and group
+  differences.
+- Code review of stage QG5c3, finding QG5C3R-R4: the task fact keeps the other producers of its event that a history can use, each with
+  its own gates (`TaskFact::alternatives`, the member `alternatives` of the task in the manifest): a history takes the task when the gates
+  of the first producer or of one alternative pass (an unranked producer with a key that a quest gives, beside a free producer with the
+  rank 5 of AzothStaff: a history with the key and the rank 0 takes the task; a history with no key still needs the rank 5) [review
+  QG5C3R-R4; test case QGR5C3D]. The counts of the supported build do not change by it.
+- Stage QG5c4: the start object of an encounter whose gatherable row has a cause of the gathering data (a rule that the backend cannot
+  check) refuses its recipe, so its events are no producers [agent: the gathering system refuses its gather; test case QG5C4A].
+- The build (stage QG5c4): 544 supported rows before, 548 after (2,147 rows); none is lost. The 4 new ones: `1434_0103_Pyre`,
+  `1602_0401_headofsnake`, `C10A_Q4_SpectralArtifacts`, and `C10A_Q4R_SpectralArtifacts`. A new character completes 68 (67 before); 3 of the
+  25 groups of the template histories have new counts (`99F_MSQ_ER_DeliverPoem` 44 to 45, `99F_MSQ_ER_GatherAllies` 42 to 43, the new
+  character 67 to 68). The first reasons of the others: "no producer of its game event" 19 to 13, "the location rule with no point of
+  interest shape" 15 to 17. The other quests of the new recipes keep blocks of other systems (a point of interest with no shape:
+  `09A_S9_HackDefenses`, `Quest_18016`; a quest item with no source: `1624_0401_thedemonscauldron`, `99A_MSQ_10_GetCrosspiece`; a pin task:
+  `09A_S17_EstablishDefenses`). The second computation of the stage (a copy of `support_check.py` in
+  `~/Games/soulwarden/work/evidence/quests/qg5c4/implement/scripts/`, with its own code of the rules of the runner of stage QG5c4 and of
+  the findings R3 and R4 of the review of QG5c3) has the same counts: 47 recipes taken, 548 supported, 0 row, fact, history, and group
   differences.
 
 ### The support manifest (stage 1.8e)

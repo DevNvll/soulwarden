@@ -7519,7 +7519,7 @@ InteractTeleportComponentClientFacet (vtable 0x82FBDA0) compares the action 0x52
 is the ordinary interaction block (writer 0x35E67E0); the teleport answer of the server and a gather of the row at action 82: not found].
 The shrine of `99D_MSQ_07_PortalFight` and the lift of `Quest_16008` stay out (a teleport handler of a later stage).
 
-### 4.62 The encounter states: the root record, the manager state, the stage state and 1278, the link of a nearby event, the participant message, the kill counter, the VariationData state of a start object (live proof of stages QG5c1, QG5c2, and QG5c3; static proof for the client code; the backend runner of stages QG5c2 and QG5c3: docs/systems/encounters.md)
+### 4.62 The encounter states: the root record, the manager state, the stage state and 1278, the link of a nearby event, the participant message, the kill counter, the task tree and the timer of a row, the VariationData state of a start object (live proof of stages QG5c1 to QG5c4; static proof for the client code; the backend runner of stages QG5c2 to QG5c4: docs/systems/encounters.md)
 
 Research: `~/Games/soulwarden/work/research/quest-encounters.md` section 2; the static read A of stage QG5c1
 (`~/Games/soulwarden/work/evidence/quests/qg5c1/implement/static/A/ANSWERS.md`); the live probes of the same folder (`shots/steps/`,
@@ -7675,13 +7675,51 @@ new message and no new state. The backend sends the records and the states of th
 - An area trigger member of a stage (a member with no slice body) and a timed member have no record [agent].
 - The HUD counter of a parent stage with child stages shows the destroyed spawns of its children: "0 / 2" then "1 / 2 - Defeat
   Helvan's Lackeys" [live: L3]. The backend counts each spawn of a child for its parent too.
-- The HUD shows a red timer "00:00:00" under the counter of a stage [live: L3]. The client field of the start time of a stage timer
-  is not found, and the backend sends none.
-- The HUD row of an encounter with timed user-wave stages (the intermissions of Thorpe) stays at the first intermission through the
-  later stages [live: L4]. The index of the generated tasks of a timed user-wave stage is not proved (the rule 2k + 1 above is proved
-  only for the destroyed stages). Open.
+- The HUD shows a red timer "00:00:00" under the counter of a stage [live: L3], and the HUD row of an encounter with timed user-wave stages
+  (the intermissions of Thorpe) stays at the first intermission through the later stages [live: L4]. Both are corrected in stage QG5c4
+  (the task tree and the timer of a row, below).
 - The client runs the actions of a stage from the stage status of 2133. For example, the sky of the siphon encounter of
   09A_S18 goes dark [live: L1; the backend sends no weather and no world time change].
+
+**The task tree and the timer of a row (stage QG5c4)** [static read D of stage QG5c4,
+`~/Games/soulwarden/work/evidence/quests/qg5c4/implement/static/D/ANSWERS.md`; live: checks L1 to L3 of stage QG5c4,
+`~/Games/soulwarden/work/evidence/quests/qg5c4/implement/`]. This corrects the stage rule 2k+1 above (static read B), which holds
+only when each user-wave stage has one objective that makes a task.
+
+- The tree [static]: the collector 0x26F1FD0 walks the stages of the manager and their child stages in their order and takes each
+  objective of a user-wave stage (`m_userWave` 1) in the order of `m_objectives`. 0x44650F0 calls the factory of each objective
+  (virtual +0x80): InvasionWaveObjective 0x272D660 (a leaf with the target 1), SliceDestroyedObjective and SliceSpawnedObjective 0x272E0E0
+  (the target `m_requiredCount`), EntityActiveStateChangedObjective 0x2714D40 (a leaf with the target 1 only when its description is not
+  empty; else no task), WaitForParentObjective 0x7C7DF0 (no task). Each task gets a leaf and its own consecutive wrapper of one child; the
+  counter starts at 1 (0x4465159): for the task m (from 0) the leaf is 2m+1 and the wrapper 2m+2, and the outer consecutive container is
+  2T+1 for T tasks (target T: 0x3AD0C95). A stage with N objectives that make tasks takes 2N indices (the kill stage of the Yonas
+  retreat: the leaves 3, 5, 7, 9; the outer container 11).
+- The satisfaction [static]: a task is satisfied at its target (progress = target; update 0x3ADDEC0); state 2 with progress 0 does not
+  satisfy it. A consecutive container moves to its next child only when the current one is satisfied (0x3AC0A22, 0x3AC2C70), and its
+  count is the satisfied children (0x3AD6C60). So a finished leaf is `target / 2`, its wrapper `1 / 2`, the outer container
+  `satisfied / 1` (state 2 at T). A timed leaf has no TaskTimer and no automatic completion: the server sends `1 / 2` at the end of the
+  time [static: 0x272D660; the gate +0x4F4 of 0x3AD76C0 is off].
+- The timer [static: `pinnedobjectivetask.luac` lines 298 to 306 and 499 to 510; the handler 0x3A41440 of `GetTaskStartTime`]: the row
+  of an active leaf with `GetUIData("TimeLimit")` above 0 (task +0x1F4: `m_timeLimit` of the objective, 0x2F2D40) shows `start +
+  TimeLimit - ServerNow`. The start is field 0 (`taskStartTimes`, reader 0x3A68CB0) of an Objectives state: the request of the player
+  looks at its own map, then at the Objectives of each root of its field 5 (0x3A4163B to 0x3A416C5), so the root slot is enough. With no
+  entry the start is 0, and the row shows a red 00:00:00. The Lua caches the deadline at the activation of the leaf: the entry must come
+  first (or in the same state).
+
+```text
+field 0 of the root Objectives := 02 01 00 01 sequence:size64 count:size (G:u64 leaf:u8 start:u64)*count
+                                  start: the synced wall clock in Unix nanoseconds (the clock of 4.24), the start of the stage
+```
+
+- `m_countDownProgress` (task +0x2FA) hides the "N / M" of the row (`GetHideProgress` 0x3AD3FB0) [static].
+- The backend [live: L1 to L3 of stage QG5c4]: field 4 has the leaf and the wrapper of each objective of a stage that started (a stage
+  that ended, and an objective that met its count: satisfied), and the outer container with the count of the satisfied wrappers; field 0
+  has an entry for each leaf with a time limit, added at the start of its stage in the same state as the completion of the leaf before
+  it. Thorpe: after the first wave the row "Intermission 00:00:07" counts down, and after 10 s "Stage 2/5" and "0 / 5 - Defeat Thorpe's
+  Loyalists" follow (in stage QG5c3 it stayed at the intermission); the shipwreck of C10A_Q4: "Curse is lifting 00:00:06"; the hacker
+  defense of 09A_S9: "Defend Kievan Sidorov from the Anubian Guardians 00:00:57" (the countdown flag: no "N / M").
+- The entity-state stage of a tarot tower needs no message: the runner finds the character in the trigger of the data at its scan
+  [agent; live: L3]. The cleanup status of the tower makes the client remove the corruption of the room (its stage actions) [live: L3].
 
 ## 5. Open items
 

@@ -29,7 +29,8 @@
 // m_isPoiObjectivesComponent 1): group 1 field 3 with one active element of its objective (isPoiObjective 1: the POI branch of the apply
 // 0x3A43B9A, which makes the objective of the encounter stages, 0x3A2E590 and 0x44650F0) and field 4 with the task elements of the generated
 // task tree (static read B of stage QG5c2: from 1, the leaf of each user-wave stage and its wrapper, then the outer container; the progress
-// of a leaf is the N of "N / M"). Each session near the root gets it.
+// of a leaf is the N of "N / M"). Each session near the root gets it. Stage QG5c4 (static read D of stage QG5c4): one leaf and one wrapper
+// for each objective that makes a task, and field 0 with the start of each timed leaf (the timer of the HUD row).
 //
 // The order of the task elements is the index order of the tree: a child before its container (live check L1 of stage 1.8a: with the
 // parent-first order of the research fixture the client shows the objective with no task line; with the index order it shows the line
@@ -173,6 +174,16 @@ hub::Bytes encode_encounter_objectives_state(const world::Entity& entity, View v
     const world::EncounterBody& body = entity.encounter;
     const std::uint64_t sequence = sequence_of(entity, world::ComponentKey::encounterObjectives);
     StateWriter state(kObjectiveGroups);
+    // Stage QG5c4: field 0, the start of each timed leaf (the HUD timer of its row: static read D of stage QG5c4, 0x3A41440, 0x3A68CB0).
+    if (!body.taskStarts.empty()) {
+        hub::Writer& starts = state.field(kQuestGroup, kStartTimesField);
+        full_header(starts, sequence, body.taskStarts.size());
+        for (const auto& [index, start] : body.taskStarts) {
+            starts.u64(body.objectiveInstance);
+            starts.u8(index);
+            starts.u64(start);
+        }
+    }
     hub::Writer& active = state.field(kQuestGroup, kActiveField);
     full_header(active, sequence, 1);
     active.u32(body.objectiveCrc);

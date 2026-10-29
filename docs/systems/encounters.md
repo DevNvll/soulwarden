@@ -21,12 +21,14 @@ wire contracts are in the protocol notes (section 4.62). The quest events are in
 | Stage QG5c3: the child stages, the spawned objective, the proximity objects, the members with no entity, the detector shapes | `world/encounters.cpp` (`start_stage`, `end_stage`, `objective_met`, `count_destroyed`, `look_proximity`, `in_detector`, `spawn_needed`), `gamedata/encounter_data.h` (`EncounterShape`, `EncounterStage::children`, `EncounterMember::radius`, `lifetime`, `interact`, `direct`), test cases QG5C3A to QG5C3G (`tests/encounter_pattern_tests.cpp`, the fixture `tests/support/encounter_fixture.h`) |
 | The corrections of the code review of stage QG5c1 (QG5C1R-R1 to R5) | Test cases QGR5C1A to QGR5C1C (`tests/review_qg5c1_tests.cpp`), protocol notes 4.62 (R5), the README (R4) |
 | The corrections of the code review of stage QG5c2 (QG5C2R-R1 to R6) | Test cases QGR5C2A to QGR5C2F (`tests/review_qg5c2_tests.cpp`; QGR5C2F runs the case `complete` of `check_encounters_tool.py`) |
+| Stage QG5c4: the entity-state stage and its trigger, the objectives of a stage (`more`), the objectives met at their start, the task tree of the client and the timer, the shape entity of a detector, the parent spawner rules, a recipe with no creature member | `world/encounters.cpp` (`look_triggers`, `in_shapes`, `count_objective`, `publish_objectives`, `resolve`), `gamedata/encounter_data.h` (`EncounterTrigger`, `EncounterObjective::leaf`, `EncounterStage::more`, `EncounterRecipe::taskLeaves`), `world/entity.h` (`EncounterBody::taskStarts`), `tools/gamedata/encounter_recipes.py` (`spawner_rules`, `state_senders`, `detector_shape`), test cases QG5C4A to QG5C4H (`tests/encounter_sequence_tests.cpp`, the fixture `tests/support/encounter_pattern_fixture.h`) |
+| The corrections of the code review of stage QG5c3 (QG5C3R-R1 to R4) | Test cases QGR5C3A to QGR5C3D (`tests/review_qg5c3_tests.cpp`) |
 
 ## Rules
 
 The source of each rule is in brackets: [data] the game data, [client ADDR] the client code (build 1.400.6031.6004151, image-relative
-addresses), [live] a live check of stage QG5c1, QG5c2, or QG5c3, [agent] a decision of the agent of the stage (a choice where the data does
-not decide), [user] a decision of the user, [review] a correction of a code review.
+addresses), [live] a live check of stage QG5c1, QG5c2, QG5c3, or QG5c4, [agent] a decision of the agent of the stage (a choice where the
+data does not decide), [user] a decision of the user, [review] a correction of a code review.
 
 ### The recipes
 
@@ -40,21 +42,31 @@ not decide), [user] a decision of the user, [review] a correction of a code revi
 - The tool refuses a recipe with its cause (`refused`), and the runner refuses a recipe whose member has no kind, no template, or no row
   in the other data files when a stage needs it [agent]. The runner takes a recipe when: the manager starts it by itself
   (`m_autoActivate`); the detector has shapes that it tests; the parent is an area spawner that spawns at its enable; each objective is a
-  timed wave (`InvasionWaveObjective` with a time limit and `succeedOnTimeout`), a destroyed objective (`SliceDestroyedObjective`), or a
-  spawned objective (`SliceSpawnedObjective`, stage QG5c3); no stage has a failure condition, a background activation, or an action
-  other than `EntityEventAction` and `KillSpawnsAction`; each start object is in a destroyed stage that tracks it; the recipe has a
-  creature member; and the spawns that the runner makes reach the count of each destroyed or spawned stage with no timed end [agent;
-  review QG5C2R-R3].
+  timed wave (`InvasionWaveObjective` with a time limit and `succeedOnTimeout`), a destroyed objective (`SliceDestroyedObjective`), a
+  spawned objective (`SliceSpawnedObjective`, stage QG5c3), or (stage QG5c4) an entity-state objective with a trigger
+  (`EntityActiveStateChangedObjective`); the other objectives of a stage are destroyed or spawned objectives with no time limit; no stage
+  has a failure condition, a background activation, or an action other than `EntityEventAction` and `KillSpawnsAction`; each start object
+  is in a stage whose destroyed objective tracks it; each start object has a gatherable row that the backend gathers (stage QG5c4); and
+  the spawns that the runner makes reach the count of each destroyed or spawned objective with no timed end [agent; review QG5C2R-R3].
+  Stage QG5c4: a recipe with no creature member is taken (the Disk of Atum of 1624_0401: its stages count its start objects) [agent: the
+  stages of the data count objects as well as creatures].
 - A spawn is needed when its stage or a stage above it (the child stage lists) has a destroyed or a spawned objective that tracks its member
   or tracks no slice; a timed stage needs no spawn (it ends at its time) [data: the objective classes; agent: the rule]. A member that no
   stage needs and that the runner cannot make is not made, and the recipe stays [agent]: a visual (the smoke burst of the lost pylons in
   their tracked stages, the cannon storm of Helvan in a timed stage, the bramble walls), a creature member that the client does not show
   (the swarmers of the timed stage of Thorpe and of the subwaves of the Yonas retreat; the count `spawnsSkipped`). A tracked slice of an
   alias counts for the creature member whose alias has that slice [data].
-- Stage QG5c3: the parent spawner is an area spawner that spawns at its enable (`m_spawnOnEnable`) [data]. A point or a prefab spawner of
-  the data has no spawn at its enable, and each one has a twin spawner of the same encounter (the `EncounterCondition` spawners of the
-  Bathory hall and of the rotating bookcase, the prefab spawner of Gazsala): the tool refuses that placement with its cause [data; agent:
-  the start of such a spawner is not in the data that the tools read].
+- Stage QG5c3: the parent spawner is an area spawner that spawns at its enable (`m_spawnOnEnable`) [data].
+- Stage QG5c4, the twin spawners: the three pairs of stage QG5c3 (Gazsala, the Bathory hall, the rotating bookcase) were a fault of the
+  reader, not a pair of the data. (1) The root entity of a slice has a SliceComponent whose list `Entities` repeats the entities of the
+  slice; a look into it found the fields of a spawner of an other entity: it is no spawner [data: the class afd304e4 and its list]. (2) A
+  spawner entity has the base SpawnerComponent (the spawned slice) and the component of its kind with its rules on the same entity; the
+  rules come from that component (`spawner_rules`): an area spawner (`m_liveCount`, the respawn range, the start `m_spawnOnEnable`), a
+  prefab spawner (`m_editPrefab`, the start `m_spawnOnInitialize`), or a point spawner (the cooldowns, `m_spawnOnInitialize`) [data].
+  Now one recipe stays for each placement: the area spawner of Gazsala (it spawns at its enable; the recipe stays refused for the
+  armored dragon that the client does not show), and the prefab spawners of the Bathory hall and of the rotating bookcase with
+  `m_spawnOnInitialize` 0 and `m_spawnOnTrigger` 0 (an event of their parent slice starts them, a slayer script: refused) [data]. 67
+  recipes become 64.
 - Stage QG5c3: a reset event of the manager (`m_resetEncounterEventId`, `Reset_Encounter` of the stone tablet of Helvan and of Overseer
   Zane) is no cause: no slice or table of the data that the study QG5c0 and this stage read sends it, and the fail of the runner (a fight
   with no participant) is the reset [agent].
@@ -62,20 +74,43 @@ not decide), [user] a decision of the user, [review] a correction of a code revi
   `EncVol_16_AEAmbush`, `EncActive_99B_MSQ_05_YonasRetreat`), and no slice of the encounter or its parent and no table reads it [data: the
   achievements table and the task tables only]. The runner does not read the achievement; the quest gate of the proximity object
   (`InteractOnlyOnQuest` and its tag) decides who starts an ambush [agent].
-- Kept out, each with its stage [agent: the scope of the briefs of stages QG5c2 and QG5c3]: the interaction sequences and the defenses
-  (QG5c4), the summoned opponent with phases (BT3), the scheduled and seasonal events (the Darkness, the seasons), the arenas, and the
-  instances (later). The boat reinforcements of the open world are world events (later). The table `LATER` of `encounters.py` names them,
-  and the table `PATTERNS` gives the label of the ambushes and the summoned opponents; the support manifest names the cause of each event
-  that only a refused recipe gives.
-- The counts of the supported build (stage QG5c3): 67 recipes, 36 with no cause of the tool, 32 taken by the runner, 35 refused [data].
-  By pattern: the kill waves 25 taken and 4 refused; the summoned opponents 3 taken (Thorpe, Templar Invectus, Grivaros) and 5 refused (the
-  armored dragon of Gazsala and the hercyne boar: the client does not show their slice; the twin prefab spawner of Gazsala; the two point
-  spawners of the Bathory hall); the ambushes 4 taken; the defenses 4, the interaction sequences 14, the Darkness 5, the world events 2, and
-  the summoned opponent with phases 1 refused (their stages).
+- Kept out, each with its stage [agent: the scope of the briefs of stages QG5c2 to QG5c4]: the summoned opponent with phases (BT3), the
+  scheduled and seasonal events (the Darkness, the seasons: QG5c5), the arenas, and the instances (later). The table `LATER` of
+  `encounters.py` names them, and the tables `PATTERNS` and `PATTERN_FOLDERS` give the label of the other patterns (stage QG5c4: the
+  interaction sequences, the defenses, the world events of the open world); the support manifest names the cause of each event that only
+  a refused recipe gives.
+- The counts of the supported build (stage QG5c4): 64 recipes, 52 with no cause of the tool, 47 taken by the runner, 17 refused [data].
+  By pattern: the kill waves 25 taken and 3 refused; the summoned opponents 3 taken and 3 refused (the armored dragon of Gazsala and the
+  hercyne boar: the client does not show their slice; the prefab spawner of the Bathory hall); the ambushes 4 taken; the interaction
+  sequences 13 taken (the 8 tarot towers, the Disk of Atum, the banner of Drusilla, 3 shipwrecks) and 1 refused (the braziers: a nested
+  encounter); the defenses 2 taken (the hacker of 09A_S9, the pyre of 1434_0103) and 2 refused (the M5 wave event: a stage waits for a
+  gather of the root slice, and its boars have no body; the wagon attack: the hercyne reindeer has no body); the world events 2 refused
+  (group members); the Darkness 5 and the summoned opponent with phases 1 refused (their stages). Stage QG5c3: 67 recipes, 32 taken.
 - Stage QG5c3: an area trigger (a proximity object with no Interact component: the 20 m trigger of Grivaros, the rows
   `PressurePlate_Ancient`) makes no recipe a quest recipe: its row is a shared row of the pressure plates, and its event names no
   encounter (one task of the instance `QuestYonas` names it) [data; agent: the selection]. The runner gives the event of its row to each
   character that finds it [data].
+- Stage QG5c4, the defenses: the four defense recipes of the open world have no defended target with a health and no failure condition:
+  the hacker, the pyre, and the wagon attack have no NPC or object with a Vitals component in their slice, and each objective has
+  `m_failureCondition` 0 [data: the entities of the three slices; research quest-encounters.md section 1: "a defense title does not prove
+  an NPC health objective"]. The NPC of the title (Kievan Sidorov of "Defend Kievan Sidorov from the Anubian Guardians") is a person of
+  the settlement, not a member. So the runner adds no target policy for a non-player target: the members attack the participants, a
+  timed fight ends at its time (`succeedOnTimeout` 1: a success also with living members; 0: a failure), and a fight with no participant
+  fails [data; agent: no rule of a target that the data does not have]. The alternative `enc_defense_09a_m5_angryearth` has a failure
+  objective for the destruction of `09a_m5_defense_encounter_objective`, and no placement of the main world places it [data].
+- Stage QG5c4, the world events of the open world (the boat reinforcements of Monarch's Bluffs): the manager starts each one by itself at
+  its placement (`m_autoActivate` 1; the area parent spawns at its enable), and its setup spawns a spyglass (a start object; its gatherable
+  row has no game event): the look through the spyglass brings the boat (a timeline of the client, 61 s), then the landing waves, an
+  intermission, a named creature, and the cannon of the explosion [data]. So the start is an interaction of the data, not a schedule.
+  Refused: each landing wave member has two creature spawners on paths of three waypoints (an officer and a navigator: a group member, a
+  later stage), and the spyglass of Scallywag Shore is spawned in a timed stage and counted by the next stage (a stage that tracks a slice
+  that an earlier stage spawned) [data]. The only quest event of the two recipes, `IO_Gimmick_BreakingWallsCannon_interact`, also comes
+  from the placed cannons of stage QG5b: no manifest row waits for them [data; the manifest of stage QG5c3].
+- Stage QG5c4, the refusals of the other sequences [data]: the braziers of `99A_MSQ_10_GetCrosspiece` (each of the four spawns is an
+  encounter itself, with its own manager and stages: a nested encounter; the stage has four objectives, one for each destructible brazier
+  of the nested encounters; a DestroySliceAction removes the solid door), and the M5 wave event of `09A_M5_DefendSettlement` (its stages
+  "Wait for Players" wait for the deactivation of `Start_Trigger_Event`, which the gather of the horn of the root slice sends: an object of
+  the root record, a later stage).
 
 ### The instance and its stages
 
@@ -103,16 +138,52 @@ not decide), [user] a decision of the user, [review] a correction of a code revi
   parent); a failure of a child stage that is not optional fails its parent [agent].
 - Stage QG5c3: a spawned objective (`SliceSpawnedObjective`: Wave_02 - Setup - Spawn Helvan) ends when `m_requiredCount` members of its
   tracked slice came [data: the class and its fields; live QG5c3 L3: the stage ends at the spawn of Helvan].
+- Stage QG5c4, the objectives of a stage: `m_objectives` of a stage can have more than one objective, each with its tracked slice and its
+  count (the four braziers; the brute and the Horus of the tarot tower 10306; the berserker, the grenadier, and the smoke burst of a kill
+  stage of the lost pylons; the swordsman 1, the cultist 1, the hounds 2, and the swarmers 6 of the Yonas retreat). Each objective counts
+  its own spawns, and the stage meets its count when each one is met [data: one objective for each member slice; agent: all, the client
+  facet joins no objectives (static read D of stage QG5c4, D6)]. Stage QG5c3 read only the first objective: the kill stage of the Yonas
+  retreat ended at the first kill (live QG5c3 L2: "1 of 1").
+- Stage QG5c4: in a stage with more than one objective, an objective with a tracked slice whose spawns are only creature members that the
+  client does not show (no kind) is met at the start of its stage, and its members are not made (the 6 swarmers of the Yonas retreat); a
+  stage whose objectives are all such objectives refuses the recipe [agent: the runner cannot make the creature, and the stage keeps the
+  fight of its other objectives; the count `objectivesVoided`].
+- Stage QG5c4, the entity-state stage: an `EntityActiveStateChangedObjective` waits for a change of its target entity (`m_targetEntityId`;
+  `m_completeOnDeactivated` 1 in each objective of the data). The change comes from a DetectionVolumeEventComponent of the slice whose
+  `m_eventsOnEnter` (or `m_eventsOnFirstEnter`) sends the event (3 deactivate, 2 activate) to the target: its detection volume is the
+  trigger (`state_senders`) [data]. In the eight tarot towers the target `Trigger_Start` is a sphere of 20 m (`PlayerOnly`,
+  `m_detectDeadTargets` 1) at the top of the tower, about 120 m above the root, that deactivates itself [data]. The runner looks at each
+  armed trigger at its scan (500 ms): a character with an accepted position (no camera estimate) whose capsule is in a shape of the
+  trigger ends the stage; a dead character counts (`m_detectDeadTargets`) [data; agent: the scan, the capsule; live QG5c4 L3: the walk to
+  the top starts the boss]. A target that no volume of the slice changes refuses the recipe with the source of the change (the gather of
+  the horn of 09A_M5).
+- Stage QG5c4: a KillSpawnsAction removes the creature members and the objects of the stages that ended (no count, no reward), not the
+  objects of a stage that runs [data: the action; agent: the objects; live QG5c4 L1].
+- Code review of stage QG5c3: the activation finds the instance again after its first stage (a spawned objective that its spawn meets at
+  once ends the encounter in the activation) [review QG5C3R-R1]. A spawn due at or after the time limit of its own stage gives no count
+  for the count check (the end of the stage cancels it) [review QG5C3R-R3].
 - Stage QG5c3: a destroyed stage with no tracked slice and no spawn of its own or of its child stages counts each death of a creature
   member of its instance while it runs (Wave_06 - Objective: Kill Helvan Boss: Helvan came in an earlier stage) [agent: a stage with no
   spawn has nothing else to count; live QG5c3 L3]. Such a stage needs a time limit with `succeedOnTimeout` (it has 180 s) [review
   QG5C2R-R3].
 - The sequence of the stage states increases by one for each change; the history keeps 10 entries (the reader of the client takes at most
   10) [client 0x26F7550]. The backend does not send 1278: the state 2133 carries the same status [agent].
-- The root Objectives has one active element with `isPoiObjective` 1 and the task elements of the generated tree: the leaf of the user-wave
-  stage k (from 0) has the index 2k+1, its wrapper 2k+2, the outer container 2n+1 (n user waves); the progress of a kill leaf is the N of
-  "N / M" [client 0x4465159, 0x272E52C; live QG5c2 L2: "1 / 2"]. The taskCRC is 0 (its generated value is not found; no compare gates the
-  progress) [client 0x3A43FD7].
+- The root Objectives has one active element with `isPoiObjective` 1 and the task elements of the generated tree. Stage QG5c4 (static read
+  D of stage QG5c4): the collector 0x26F1FD0 walks the stages of the manager and their child stages in their order and takes each
+  objective of a user-wave stage in the order of `m_objectives`; each objective that makes a task (a timed, a destroyed, or a spawned
+  objective; an entity-state objective with a description; no WaitForParentObjective) has a leaf 2m+1 and a wrapper of one child 2m+2
+  (m: the number of the tasks before it), and the outer consecutive container is 2T+1 (T tasks) [client 0x44650F0, 0x272E0E0,
+  0x272D660, 0x2714D40, 0x7C7DF0]. The target of a leaf is `m_requiredCount` (destroyed, spawned) or 1 (timed, entity state); the
+  progress of a kill leaf is the N of "N / M" [client 0x3ADDDB0; live QG5c2 L2]. A satisfied task has its target: the leaf target/2, the
+  wrapper 1/2; the outer container counts the satisfied wrappers and shows the next one [client 0x3ADDEC0, 0x3AC0A22, 0x3AD6C60; live
+  QG5c4 L1: Thorpe "Stage 2/5" after the intermission]. A running objective: its count and 0, state 1. The taskCRC is 0 (its generated
+  value is not found; no compare gates the progress) [client 0x3A43FD7].
+- Stage QG5c4, the timer of a row: a leaf whose objective has a time limit shows a countdown from `m_timeLimit` (`GetUIData("TimeLimit")`,
+  task +0x1F4) after its start time; the start is field 0 of the root Objectives (`instance:u64 index:u8 start:u64`, the synced wall
+  clock in Unix nanoseconds), which the player request finds through the link of its field 5 [client 0x3A41440, 0x3A68CB0; live QG5c4 L1:
+  "Intermission 00:00:07", "Curse is lifting 00:00:06", "Defend Kievan Sidorov from the Anubian Guardians 00:00:57"]. The runner adds the
+  entry at the start of the stage (`EncounterBody::taskStarts`), in the same state as the completion of the leaf before it. With
+  `m_countDownProgress` the row shows no "N / M" [client 0x3AD3FB0].
 - The last stage ends the encounter: the manager status 3, the credit, the removal of the root, the members, and the objects
   (`m_destroySpawnsOnDestroyed` of the root spawner) [data]. The parent makes a new instance after a time from its respawn range (a uniform
   draw from the minimum to the maximum) [data: the area spawner; agent: the draw; live QG5c2 L4: 11.8 s for the Perseus ruin].
@@ -147,7 +218,10 @@ not decide), [user] a decision of the user, [review] a correction of a code revi
   [the rule of the proximity quest objects of stage QG5a: data and client 0x8261FC0; agent: the scan of the runner, the look of each
   character in the sphere at the find]. Each finder gets the game event and the tag of its row (one plan of the quest system each:
   `Quests::object_destroyed`); then the object goes and its stage counts it. A store failure for each finder keeps the object for the
-  next look [agent]. The radius is `DetectionVolumeSphereRadius` of its variation row, else the sphere of its DetectionVolumeComponent
+  next look [agent]. Code review of stage QG5c3: a finder whose write the store refused stays in the ledger of the object and is tried
+  again at the next looks, also out of the sphere, at most 20 looks (`kFindAttempts`: the 10 s of the credit ledger); the object goes,
+  and its stage counts it one time, when each finder has its write or ran out of attempts and one write was taken [review QG5C3R-R2;
+  agent: the limit]. The radius is `DetectionVolumeSphereRadius` of its variation row, else the sphere of its DetectionVolumeComponent
   (13 m for the CorrStaff ambush, 15 m the blight ambush, 30 m the Yonas retreat, 5 m the AE ambush and the Legion attack, 4.5 m the
   cave fight) [data: the rule of `quest_objects.py`]. Live QG5c3 L2: the walk into the 30 m sphere of the Yonas retreat finds it, and the
   kill stage starts at once.
@@ -172,7 +246,13 @@ not decide), [user] a decision of the user, [review] a correction of a code revi
   of the polygon prism of the same entity]. 29 of the 65 encounter slices of the build have two volumes on that entity (the master
   template: a sphere of 30 m and one of 12 to 50 m), and no field names one of them: a character in one of them is in the detector [agent].
   The test is the capsule of the character (`capsule_of`: upright, from its feet) against each shape [agent: a detection volume overlaps
-  the body; a character on the ground at the height of the root is at the floor of the cylinder of Torment]. The offset `m_center` is in
+  the body; a character on the ground at the height of the root is at the floor of the cylinder of Torment].
+- Stage QG5c4: a detector shape whose `m_shapeEntityID` names an other entity of the slice is at the place of that entity: its offset from
+  the root in world axes plus `m_center` (`shapeEntity`) [data]. In 5 tarot towers this is the entity `DetectionVolumeShape` at the top
+  (about 131.8 m up: the boss arena) [data]. In the towers 10304, 10306, and 20338 the id is in no slice of the game copy (a scan of all
+  slices found each id only in its own slice): the box stays at the root, and the sphere of the trigger of the setup is a shape of the
+  detector too (`fromTrigger`) [agent: the fight is at the top, where the trigger is; with the box at the ground no character at the top
+  is a participant]. The offset `m_center` is in
   world axes, and a box is aligned with the world axes [agent: the shapes of the data have no horizontal offset].
 - Each participant has the G of the root in the field 5 of its player Objectives state (one encoder: `objectives_state.cpp`); the client
   then shows the encounter at the top of the tracked list with the teal diamond icon [live QG5c1 I2]. The link goes at the end of the
@@ -197,7 +277,8 @@ not decide), [user] a decision of the user, [review] a correction of a code revi
 
 - `tools/world encounter CHARACTER [METERS]` (route `GET /v1/dev/encounters`; the admin state member `encounters`, 200 m): the instances
   near a character with their stage, the progress, the participants, the members, the links of the character, and the counts (stage
-  QG5c3: `objectsFound`, `proximityLooks`, `timedEnds`, `spawnsSkipped`).
+  QG5c3: `objectsFound`, `proximityLooks`, `timedEnds`, `spawnsSkipped`; stage QG5c4: `triggersFound`, `triggerLooks`, `objectivesVoided`,
+  `findRetries`).
 - `tools/world encounter recipes` (route `GET /v1/dev/encounters/recipes`; admin `GET /admin/v1/catalog/encounters`): each recipe with its
   key, its root, its pattern, its quest events, and its causes.
 - `tools/world encounter reset CHARACTER KEY` (route `POST /v1/dev/encounters/reset`): a development aid; the instance of a placement ends,
@@ -234,20 +315,21 @@ not decide), [user] a decision of the user, [review] a correction of a code revi
 - Stage QG5c3: the client runs the actions of a stage status itself: the sky goes dark at the start of the boss stage of the siphon, the
   line of Yonas ("There are too many!") comes at the start of the kill stage, and an exit teleport comes at the end of Helvan [live
   QG5c3 L1 to L3]. The runner sends only the states (2133); no message of an action is needed.
-- Stage QG5c3: the HUD of a timed stage shows a red 00:00:00 under its counter (the task start time of the generated tasks is not sent;
-  the time of the server runs) [live QG5c3 L3]. The siphon fight and the Yonas retreat have no title on a user-wave stage: the HUD shows no
-  row for them; Helvan shows "Helvan the Navigator" and "0 / 2 - Defeat Helvan's Lackeys" [live QG5c3 L1 to L3].
-- Stage QG5c3: the HUD row of an encounter with timed user-wave stages (the intermissions of Thorpe, `InvasionWaveObjective` with
-  `m_userWave` 1) stays at the first intermission ("To Stand Against The Dark: Stage 1/5", "Intermission") through the later stages,
-  while the runner and the states go on [live QG5c3 L4]. The kill rows of the stages before it show ("0 / 9 - Harass Thorpe's
-  Supporters"). The index of the generated tasks of a timed user-wave stage is not proved: the rule 2k + 1 of the static read B of
-  QG5c2 was proved only for destroyed stages. Open.
+- Stage QG5c3 (corrected in stage QG5c4): the red 00:00:00 under a stage (no start in field 0) and the HUD row of Thorpe that stayed at its
+  first intermission (a satisfied leaf had the progress 0) [live QG5c3 L3, L4; static read D of stage QG5c4]. The siphon fight has no
+  user-wave stage (the fresh slice: `m_userWave` 0 in its five stages): the HUD shows no row for it [static read D].
 - Stage QG5c3: the kill of Thorpe completes the task `DefeatThorpe_Solo` (a kill contribution) and with it the partial container of the
   fight; the success event of the encounter (`MSQ_0036_Thorpe_Interact`) comes after the cleanup of 12 s and finds no active task
   [data: the partial container; live QG5c3 L4]. A participant that stays in the detector is a participant of the next generation (10 s
   after the success) [data: the respawn of the parent; live QG5c3 L4].
 - Stage QG5c3: the area of an officer of Helvan (Officer_AnchorSlam) staggers the character at close range and stops a bow draw [live QG5c3
   L3]: step back before a shot.
-- Stage QG5c3: the duplicate placements of the data (two spawners of one encounter in one parent slice: Gazsala, the Bathory hall, the
-  rotating bookcase) are refused by the rule of the parent spawner; a later stage that runs one of them must take one spawner of each
-  pair.
+- Stage QG5c4: a start object with `InteractOnlyOnQuest` shows no prompt with no Active task of its tag: the hack device of 09A_S9 needs
+  the task `09A_S9_StartHack` (task 14 of its quest, after the GoTo task of a place with no shape) [data; live QG5c4 L2]. The live check
+  used `tools/world encounter use`.
+- Stage QG5c4: a bush near a start object takes the prompt (the chest A of the shipwreck from the north); stand on the other side [live
+  QG5c4 L1].
+- Stage QG5c4: a character that stays in the trigger of a tarot tower starts the next instance at once (10 s after the success) [data: the
+  respawn of the parent; live QG5c4 L3].
+- Stage QG5c4: the anubian guardians of the hacker defense kill a level 65 character in some seconds (live QG5c4 L2: 735 damage for one
+  hit); the live check used `tools/world heal` and `tools/world ignore`.

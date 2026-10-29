@@ -57,6 +57,13 @@ The source of each rule is in brackets: game data, client code, live check (the 
   `NoToolNecessary`, `ToolRequired`, or (stage QG5b) `ItemRequired`, a song, a whisper, an emote, a status effect, a faction, a cost,
   `IsLootContainer`, `OpenAfterGathering`, `RequireLootItems`, `IsFFARestricted`, more than one gatherer, and a gathering type that is
   not a tool type of this stage (AzothStaff, fishing). The tool writes the causes of each row; the first one is in the log line.
+- Stage QG5c4: a gathering type that is not a tool type needs no tool with the restriction `NoToolNecessary`: the row has the rule of the
+  type None (no tool slot, the speed of no tool) [data: the restriction of the row; agent: the rule; live check L1 of stage QG5c4: the
+  client sends the GatherOption of the chest A of the shipwreck of C10A_Q4 (Handcrafting, 3 s) and completes it]. 9 quest rows of the
+  build: the 8 Handcrafting rows (the chests A and B of 10A_Q4, the prison cells and the cage of 10A_Q2, the spectral pylon and the
+  telescope of 10A_Q3) and `03_SQ_03_GraveDigger` (the type "none" in lower case). The tool (`gathering.py`) and the loader
+  (`gathering_data.cpp`) have the same rule; case QG5C4A. A start object of an encounter whose row has a cause refuses its recipe
+  ([Encounters](encounters.md)).
 - The loader checks the mark "supported" (no cause) against the gates of the row [code review of stage 3.6a, finding GA-R5]: a row with
   no cause and the restriction ItemRequired with no member `item` (a file of before the review; stage QG5b: an item is a gate of the
   gather, no cause), a restriction that is not

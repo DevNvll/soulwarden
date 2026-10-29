@@ -453,7 +453,10 @@ def row_entry(identifier: str, table: str, cells: dict) -> dict:
     if max(1, int(required)) > 1:
         unsupported.append("more than one gatherer (NumRequiredToGather)")
     kind = cells.get("GatheringType", "").strip() or "None"
-    if kind not in TOOL_TYPES and kind != "None":
+    # Stage QG5c4: a type that is not a tool type needs no tool with the restriction NoToolNecessary (the 8 Handcrafting rows of the quest
+    # tables: the two chests of the shipwreck encounter of C10A_Q4); the gather has the rule of the type None [data: the restriction; agent:
+    # the rule; live check L1 of stage QG5c4: the client sends the gather and completes it].
+    if kind not in TOOL_TYPES and kind != "None" and restriction != "NoToolNecessary":
         unsupported.append(f"the gathering type {kind}")
     tradeskill = cells.get("Tradeskill", "").strip()
     return {"id": identifier, "table": table, "type": kind, "restriction": restriction,

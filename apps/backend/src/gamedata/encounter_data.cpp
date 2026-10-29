@@ -113,6 +113,118 @@ std::chrono::milliseconds milliseconds_of(float value) {
     return std::chrono::milliseconds(static_cast<std::int64_t>(std::lround(static_cast<double>(value) * 1000.0)));
 }
 
+/** The result of one shape of a list: a shape, a shape that the runner does not test (skipped), or a size that is not good. */
+enum class ShapeRead : std::uint8_t { good, skipped, bad };
+
+/** Reads one shape (stage QG5c3: the detector; stage QG5c4: a trigger): "sphere", "cylinder", or "aabb" with its sizes and its center. */
+ShapeRead read_shape(const json& item, EncounterShape& shape, std::string& kind) {
+    kind = text_of(item, "shape");
+    const auto size = [&](const char* name, float& out) {
+        return item.contains(name) && finite_number(item[name]) && item[name].get<double>() > 0.0 && item[name].get<double>() <= kMaxShape
+               && ((out = item[name].get<float>()), true);
+    };
+    const auto triple = [&](const char* name, std::array<float, 3>& out, bool positive) {
+        if (!item.contains(name)) {
+            return !positive;
+        }
+        const json& value = item[name];
+        if (!value.is_array() || value.size() != 3) {
+            return false;
+        }
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            if (!finite_number(value[axis]) || std::fabs(value[axis].get<double>()) > kMaxShape
+                || (positive && !(value[axis].get<double>() > 0.0))) {
+                return false;
+            }
+            out[axis] = value[axis].get<float>();
+        }
+        return true;
+    };
+    bool good = triple("center", shape.center, false);
+    if (kind == "sphere") {
+        shape.kind = EncounterShape::Kind::sphere;
+        good = good && size("radius", shape.radius);
+    } else if (kind == "cylinder") {
+        shape.kind = EncounterShape::Kind::cylinder;
+        good = good && size("radius", shape.radius) && size("height", shape.height);
+    } else if (kind == "aabb") {
+        shape.kind = EncounterShape::Kind::aabb;
+        good = good && triple("extents", shape.extents, true);
+    } else {
+        return ShapeRead::skipped; // A shape that the runner does not test (the tool refused the recipe).
+    }
+    return good ? ShapeRead::good : ShapeRead::bad;
+}
+
+/** @return The distance from the place of a shape list that holds each of its shapes. */
+float reach_of(const std::vector<EncounterShape>& shapes) {
+    float reach = 0.0F;
+    for (const EncounterShape& shape : shapes) {
+        const float offset = std::sqrt(shape.center[0] * shape.center[0] + shape.center[1] * shape.center[1] + shape.center[2] * shape.center[2]);
+        const float size = shape.kind == EncounterShape::Kind::sphere ? shape.radius
+                           : shape.kind == EncounterShape::Kind::cylinder
+                               ? std::sqrt(shape.radius * shape.radius + shape.height * shape.height * 0.25F)
+                               : std::sqrt(shape.extents[0] * shape.extents[0] + shape.extents[1] * shape.extents[1]
+                                           + shape.extents[2] * shape.extents[2]);
+        reach = std::max(reach, offset + size);
+    }
+    return reach;
+}
+
+EncounterObjectiveKind objective_kind(const std::string& type) {
+    return type == "InvasionWaveObjective"               ? EncounterObjectiveKind::timed
+           : type == "SliceDestroyedObjective"           ? EncounterObjectiveKind::destroyed
+           : type == "SliceSpawnedObjective"             ? EncounterObjectiveKind::spawned
+           : type == "EntityActiveStateChangedObjective" ? EncounterObjectiveKind::entityState
+                                                         : EncounterObjectiveKind::other;
+}
+
+/**
+ * Reads one objective of a stage: its class, its time, its count and its tracked slice, its texts, and (stage QG5c4) the triggers of an
+ * entity-state objective. @return False for a time limit that is not a number of 0 to an hour or a trigger with no place or a bad shape.
+ */
+bool read_objective(const json& objective, EncounterObjective& out) {
+    out.type = text_of(objective, "type");
+    out.kind = objective_kind(out.type);
+    if (out.kind == EncounterObjectiveKind::other) {
+        return true; // A class that the runner does not run: the tool refused the recipe, and the runner refuses it too.
+    }
+    if (!seconds(objective, "timeLimit", out.timeLimit)) {
+        return false;
+    }
+    std::uint64_t number = 0;
+    out.succeedOnTimeout = flag_of(objective, "succeedOnTimeout");
+    out.requiredCount = whole(objective, "requiredCount", EncounterData::kMaxCount * EncounterData::kMaxSpawns, number)
+                            ? static_cast<std::uint32_t>(number) : 0;
+    out.tracked = lower_text(text_of(objective, "trackedSlice"));
+    if (out.tracked.empty()) {
+        out.tracked = lower_text(text_of(objective, "trackedAlias"));
+    }
+    out.title = text_of(objective, "title");
+    out.description = text_of(objective, "description");
+    if (out.kind == EncounterObjectiveKind::entityState && objective.contains("triggers") && objective["triggers"].is_array()) {
+        for (const json& item : objective["triggers"]) {
+            EncounterTrigger trigger;
+            trigger.entity = text_of(item, "entity");
+            trigger.deadTargets = flag_of(item, "deadTargets");
+            if (!place_of(item.value("position", json()), trigger.position) || !item.contains("shapes") || !item["shapes"].is_array()) {
+                return false;
+            }
+            for (const json& value : item["shapes"]) {
+                EncounterShape shape;
+                std::string kind;
+                if (read_shape(value, shape, kind) != ShapeRead::good) {
+                    return false;
+                }
+                trigger.shapes.push_back(shape);
+            }
+            trigger.reach = reach_of(trigger.shapes);
+            out.triggers.push_back(std::move(trigger));
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 bool EncounterData::fail(std::string cause) {
@@ -265,43 +377,12 @@ bool EncounterData::load_text(const std::string& text) {
             if (detector.contains("shapes") && detector["shapes"].is_array()) {
                 for (const json& item : detector["shapes"]) {
                     EncounterShape shape;
-                    const std::string kind = text_of(item, "shape");
-                    const auto size = [&](const char* name, float& out) {
-                        return item.contains(name) && finite_number(item[name]) && item[name].get<double>() > 0.0
-                               && item[name].get<double>() <= kMaxShape && ((out = item[name].get<float>()), true);
-                    };
-                    const auto triple = [&](const char* name, std::array<float, 3>& out, bool positive) {
-                        if (!item.contains(name)) {
-                            return !positive;
-                        }
-                        const json& value = item[name];
-                        if (!value.is_array() || value.size() != 3) {
-                            return false;
-                        }
-                        for (std::size_t axis = 0; axis < 3; ++axis) {
-                            if (!finite_number(value[axis]) || std::fabs(value[axis].get<double>()) > kMaxShape
-                                || (positive && !(value[axis].get<double>() > 0.0))) {
-                                return false;
-                            }
-                            out[axis] = value[axis].get<float>();
-                        }
-                        return true;
-                    };
-                    bool good = triple("center", shape.center, false);
-                    if (kind == "sphere") {
-                        shape.kind = EncounterShape::Kind::sphere;
-                        good = good && size("radius", shape.radius);
-                    } else if (kind == "cylinder") {
-                        shape.kind = EncounterShape::Kind::cylinder;
-                        good = good && size("radius", shape.radius) && size("height", shape.height);
-                    } else if (kind == "aabb") {
-                        shape.kind = EncounterShape::Kind::aabb;
-                        good = good && triple("extents", shape.extents, true);
-                    } else {
-                        // A shape that the runner does not test (the tool refused the recipe): the detector stays empty for it.
-                        continue;
+                    std::string kind;
+                    const ShapeRead read = read_shape(item, shape, kind);
+                    if (read == ShapeRead::skipped) {
+                        continue; // The detector stays empty for a shape that the runner does not test.
                     }
-                    if (!good) {
+                    if (read == ShapeRead::bad) {
                         return fail(what + " has a detector shape " + kind + " with no size, or a size that is not a number of 0 to 1000");
                     }
                     recipe.detectorShapes.push_back(shape);
@@ -311,16 +392,7 @@ bool EncounterData::load_text(const std::string& text) {
                 sphere.radius = recipe.detectorRadius;
                 recipe.detectorShapes.push_back(sphere);
             }
-            for (const EncounterShape& shape : recipe.detectorShapes) {
-                const float offset = std::sqrt(shape.center[0] * shape.center[0] + shape.center[1] * shape.center[1]
-                                               + shape.center[2] * shape.center[2]);
-                const float size = shape.kind == EncounterShape::Kind::sphere ? shape.radius
-                                   : shape.kind == EncounterShape::Kind::cylinder
-                                       ? std::sqrt(shape.radius * shape.radius + shape.height * shape.height * 0.25F)
-                                       : std::sqrt(shape.extents[0] * shape.extents[0] + shape.extents[1] * shape.extents[1]
-                                                   + shape.extents[2] * shape.extents[2]);
-                recipe.detectorReach = std::max(recipe.detectorReach, offset + size);
-            }
+            recipe.detectorReach = reach_of(recipe.detectorShapes);
         }
         recipe.successEvent = text_of(entry, "successEvent");
         if (entry.contains("questEvents") && entry["questEvents"].is_array()) {
@@ -358,11 +430,24 @@ bool EncounterData::load_text(const std::string& text) {
             stage.slot = static_cast<std::uint32_t>(slot);
             stage.userWave = flag_of(item, "userWave");
             const json& objective = item.value("objective", json::object());
-            stage.objective.type = text_of(objective, "type");
-            stage.objective.kind = stage.objective.type == "InvasionWaveObjective"     ? EncounterObjectiveKind::timed
-                                   : stage.objective.type == "SliceDestroyedObjective" ? EncounterObjectiveKind::destroyed
-                                   : stage.objective.type == "SliceSpawnedObjective"   ? EncounterObjectiveKind::spawned
-                                                                                       : EncounterObjectiveKind::other;
+            if (!read_objective(objective, stage.objective)) {
+                return fail(what + ": the stage " + stage.name + " has a time limit that is not a number of 0 to an hour, or a trigger "
+                            "with no place or no good shape");
+            }
+            // Stage QG5c4: the other objectives of the stage ("more").
+            if (objective.contains("more") && objective["more"].is_array()) {
+                if (objective["more"].size() > kMaxSpawns) {
+                    return fail(what + ": the stage " + stage.name + " has more than " + std::to_string(kMaxSpawns) + " objectives");
+                }
+                for (const json& other : objective["more"]) {
+                    EncounterObjective more;
+                    if (!read_objective(other, more)) {
+                        return fail(what + ": an objective of the stage " + stage.name + " has a time limit that is not a number of 0 to an "
+                                    "hour");
+                    }
+                    stage.more.push_back(std::move(more));
+                }
+            }
             stage.childrenOptional = flag_of(item, "childrenOptional");
             if (item.contains("children") && item["children"].is_array()) {
                 for (const json& child : item["children"]) {
@@ -371,20 +456,6 @@ bool EncounterData::load_text(const std::string& text) {
                     }
                     stage.children.push_back(child.get<std::uint32_t>());
                 }
-            }
-            if (stage.objective.kind != EncounterObjectiveKind::other) {
-                if (!seconds(objective, "timeLimit", stage.objective.timeLimit)) {
-                    return fail(what + ": the stage " + stage.name + " has a time limit that is not a number of 0 to an hour");
-                }
-                stage.objective.succeedOnTimeout = flag_of(objective, "succeedOnTimeout");
-                stage.objective.requiredCount = whole(objective, "requiredCount", kMaxCount * kMaxSpawns, number)
-                                                    ? static_cast<std::uint32_t>(number) : 0;
-                stage.objective.tracked = lower_text(text_of(objective, "trackedSlice"));
-                if (stage.objective.tracked.empty()) {
-                    stage.objective.tracked = lower_text(text_of(objective, "trackedAlias"));
-                }
-                stage.objective.title = text_of(objective, "title");
-                stage.objective.description = text_of(objective, "description");
             }
             for (const char* list : {"startActions", "endActions"}) {
                 if (item.contains(list) && item[list].is_array()) {
@@ -464,6 +535,34 @@ bool EncounterData::load_text(const std::string& text) {
             if (stage.userWave && stage.userIndex < 0) {
                 stage.userIndex = static_cast<std::int32_t>(recipe.userWaves++);
             }
+        }
+        // Stage QG5c4 (static read D of stage QG5c4): the task tree of the client. The collector 0x26F1FD0 walks the stages of the manager
+        // and their child stages in their order and takes each objective of a user-wave stage in the order of m_objectives; 0x44650F0 gives
+        // each objective that makes a task (a timed, a destroyed, a spawned objective; an entity-state objective with a description; no
+        // WaitForParentObjective) a leaf and a wrapper of one child: leaf 2m + 1, wrapper 2m + 2 for the task m (from 0), the outer container
+        // 2T + 1 for T tasks.
+        std::vector<std::uint32_t> walk(recipe.stageOrder.rbegin(), recipe.stageOrder.rend());
+        while (!walk.empty()) {
+            EncounterStage& stage = recipe.stages[walk.back()];
+            walk.pop_back();
+            if (stage.userWave) {
+                for (std::size_t at = 0; at <= stage.more.size(); ++at) {
+                    EncounterObjective& objective = at == 0 ? stage.objective : stage.more[at - 1];
+                    const bool task = objective.kind == EncounterObjectiveKind::timed || objective.kind == EncounterObjectiveKind::destroyed
+                                      || objective.kind == EncounterObjectiveKind::spawned
+                                      || (objective.kind == EncounterObjectiveKind::entityState && !objective.description.empty());
+                    if (task) {
+                        objective.leaf = static_cast<std::int32_t>(2 * recipe.taskLeaves + 1);
+                        objective.target = objective.kind == EncounterObjectiveKind::destroyed || objective.kind == EncounterObjectiveKind::spawned
+                                               ? objective.requiredCount : 1;
+                        ++recipe.taskLeaves;
+                    }
+                }
+            }
+            walk.insert(walk.end(), stage.children.rbegin(), stage.children.rend());
+        }
+        if (recipe.taskLeaves > 100) {
+            return fail(what + " has more than 100 tasks of the client (a task index is one byte)");
         }
         if (entry.contains("refused") && entry["refused"].is_array()) {
             for (const json& cause : entry["refused"]) {

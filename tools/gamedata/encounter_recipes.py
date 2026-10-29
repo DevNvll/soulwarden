@@ -89,6 +89,15 @@ REROUTER_CLASS = uuid.UUID("ea210bd0-1072-c3d6-25f0-82bbbecb0bfb")
 DESTROY_CLASS = uuid.UUID("28e4c1a4-b9b4-8675-59e8-a21527d9da65")
 # The event type of a trigger (spells.py: 0 trigger, 2 activate, 3 deactivate).
 EVENT_TRIGGER = 0
+EVENT_ACTIVATE = 2
+EVENT_DEACTIVATE = 3
+# Stage QG5c4: the SliceComponent of the root entity of a slice (its list "Entities" repeats the entities of the slice: it is no spawner),
+# the parts of a spawner entity (the base SpawnerComponent with the spawned slice; the area, point, or prefab component with its rules on the
+# same entity), the event component of a detection volume (the trigger of an EntityActiveStateChangedObjective), and the point spawner of a
+# creature (the parts of a group member).
+SLICE_CLASS = uuid.UUID("afd304e4-1773-47c8-855a-8b622398934f")
+BASE_SPAWNER_CLASS = SPAWNER_STATE_CLASS
+DETECTION_EVENT_CLASS = uuid.UUID("7c84dee6-f1df-4b85-8cd5-6bfb970b70d0")
 OBJECTIVE_CLASSES = {
     uuid.UUID("632e9ece-f80c-48c0-9922-711537743873"): "SliceDestroyedObjective",
     uuid.UUID("cddd161a-9a85-4b81-9f7f-18845c6560c9"): "InvasionWaveObjective",
@@ -118,7 +127,10 @@ F = {name: field_id(name) for name in (
     "m_gatherableEntryId", "m_eventId", "m_entityRef", "m_isProximityGatherable",
     "m_overrideAggroDelay", "m_aggroDelayOverride",
     "m_rowReference", "m_timeDelaySeconds", "m_eventData", "m_startDelayOnInit", "m_startDelayOnTrigger", "m_events", "m_Height",
-    "m_center", "m_aabb")}
+    "m_center", "m_aabb",
+    "m_targetEntityId", "m_completeOnActivated", "m_completeOnDeactivated", "m_detectionVolumeEntity", "m_eventsOnEnter",
+    "m_eventsOnFirstEnter", "m_event", "m_detectDeadTargets", "m_editPrefab", "m_persistPrefab", "m_gatheringStartEvent",
+    "m_gatheringEndEvent", "m_shapeEntityID")}
 TASK_TYPE = "ObjectiveTasks"
 GATHERABLE_TYPE = "GatherableData"
 VARIATION_TYPE = "VariationData"
@@ -205,18 +217,26 @@ def detector_shape(component) -> dict:
     """@return The query shape of a DetectionVolumeComponent (stage QG5c3): "sphere" with its radius, "cylinder" with its radius and its
     height (centered on m_center: the Torment detector has the height 10 and the center 5 m up), or "aabb" with its extents (the half sizes
     on each axis: the box of the Bathory hall has the z extent 4.25, the half of the height 8.5 of the polygon prism of the same entity);
-    "none" for an other or no shape. m_center is the offset from the entity."""
+    "none" for an other or no shape. m_center is the offset from the entity. Stage QG5c4: "_shapeEntity" is m_shapeEntityID (the entity
+    whose place holds the shape; no key: none)."""
     center = vector(field(component, "m_center")) or [0.0, 0.0, 0.0]
     holder = field(component, "m_shape")
+    shape = {"shape": "none", "center": center}
     for node in walk(holder) if holder is not None else []:
         if node.type_id == SPHERE_CLASS:
-            return {"shape": "sphere", "radius": round(real(field(node, "m_Radius")), 3), "center": center}
+            shape = {"shape": "sphere", "radius": round(real(field(node, "m_Radius")), 3), "center": center}
+            break
         if node.type_id == CYLINDER_CLASS:
-            return {"shape": "cylinder", "radius": round(real(field(node, "m_Radius")), 3), "height": round(real(field(node, "m_Height")), 3),
-                    "center": center}
+            shape = {"shape": "cylinder", "radius": round(real(field(node, "m_Radius")), 3), "height": round(real(field(node, "m_Height")), 3),
+                     "center": center}
+            break
         if node.type_id == AABB_CLASS:
-            return {"shape": "aabb", "extents": vector(field(node, "m_aabb")) or [0.0, 0.0, 0.0], "center": center}
-    return {"shape": "none", "center": center}
+            shape = {"shape": "aabb", "extents": vector(field(node, "m_aabb")) or [0.0, 0.0, 0.0], "center": center}
+            break
+    shape_entity = number(field(component, "m_shapeEntityID"))
+    if shape_entity not in (0, 0xFFFFFFFF):
+        shape["_shapeEntity"] = shape_entity
+    return shape
 
 
 def event_target(element) -> tuple[int | None, int]:
@@ -278,27 +298,127 @@ def place_of(matrix: tuple[float, ...]) -> dict:
             "yaw": round(math.degrees(math.atan2(matrix[4], matrix[0])), 3)}
 
 
+def spawner_rules(info: dict, component) -> dict:
+    """@return The parent spawner of a recipe (step 2): the rules of the spawner entity `info` whose component `component` names the
+    encounter slice. Stage QG5c4: a spawner entity has the base SpawnerComponent (the spawned slice) and, on the same entity, the component
+    of its kind with its rules: an area spawner (m_liveCount, the respawn range, m_spawnOnEnable), a prefab spawner (m_editPrefab,
+    m_persistPrefab; the start m_spawnOnInitialize), or a point spawner (the respawn cooldowns; the start m_spawnOnInitialize). The base
+    component alone has none of these fields: a look at it alone found "a prefab spawner that does not spawn" for the area spawner of
+    Gazsala. "spawnOnEnable" is the start field of the kind; "startField" names it."""
+    parts = [part for part in info["components"] if part.type_id not in (STAGE_CLASS, SLICE_CLASS)]
+    area = next((part for part in parts if field(part, "m_liveCount") is not None), None)
+    prefab = next((part for part in parts if field(part, "m_editPrefab") is not None or field(part, "m_persistPrefab") is not None), None)
+    point = next((part for part in parts if field(part, "m_minRespawnCooldown") is not None), None)
+    rules, kind, start = (area, "area", "m_spawnOnEnable") if area is not None else \
+        (prefab, "prefab", "m_spawnOnInitialize") if prefab is not None else \
+        (point, "point", "m_spawnOnInitialize") if point is not None else (component, "spawner", "m_spawnOnEnable")
+    return {
+        "spawner": info["name"], "kind": kind, "startField": start,
+        "maintainPopulation": number(field(rules, "m_maintainPopulation")) != 0,
+        "spawnOnEnable": number(field(rules, start)) != 0,
+        "spawnOnTrigger": number(field(rules, "m_spawnOnTrigger")) != 0,
+        "liveCount": number(field(rules, "m_liveCount")),
+        "respawn": [round(real(field(rules, "m_minRespawnRange") or field(rules, "m_minRespawnCooldown")), 3),
+                    round(real(field(rules, "m_maxRespawnRange") or field(rules, "m_maxRespawnCooldown")), 3)],
+        "respawnAfterDeath": number(field(rules, "m_respawnAfterDeath")) != 0,
+    }
+
+
+def objective_of(node) -> dict:
+    """@return One objective of a stage: its class and its fields."""
+    kind = OBJECTIVE_CLASSES[node.type_id]
+    objective = {"type": kind, "timeLimit": number(field(node, "m_timeLimit")), "succeedOnTimeout": number(field(node, "m_succeedOnTimeout")) != 0,
+                 "failureCondition": number(field(node, "m_failureCondition")) != 0,
+                 "countDown": number(field(node, "m_countDownProgress")) != 0,
+                 "background": number(field(node, "m_backgroundActivation")),
+                 "title": text(field(node, "m_title")), "description": text(field(node, "m_description"))}
+    if kind in ("SliceDestroyedObjective", "SliceSpawnedObjective"):
+        objective["requiredCount"] = number(field(node, "m_requiredCount"))
+        objective["trackedSlice"] = None
+        objective["trackedAlias"] = None
+        objective["_tracked"] = (field(node, "m_trackedSlice"), field(node, "m_trackedAlias"))
+    if kind == "EncounterEventObjective":
+        objective["eventId"] = text(field(node, "m_eventId"))
+    if kind == "EntityActiveStateChangedObjective":
+        objective["target"] = number(field(node, "m_targetEntityId"))
+        objective["completeOn"] = ("deactivated" if number(field(node, "m_completeOnDeactivated")) != 0
+                                   else "activated" if number(field(node, "m_completeOnActivated")) != 0 else "")
+    return objective
+
+
 def read_objective(component) -> dict:
-    """@return The objective of a stage: its class and its fields (no objective: the class "none")."""
+    """@return The objective of a stage: its class and its fields (no objective: the class "none"). Stage QG5c4: "more" has the other
+    objectives of the stage in their order (one for each tracked member slice: the four braziers of 99A_MSQ_10, the two bosses of the tarot
+    tower 10306, the creatures and the smoke burst of a kill stage of the lost pylons; only the first one has a title), and an
+    EntityActiveStateChangedObjective has its target entity and the change that completes it ("completeOn": "deactivated" or
+    "activated")."""
     holder = field(component, "m_objectives")
-    for node in walk(holder) if holder is not None else []:
-        kind = OBJECTIVE_CLASSES.get(node.type_id)
-        if kind is None:
-            continue
-        objective = {"type": kind, "timeLimit": number(field(node, "m_timeLimit")), "succeedOnTimeout": number(field(node, "m_succeedOnTimeout")) != 0,
-                     "failureCondition": number(field(node, "m_failureCondition")) != 0,
-                     "countDown": number(field(node, "m_countDownProgress")) != 0,
-                     "background": number(field(node, "m_backgroundActivation")),
-                     "title": text(field(node, "m_title")), "description": text(field(node, "m_description"))}
-        if kind in ("SliceDestroyedObjective", "SliceSpawnedObjective"):
-            objective["requiredCount"] = number(field(node, "m_requiredCount"))
-            objective["trackedSlice"] = None
-            objective["trackedAlias"] = None
-            objective["_tracked"] = (field(node, "m_trackedSlice"), field(node, "m_trackedAlias"))
-        if kind == "EncounterEventObjective":
-            objective["eventId"] = text(field(node, "m_eventId"))
-        return objective
-    return {"type": "none"}
+    nodes = [node for node in (walk(holder) if holder is not None else []) if node.type_id in OBJECTIVE_CLASSES]
+    if not nodes:
+        return {"type": "none"}
+    objective = objective_of(nodes[0])
+    objective["more"] = [objective_of(node) for node in nodes[1:]]
+    return objective
+
+
+def state_senders(entities: dict[int, dict], target: int, kind: int) -> dict:
+    """@return The entities of a slice that send the event `kind` (2 activate, 3 deactivate) to `target` (stage QG5c4: the source of the
+    change that an EntityActiveStateChangedObjective waits for), in two groups:
+      "volumes": [(EVENT ENTITY, VOLUME ENTITY, DEAD TARGETS)] the DetectionVolumeEventComponents that send it when a target enters the
+                 detection volume (m_eventsOnEnter, m_eventsOnFirstEnter): the Trigger_Start of the tarot towers deactivates itself;
+      "gathers": [ENTITY NAME] the GatherableControllers whose gather start or end event reaches a sender through the triggers (type 0) of
+                 the delayed events and the event rerouters of the slice: the horn of victory of 09A_M5 (Gatherable_Complete, its start
+                 event, Interaction_Event_Activate, the delayed event of 0.1 s, the deactivation of Start_Trigger_Event)."""
+    volumes: list[tuple[int, int, bool]] = []
+    direct: set[int] = set()
+    triggers: dict[int, set[int]] = {}
+    gathers: dict[int, list[int]] = {}
+    for identifier, info in entities.items():
+        for component in info["components"]:
+            if component.type_id == DETECTION_EVENT_CLASS:
+                volume = refs(field(component, "m_detectionVolumeEntity"))
+                dead = number(field(component, "m_detectDeadTargets")) != 0
+                for name in ("m_eventsOnEnter", "m_eventsOnFirstEnter"):
+                    holder = field(component, name)
+                    for entry in holder.children if holder is not None else []:
+                        if event_target(field(entry, "m_event")) == (target, kind):
+                            volumes.append((identifier, volume[0] if volume else identifier, dead))
+            elif component.type_id == DELAYED_EVENT_CLASS:
+                aimed, aimed_kind = event_target(field(component, "m_eventData"))
+                if (aimed, aimed_kind) == (target, kind):
+                    direct.add(identifier)
+                elif aimed is not None and aimed_kind == EVENT_TRIGGER:
+                    triggers.setdefault(identifier, set()).add(aimed)
+            elif component.type_id == REROUTER_CLASS:
+                holder = field(component, "m_events")
+                for entry in holder.children if holder is not None else []:
+                    aimed, aimed_kind = event_target(entry)
+                    if (aimed, aimed_kind) == (target, kind):
+                        direct.add(identifier)
+                    elif aimed is not None and aimed_kind == EVENT_TRIGGER:
+                        triggers.setdefault(identifier, set()).add(aimed)
+            elif component.type_id == CONTROLLER_CLASS:
+                for name in ("m_gatheringStartEvent", "m_gatheringEndEvent"):
+                    aimed, aimed_kind = event_target(field(component, name))
+                    if aimed is not None and aimed_kind == EVENT_TRIGGER:
+                        gathers.setdefault(identifier, []).append(aimed)
+                    elif (aimed, aimed_kind) == (target, kind):
+                        gathers.setdefault(identifier, []).append(identifier)
+                        direct.add(identifier)
+    # The entities that reach a direct sender through triggers (a breadth walk from each gatherable, bounded by the entities of the slice).
+    found = []
+    for controller, starts in gathers.items():
+        pending, seen = list(starts), set()
+        while pending:
+            entity = pending.pop()
+            if entity in seen:
+                continue
+            seen.add(entity)
+            if entity in direct:
+                found.append(entities[controller]["name"])
+                break
+            pending.extend(triggers.get(entity, ()))
+    return {"volumes": volumes, "gathers": sorted(set(found))}
 
 
 def read_actions(component, name: str) -> list[dict]:
@@ -410,10 +530,15 @@ class Reader:
             controller = interact = proximity = character = False
             variant = table = entry = own_vitals = ""
             sphere = 0.0
+            providers = 0
+            nested = False
             entities = read_entities(roots)
             for info in entities.values():
                 for component in info["components"]:
+                    if component.type_id == MANAGER_CLASS:
+                        nested = True
                     if component.type_id == VARIANT_PROVIDER_CLASS:
+                        providers += 1
                         vitals = vitals or text(field(component, "m_vitalsTableRowId"))
                         category = category or text(field(component, "m_vitalsCategoryTableRowId"))
                         level = level or number(field(component, "m_vitalsLevel"))
@@ -440,6 +565,11 @@ class Reader:
                             body = (name, found)
             if path.endswith(".aliasasset"):
                 result["cause"] = "a spawn of an alias asset (no member slice)"
+            elif nested:
+                # Stage QG5c4: a member that is an encounter itself (its own manager and stages: the four braziers of 99A_MSQ_10, each a
+                # sub-encounter that spawns its destructible brazier): a nested encounter, a later stage.
+                result["cause"] = "an encounter slice (a nested encounter with its own manager and stages)"
+                result["nested"] = True
             elif vitals and body is not None:
                 body_path = self.catalog.path(body[1])
                 bodies = [body_path]
@@ -449,6 +579,10 @@ class Reader:
                 result = {"slice": path, "kind": "creature", "vitals": vitals, "category": category, "level": level,
                           "bodyField": "alias" if body[0] == "m_aliasAsset" else "slice", "body": body_path,
                           "bodySlices": sorted(path for path in bodies if path), "_asset": body[1]}
+                if providers > 1:
+                    # Stage QG5c4: a member slice with more than one creature spawner (the boat landings of the boat reinforcements:
+                    # an officer and a navigator, each on a path of three waypoints). The fields above are of the first one.
+                    result["parts"] = providers
             elif not vitals and character and own_vitals and self.own_asset(path) is not None:
                 # Stage QG5c3: a direct creature member (the creature slice itself; its Vitals row; a GatherableController of the mining
                 # or the skinning of its body is a part of the creature).
@@ -526,14 +660,29 @@ class Reader:
         # its box there and an other sphere elsewhere). 29 of the 65 encounter slices of the build have two volumes there (the master
         # template: a sphere of 30 m and a second one of 12 to 50 m), and no field names one of them: a character in one of them is in the
         # detector (a rule of this project). "radius" is the largest sphere or cylinder (the field of format 1 for a backend of before).
-        shapes = detectors.get(tracker_entity) or detectors.get(recipe["root"]) or next(iter(detectors.values()), None)
+        place = place_of(matrix)
+        recipe.update(position=place["position"], rotation=place["rotation"], yaw=place["yaw"])
+        holder = tracker_entity if tracker_entity in detectors else recipe["root"] if recipe["root"] in detectors \
+            else next(iter(detectors), None)
+        shapes = detectors.get(holder) if holder is not None else None
         if shapes is not None:
+            # Stage QG5c4: a shape whose m_shapeEntityID names an other entity of the slice is at the place of that entity (its offset from
+            # the root in world axes, plus m_center); "shapeEntity" names it, or is "missing" for an id that no entity of the slice has
+            # (the eight tarot towers: the id is in no slice of the game copy; encounters.py adds their trigger, see below).
+            for shape in shapes:
+                entity = shape.pop("_shapeEntity", None)
+                if entity is None or entity == holder:
+                    continue
+                if entity not in entities:
+                    shape["shapeEntity"] = "missing"
+                    continue
+                at = place_of(multiply(matrix, entities[entity]["matrix"]))["position"]
+                shape["center"] = [round(at[axis] - place["position"][axis] + shape["center"][axis], 4) for axis in range(3)]
+                shape["shapeEntity"] = entities[entity]["name"]
             radii = [shape.get("radius", 0.0) for shape in shapes if shape["shape"] in ("sphere", "cylinder")]
             recipe["detector"] = {"radius": max(radii, default=0.0), "filter": shapes[0]["filter"],
                                   "sphere": all(shape["shape"] == "sphere" for shape in shapes),
                                   "shapes": [{key: value for key, value in shape.items() if key != "filter"} for shape in shapes]}
-        place = place_of(matrix)
-        recipe.update(position=place["position"], rotation=place["rotation"], yaw=place["yaw"])
         # The stages in the manager order; a stage that no stage list names stays a diagnostic (research: 5 unreferenced definitions).
         order: list[int] = []
         pending = list(recipe["stageOrder"])
@@ -569,13 +718,47 @@ class Reader:
                     recipe["unsupported"].append(f"a spawn of the stage {stage['name']} names no slice of the catalog")
                 spawns.append(spawn)
             stage["spawns"] = spawns
-            objective = stage["objective"]
-            tracked = objective.pop("_tracked", None)
-            if tracked is not None:
-                objective["trackedSlice"] = asset_path(self.catalog, tracked[0])
-                objective["trackedAlias"] = asset_path(self.catalog, tracked[1])
+            for objective in [stage["objective"], *stage["objective"].get("more", [])]:
+                tracked = objective.pop("_tracked", None)
+                if tracked is not None:
+                    objective["trackedSlice"] = asset_path(self.catalog, tracked[0])
+                    objective["trackedAlias"] = asset_path(self.catalog, tracked[1])
             recipe["stages"].append(stage)
         recipe["stageOrder"] = [index[identifier] for identifier in recipe["stageOrder"] if identifier in index]
+        # Stage QG5c4: the trigger of an EntityActiveStateChangedObjective (m_targetEntityId, m_completeOnDeactivated): the detection
+        # volumes of the slice whose event component sends that change to the target when a target enters (the Trigger_Start of the tarot
+        # towers: a sphere of 20 m, PlayerOnly, that deactivates itself), each with its shapes at its place in the world; "changedBy" names
+        # the gatherables of the slice whose gather reaches the change (the horn of 09A_M5).
+        for stage in recipe["stages"]:
+            objective = stage["objective"]
+            if objective["type"] != "EntityActiveStateChangedObjective":
+                continue
+            target = objective.pop("target", 0)
+            wanted = {"deactivated": EVENT_DEACTIVATE, "activated": EVENT_ACTIVATE}.get(objective["completeOn"])
+            senders = state_senders(entities, target, wanted) if wanted is not None else {"volumes": [], "gathers": []}
+            objective["target"] = f"{target:016X}"
+            objective["targetName"] = entities.get(target, {}).get("name", "")
+            triggers = []
+            for _, volume, dead in senders["volumes"]:
+                shapes = [shape for shape in detectors.get(volume, []) if shape["shape"] != "none"]
+                if not shapes or volume not in entities:
+                    continue
+                at = place_of(multiply(matrix, entities[volume]["matrix"]))
+                triggers.append({"entity": entities[volume]["name"], "position": at["position"], "filter": shapes[0]["filter"],
+                                 "deadTargets": dead,
+                                 "shapes": [{key: value for key, value in shape.items() if key not in ("filter", "_shapeEntity")}
+                                            for shape in shapes]})
+            objective["triggers"] = triggers
+            objective["changedBy"] = senders["gathers"]
+            # Stage QG5c4 (a rule of this project): the detector of the participants of the tarot towers is a box at the ground whose
+            # shape entity is not in the game data, and the fight is at the top of the tower, 120 m up, where the trigger of the setup is:
+            # the trigger shapes are shapes of the detector too ("fromTrigger"), at their offset from the root in world axes.
+            detector = recipe.get("detector")
+            if detector and any(shape.get("shapeEntity") == "missing" for shape in detector["shapes"]):
+                for trigger in triggers:
+                    for shape in trigger["shapes"]:
+                        center = [round(trigger["position"][axis] - place["position"][axis] + shape["center"][axis], 4) for axis in range(3)]
+                        detector["shapes"].append({**shape, "center": center, "fromTrigger": trigger["entity"]})
         return recipe
 
     def read(self) -> tuple[list[dict], dict]:
@@ -607,7 +790,10 @@ class Reader:
                 world = placement_matrix(placement.get("rotation") or {}, placement.get("worldPosition") or {"x": 0, "y": 0, "z": 0})
                 for spawner_entity, info in read_entities(roots).items():
                     for component in info["components"]:
-                        if component.type_id == STAGE_CLASS:
+                        # Stage QG5c4: the SliceComponent of the root entity of the slice repeats the entities of the slice in its list
+                        # "Entities"; a look into it found the fields of a spawner of an other entity (the twin spawners of stage QG5c3:
+                        # Gazsala, the Bathory hall, the rotating bookcase). The entities of the list are read as entities.
+                        if component.type_id in (STAGE_CLASS, SLICE_CLASS):
                             continue
                         target = asset_path(self.catalog, field(component, "m_sliceAsset"))
                         if target is None:
@@ -625,18 +811,7 @@ class Reader:
                         recipe["key"] = key
                         recipe["layer"] = layer[len(REGIONS_FOLDER):-len(".capitals.json")]
                         recipe["parentSlice"] = path
-                        recipe["parent"] = {
-                            "spawner": info["name"],
-                            "kind": ("area" if field(component, "m_liveCount") is not None
-                                     else "point" if field(component, "m_minRespawnCooldown") is not None else "prefab"),
-                            "maintainPopulation": number(field(component, "m_maintainPopulation")) != 0,
-                            "spawnOnEnable": number(field(component, "m_spawnOnEnable")) != 0,
-                            "spawnOnTrigger": number(field(component, "m_spawnOnTrigger")) != 0,
-                            "liveCount": number(field(component, "m_liveCount")),
-                            "respawn": [round(real(field(component, "m_minRespawnRange") or field(component, "m_minRespawnCooldown")), 3),
-                                        round(real(field(component, "m_maxRespawnRange") or field(component, "m_maxRespawnCooldown")), 3)],
-                            "respawnAfterDeath": number(field(component, "m_respawnAfterDeath")) != 0,
-                        }
+                        recipe["parent"] = spawner_rules(info, component)
                         self.counts["encounters"] += 1
                         for stage in recipe["stages"]:
                             for spawn in stage["spawns"]:

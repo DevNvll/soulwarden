@@ -36,6 +36,8 @@ json encounters_view(world::World& world, const std::string& character, float ra
                  {"membersRemoved", counts.membersRemoved}, {"memberDeaths", counts.memberDeaths}, {"objectsMade", counts.objectsMade},
                  {"objectsGathered", counts.objectsGathered}, {"objectsFound", counts.objectsFound},
                  {"proximityLooks", counts.proximityLooks}, {"timedEnds", counts.timedEnds}, {"spawnsSkipped", counts.spawnsSkipped},
+                 {"triggersFound", counts.triggersFound}, {"triggerLooks", counts.triggerLooks},
+                 {"objectivesVoided", counts.objectivesVoided}, {"findRetries", counts.findRetries},
                  {"oldGeneration", counts.oldGeneration},
                  {"participantsAdded", counts.participantsAdded}, {"participantsLeft", counts.participantsLeft}, {"credits", counts.credits},
                  {"creditRetries", counts.creditRetries}, {"creditsDropped", counts.creditsDropped}, {"scans", counts.scans},

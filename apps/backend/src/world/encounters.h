@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -52,6 +53,14 @@
 // cylinder, or an axis box (the capsule of a character in one of its shapes). Code review of stage QG5c2: the participants are refreshed
 // at the success (R1), and a count above the members that the runner makes refuses the recipe (R3).
 //
+// Stage QG5c4 (the interaction sequences, the defenses, the world events of the open world): an EntityActiveStateChangedObjective ends its
+// stage when a character is in a shape of its trigger (the detection volume of the slice that changes the target entity: the Trigger_Start
+// at the top of a tarot tower); each objective of a stage counts its own tracked slice, and the stage meets its count when each one is met
+// (an objective of creature members that the client does not show is met at its start when an other objective of the stage counts members
+// that the runner makes). A recipe with no creature member is taken. Code review of stage QG5c3: the activation finds its instance again
+// after the first stage (R1), each finder of a proximity object keeps its write until the store took it (R2), and a spawn due at or after the
+// time limit of its stage gives no count (R3).
+//
 // The cost depends on the characters, the instances, and the due entries, not on the size of the world (MP-8): the placements are in a grid
 // of cells (a scan looks at the cells near each character), the participants of an instance are the characters near its root (the position
 // index), the proximity objects are the ones of the running instances (the characters near each one), and the timers are one due list.
@@ -83,6 +92,11 @@ inline constexpr std::uint32_t kStageFailed = 4;
 /** A credit that the store refused tries again after this time, at most kPayoutAttempts times (a rule of this project). */
 inline constexpr std::chrono::milliseconds kPayoutRetry{2000};
 inline constexpr std::uint32_t kPayoutAttempts = 5;
+/**
+ * Code review of stage QG5c3, finding QG5C3R-R2: the looks (one each kScanInterval) that try again a quest write of the find of a proximity
+ * object that the store refused: 20 looks, the 10 s of the credit ledger (kPayoutAttempts times kPayoutRetry; a rule of this project).
+ */
+inline constexpr std::uint32_t kFindAttempts = 20;
 /** The bounds of one instance (load bounds: the data has at most 32 for each spawn entry). */
 inline constexpr std::size_t kMaxMembers = 256;
 inline constexpr std::size_t kMaxParticipants = 64;
@@ -128,6 +142,7 @@ struct EncounterMemberRun {
 struct EncounterStageRun {
     bool started{false};
     bool ended{false};
+    /** The first objective: its destroyed spawns (a destroyed objective) or the spawns of its tracked slice (a spawned objective). */
     std::uint32_t destroyed{0};
     std::uint32_t spawned{0};
     /**
@@ -138,6 +153,12 @@ struct EncounterStageRun {
     std::uint32_t nextChild{0};
     bool childrenDone{false};
     bool objectiveMet{false};
+    /**
+     * Stage QG5c4: the count and the end of each objective of the stage (index 0: the first objective, `destroyed` or `spawnedTracked`;
+     * then the objectives of EncounterStage::more). The stage meets its count when each one is met.
+     */
+    std::vector<std::uint32_t> counts;
+    std::vector<bool> met;
 };
 
 struct EncounterParticipant {
@@ -175,6 +196,12 @@ struct EncounterPlacement {
      * its own or of its child stages: Kill Helvan Boss), by the stage index.
      */
     std::vector<bool> anyMember;
+    /**
+     * Stage QG5c4: for each stage, the objectives (index 0 the first, then EncounterStage::more) that are met at the start of the stage: in
+     * a stage with more than one objective, an objective whose tracked member slices are only creature members that the client does not
+     * show (no kind: the swarmers of the Yonas retreat) when an other objective of the stage counts members that the runner makes.
+     */
+    std::vector<std::vector<bool>> voided;
     /** The instance that runs (0: none), the last generation, the respawn of a new instance (no value: at once). */
     bool live{false};
     std::uint64_t generation{0};
@@ -210,6 +237,12 @@ struct EncounterCounts {
     std::uint64_t proximityLooks{0};
     std::uint64_t timedEnds{0};
     std::uint64_t spawnsSkipped{0};
+    /** Stage QG5c4: the entity-state stages that a character in their trigger ended, the looks of the triggers, the objectives met at their
+     *  start (EncounterPlacement::voided), and the finder writes that the store refused (finding QG5C3R-R2: tried again at the next look). */
+    std::uint64_t triggersFound{0};
+    std::uint64_t triggerLooks{0};
+    std::uint64_t objectivesVoided{0};
+    std::uint64_t findRetries{0};
     /** Events of an old generation (a late death, an old timer, an old gather): no change. */
     std::uint64_t oldGeneration{0};
     std::uint64_t participantsAdded{0};
@@ -326,6 +359,18 @@ private:
         std::uint64_t generation{0};
         state::WorldPosition place;
         const gamedata::EncounterMember* member{nullptr};
+        /**
+         * Code review of stage QG5c3, finding QG5C3R-R2: the finders whose quest write the store took, and the finders whose write the store
+         * refused (the attempts). The object stays until each finder of the set has its write or ran out of attempts; then it goes, one time.
+         */
+        std::set<std::string> paid;
+        std::map<std::string, std::uint32_t> failures;
+    };
+    /** Stage QG5c4: a running entity-state stage (its triggers are in the objective of the stage of the recipe). */
+    struct Armed {
+        std::uint32_t placement{0};
+        std::uint64_t generation{0};
+        std::uint32_t stage{0};
     };
     struct Due {
         DueKind kind{DueKind::activate};
@@ -359,23 +404,39 @@ private:
     void objective_met(EncounterInstance& instance, std::uint32_t stage);
     /** Stage QG5c3: the characters in the spheres of the proximity objects find them (an accepted position; InteractOnlyOnQuest). */
     void look_proximity();
+    /** Stage QG5c4: a character in a shape of the trigger of a running entity-state stage ends that stage. */
+    void look_triggers();
     /** Stage QG5c3: a character is in the detector of a recipe (one of its shapes). */
     [[nodiscard]] static bool in_detector(const gamedata::EncounterRecipe& recipe, const state::WorldPosition& root, const WorldCapsule& body);
+    /** Stage QG5c4: the body of a character overlaps one of the shapes at their offsets from a place. */
+    [[nodiscard]] static bool in_shapes(const std::vector<gamedata::EncounterShape>& shapes, const state::WorldPosition& place,
+                                        const WorldCapsule& body);
     /** A new member takes the nearest participant that lives as its target (the aggro of the encounter). */
     void provoke(EncounterInstance& instance, Entity& member);
     void end_stage(EncounterInstance& instance, std::uint32_t stage, bool success);
     void succeed(EncounterInstance& instance);
     void end_instance(EntityId root, EncounterEnd end);
-    void remove_members(EncounterInstance& instance, bool objectsToo);
+    /** Removes the members of an instance (no count, no reward): the creatures, and the objects (`objectsToo`), or (stage QG5c4, a
+     *  KillSpawnsAction) the objects of the stages that ended (`endedObjects`). */
+    void remove_members(EncounterInstance& instance, bool objectsToo, bool endedObjects = false);
     void pay(std::size_t payout);
     void stage_status(EncounterInstance& instance, std::uint32_t stage, std::uint32_t status);
     void manager_status(EncounterInstance& instance, std::uint32_t status);
     void publish_objectives(EncounterInstance& instance);
     void link(Entity& character, EntityId root, bool on);
-    [[nodiscard]] bool counts_toward(const gamedata::EncounterRecipe& recipe, const gamedata::EncounterStage& stage,
-                                     const gamedata::EncounterSpawn& spawn) const;
-    /** Stage QG5c3: the stage of a spawn or a stage above it counts the spawn (a destroyed or a spawned objective that tracks it or nothing). */
-    [[nodiscard]] bool spawn_needed(const gamedata::EncounterRecipe& recipe, std::uint32_t stage, const gamedata::EncounterSpawn& spawn) const;
+    /** @return True when an objective counts a spawn: it tracks no slice, its slice, or the body slice or an alias slice of the member. */
+    [[nodiscard]] bool counts_toward(const gamedata::EncounterObjective& objective, const gamedata::EncounterSpawn& spawn) const;
+    /**
+     * Stage QG5c3: the stage of a spawn or a stage above it counts the spawn (a destroyed or a spawned objective that tracks it or nothing).
+     * Stage QG5c4: each objective of those stages, not one that is met at its start (EncounterPlacement::voided).
+     */
+    [[nodiscard]] bool spawn_needed(const EncounterPlacement& placement, std::uint32_t stage, const gamedata::EncounterSpawn& spawn) const;
+    /** Stage QG5c4: the objective `index` of a stage (0 the first, then EncounterStage::more). */
+    [[nodiscard]] static const gamedata::EncounterObjective& objective_of(const gamedata::EncounterStage& stage, std::size_t index) {
+        return index == 0 ? stage.objective : stage.more[index - 1];
+    }
+    /** Stage QG5c4: one more count of the objective `index` of a stage; the stage meets its count when each objective is met. */
+    void count_objective(EncounterInstance& instance, std::uint32_t stage, std::size_t index, std::uint32_t added);
     [[nodiscard]] EncounterInstance* instance_of(std::uint32_t placement, std::uint64_t generation);
     [[nodiscard]] static std::int64_t cell_of(float value);
     void schedule(WorldClock::time_point at, const Due& due);
@@ -394,6 +455,8 @@ private:
     std::unordered_map<EntityId, std::string> m_objects;
     /** Stage QG5c3: the proximity objects of the running stages (an entity id, or an id with no entity). */
     std::map<EntityId, Proximity> m_proximity;
+    /** Stage QG5c4: the running entity-state stages (their triggers). */
+    std::vector<Armed> m_armed;
     std::multimap<WorldClock::time_point, Due> m_due;
     std::vector<Event> m_events;
     std::vector<EncounterPayout> m_payouts;

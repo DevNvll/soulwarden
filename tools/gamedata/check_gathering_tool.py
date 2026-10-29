@@ -417,6 +417,10 @@ def check(case: str) -> tuple[bool, str]:
             "azoth": tool.row_entry("F", "T", good_row(GatheringType="AzothStaff"))["unsupported"],
             "faction0": tool.row_entry("G", "T", good_row(RequireControllingFaction="0"))["unsupported"],
             "faction1": tool.row_entry("H", "T", good_row(RequireControllingFaction="1"))["unsupported"],
+            # Stage QG5c4: a type that is not a tool type needs no tool with NoToolNecessary (the Handcrafting chests of 10A_Q4).
+            "handcrafting": tool.row_entry("I", "T", good_row(GatheringType="Handcrafting", Restriction="NoToolNecessary",
+                                                              Tradeskill="None"))["unsupported"],
+            "handcrafting-tool": tool.row_entry("J", "T", good_row(GatheringType="Handcrafting"))["unsupported"],
         }
         item = tool.row_entry("A", "T", good_row(Restriction="ItemRequired", ItemRestrictionId="Test_Key", ItemRestrictionQuantity="2"))
         passed = (causes["restriction"] == [] and item["item"] == "Test_Key" and item["itemCount"] == 2
@@ -424,7 +428,8 @@ def check(case: str) -> tuple[bool, str]:
                   and causes["container"] == ["a loot container (a chest: stage 3.5b)"]
                   and causes["gatherers"] == ["more than one gatherer (NumRequiredToGather)"]
                   and causes["fishing"] == ["the gathering type Fishing"] and causes["azoth"] == []
-                  and causes["faction0"] == [] and causes["faction1"] == ["a faction"])
+                  and causes["faction0"] == [] and causes["faction1"] == ["a faction"] and causes["handcrafting"] == []
+                  and causes["handcrafting-tool"] == ["the gathering type Handcrafting"])
         return passed, "; ".join(f"{name}: {value}" for name, value in causes.items())
     if case == "quest-gimmick":
         import quest_objects  # noqa: PLC0415 (the tool of the destructible objects; only this case needs it)

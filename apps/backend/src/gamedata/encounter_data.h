@@ -32,6 +32,12 @@ enum class EncounterObjectiveKind : std::uint8_t {
     destroyed,
     /** Stage QG5c3: SliceSpawnedObjective: m_requiredCount spawns of its tracked slice were made (the spawn of Helvan). */
     spawned,
+    /**
+     * Stage QG5c4: EntityActiveStateChangedObjective: the change of the active state of an entity of the slice that a detection volume
+     * sends when a player enters it (the trigger: the Trigger_Start at the top of a tarot tower). The stage ends when a character is in a
+     * shape of its trigger.
+     */
+    entityState,
     /** A class that the runner does not run (the recipe is refused by the tool). */
     other,
 };
@@ -61,6 +67,32 @@ struct EncounterSpawn {
     std::vector<EncounterPlace> locations;
 };
 
+/** Stage QG5c3: one shape of the detector of the participants (a DetectionVolumeComponent of the entity of the ParticipantTracker). */
+struct EncounterShape {
+    enum class Kind : std::uint8_t { sphere, cylinder, aabb };
+    Kind kind{Kind::sphere};
+    /** The radius of a sphere or of a cylinder, the height of a cylinder (centered on `center`), the half sizes of an axis box. */
+    float radius{0.0F};
+    float height{0.0F};
+    std::array<float, 3> extents{0.0F, 0.0F, 0.0F};
+    /** m_center: the offset from the root (world axes). */
+    std::array<float, 3> center{0.0F, 0.0F, 0.0F};
+};
+
+/**
+ * Stage QG5c4: the trigger of an EntityActiveStateChangedObjective: a detection volume of the slice (its shapes at their offset from its
+ * place, in world axes) whose event component changes the target entity when a player enters it.
+ */
+struct EncounterTrigger {
+    std::string entity;
+    state::WorldPosition position;
+    std::vector<EncounterShape> shapes;
+    /** m_detectDeadTargets of the event component: a dead character in the volume counts too. */
+    bool deadTargets{false};
+    /** The distance from the place that holds each shape (the query of the position index). */
+    float reach{0.0F};
+};
+
 struct EncounterObjective {
     EncounterObjectiveKind kind{EncounterObjectiveKind::other};
     std::string type;
@@ -72,6 +104,15 @@ struct EncounterObjective {
     std::string tracked;
     std::string title;
     std::string description;
+    /** Stage QG5c4: the triggers of an entity-state objective (a character in one of their shapes ends the stage). */
+    std::vector<EncounterTrigger> triggers;
+    /**
+     * Stage QG5c4 (static read D of stage QG5c4, 0x44650F0, 0x26F1FD0): the index of the leaf task of the objective in the task tree that
+     * the client makes for the root (its wrapper is leaf + 1; -1: no task), and the target of the leaf (m_requiredCount of a destroyed or
+     * a spawned objective; 1 for a timed or an entity-state objective).
+     */
+    std::int32_t leaf{-1};
+    std::uint32_t target{1};
 };
 
 struct EncounterStage {
@@ -85,6 +126,11 @@ struct EncounterStage {
     /** The collection index of a user-wave stage (client 0x26F1FD0: 0, 1, ... in the stage order), -1 for a stage with no user wave. */
     std::int32_t userIndex{-1};
     EncounterObjective objective;
+    /**
+     * Stage QG5c4: the other objectives of the stage (m_objectives after the first one: a destroyed or a spawned objective with no time
+     * limit, one for each tracked member slice). The stage meets its count when `objective` and each of these are met.
+     */
+    std::vector<EncounterObjective> more;
     std::vector<EncounterSpawn> spawns;
     /** A KillSpawnsAction in m_startActions or m_endActions: the members of the encounter go (no reward). */
     bool killSpawnsAtStart{false};
@@ -96,18 +142,6 @@ struct EncounterStage {
     std::vector<std::uint32_t> children;
     std::int32_t parent{-1};
     bool childrenOptional{false};
-};
-
-/** Stage QG5c3: one shape of the detector of the participants (a DetectionVolumeComponent of the entity of the ParticipantTracker). */
-struct EncounterShape {
-    enum class Kind : std::uint8_t { sphere, cylinder, aabb };
-    Kind kind{Kind::sphere};
-    /** The radius of a sphere or of a cylinder, the height of a cylinder (centered on `center`), the half sizes of an axis box. */
-    float radius{0.0F};
-    float height{0.0F};
-    std::array<float, 3> extents{0.0F, 0.0F, 0.0F};
-    /** m_center: the offset from the root (world axes). */
-    std::array<float, 3> center{0.0F, 0.0F, 0.0F};
 };
 
 struct EncounterParent {
@@ -167,6 +201,8 @@ struct EncounterRecipe {
     std::vector<EncounterStage> stages;
     /** The number of the user-wave stages (the encounter objectives of the client). */
     std::uint32_t userWaves{0};
+    /** Stage QG5c4: the leaf tasks of the task tree of the client (the outer container has the index 2 * taskLeaves + 1). */
+    std::uint32_t taskLeaves{0};
     std::string pattern;
     /** The causes of the data that the runner does not run (tools/gamedata/encounters.py). Empty: no cause of the data. */
     std::vector<std::string> refused;

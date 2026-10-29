@@ -332,7 +332,9 @@ bool GatheringData::parse(const std::string& text) {
         row.respawnMin = static_cast<float>(low);
         row.respawnMax = static_cast<float>(high);
         row.required = static_cast<std::uint32_t>(required);
-        if (row.type == GatheringType::other && row.unsupported.empty()) {
+        // Stage QG5c4: a type that is not a tool type needs no tool with the restriction NoToolNecessary (the Handcrafting rows of the quest
+        // tables: the chests of the shipwreck encounter of C10A_Q4): the gather has the rule of the type None (docs/systems/gathering.md).
+        if (row.type == GatheringType::other && row.restriction != kNoToolNecessary && row.unsupported.empty()) {
             row.unsupported.push_back("the gathering type " + type);
         }
         // The mark "supported" (no cause) must agree with the gates of the row (finding GA-R5): an empty list of causes does not remove

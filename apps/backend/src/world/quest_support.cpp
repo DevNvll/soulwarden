@@ -398,6 +398,17 @@ struct TaskFact {
      */
     std::string rankSkill;
     std::uint32_t rankLevel{0};
+    /**
+     * Code review of stage QG5c3, finding QG5C3R-R4: the other producers of the event of the task that a history can use, each with its own
+     * gates (an item that only a quest gives, a rank of a trade skill with no source); a history takes the task when the gates of the
+     * first producer or of one of these pass.
+     */
+    struct Alternative {
+        std::string questItem;
+        std::string rankSkill;
+        std::uint32_t rankLevel{0};
+    };
+    std::vector<Alternative> alternatives;
 };
 
 /** The evaluation of one objective row (no history). */
@@ -1238,6 +1249,27 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                     fact.questItem = best->item;
                 }
             }
+            // Finding QG5C3R-R4: the other producers of the same event that a history can use, each with its own gates (a free producer
+            // with the rank 5 of AzothStaff first, then an unranked producer with a key that a quest gives: a history with the key and no
+            // rank takes the second one).
+            if (bestClass >= 2 || !best->rankSkill.empty()) {
+                for (const Index::GatherSource& source : index.gatherSources.at(*bestTarget)) {
+                    const bool world = source.item.empty() || index.items.count(source.item) != 0;
+                    if (&source == best || (!world && index.questItems.count(source.item) == 0)) {
+                        continue;
+                    }
+                    TaskFact::Alternative alternative{world ? std::string() : source.item, source.rankSkill, source.rankLevel};
+                    const bool same = (alternative.questItem == fact.questItem && alternative.rankSkill == fact.rankSkill
+                                       && alternative.rankLevel == fact.rankLevel)
+                                      || std::any_of(fact.alternatives.begin(), fact.alternatives.end(), [&](const TaskFact::Alternative& other) {
+                                             return other.questItem == alternative.questItem && other.rankSkill == alternative.rankSkill
+                                                    && other.rankLevel == alternative.rankLevel;
+                                         });
+                    if (!same) {
+                        fact.alternatives.push_back(std::move(alternative)); // Each set of gates one time (the rows of one producer).
+                    }
+                }
+            }
             break;
         }
         case task_type::kConversationState:
@@ -1674,9 +1706,11 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         std::vector<bool> supported(objective.nodes.size(), true);
         std::vector<std::string> needs(objective.nodes.size());
         std::vector<const TaskFact*> ranks(objective.nodes.size(), nullptr);
+        std::vector<const TaskFact*> facts(objective.nodes.size(), nullptr);
         for (const TaskFact& item : fact.tasks) {
             supported[item.index] = item.supported;
             needs[item.index] = item.questItem;
+            facts[item.index] = &item;
             if (!item.rankSkill.empty()) {
                 ranks[item.index] = &item;
             }
@@ -1849,11 +1883,20 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                     continue;
                 }
                 if (supported[node] && task.type != task_type::kObjective) {
-                    if (!needs[node].empty() && !has_item(needs[node])) {
-                        continue; // Only a quest gives the item, and the history does not have it (finding QR8E-R5).
-                    }
-                    if (rank_below(node)) {
-                        continue; // Stage QG5b: the history does not have the rank of the producer (AzothStaff).
+                    // Only a quest gives the item, and the history does not have it (finding QR8E-R5); stage QG5b: the history does not
+                    // have the rank of the producer (AzothStaff). Finding QG5C3R-R4: an other producer of the event whose own gates pass
+                    // opens the task.
+                    const bool first = (needs[node].empty() || has_item(needs[node])) && !rank_below(node);
+                    const bool other = facts[node] != nullptr
+                                       && std::any_of(facts[node]->alternatives.begin(), facts[node]->alternatives.end(),
+                                                      [&](const TaskFact::Alternative& alternative) {
+                                                          return (alternative.questItem.empty() || has_item(alternative.questItem))
+                                                                 && (alternative.rankSkill.empty()
+                                                                     || skills.rank(gamedata::progression_id(alternative.rankSkill))
+                                                                            >= alternative.rankLevel);
+                                                      });
+                    if (!first && !other) {
+                        continue;
                     }
                     // Stage QG2a: TaskHaveLevel of the level of the character: the level of the history (Quests::Plan::predicate).
                     if (task.type == task_type::kHaveLevel
@@ -2119,6 +2162,15 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
                                  {"supplier", fact.supplier},
                                  {"questItem", fact.questItem},
                                  {"reason", fact.reason}});
+            if (!fact.alternatives.empty()) {
+                // Finding QG5C3R-R4: the other producers that a history can use, with their gates.
+                json alternatives = json::array();
+                for (const TaskFact::Alternative& alternative : fact.alternatives) {
+                    alternatives.push_back(
+                        {{"questItem", alternative.questItem}, {"rankSkill", alternative.rankSkill}, {"rankLevel", alternative.rankLevel}});
+                }
+                tasks.back()["alternatives"] = std::move(alternatives);
+            }
         }
         json entry{{"id", objective.id},
                    {"type", objective.type},
