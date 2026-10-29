@@ -1052,9 +1052,16 @@ button on "Confirm").
   modes and back, in the same connection: `tools/world instance maps [TEXT]`, `tools/world instance enter CHARACTER MAP [INSTANCE]` (for
   example `DungeonAmrine`: the loading screen of the expedition, then the character at the start of the map; INSTANCE: the id of an
   instance of that map to join), `tools/world instance return CHARACTER` (back to the place of the entry in the main world),
-  `tools/world instance list`. `tools/world list` shows the space of each entity. An instance has no creature and no object yet (stage
-  DG2), and the entrance of the game comes with stage DG3. A character that leaves the world in an instance, or whose backend stops,
-  enters the world again at the place of its entry.
+  `tools/world instance list`. `tools/world list` shows the space of each entity. An instance of a different level has no creature and no
+  object yet (stage DG2). A character that leaves the world in an instance, or whose backend stops, enters the world again at the place
+  of its entry.
+- Story instances (stage QG9a, [Instances](systems/instances.md)): the entrance of a solo mode of the main world level (Medea in
+  Thornhall, the mode QuestMedea) enters a private instance of the same level: OpenDungeonMenu, then the Enter button of the window of the
+  game (the result 3094; a mode whose content the server does not run gets "the entrance cannot be activated"). In the instance only its
+  content is there: the encounter of the mode (the intro and the outro cutscenes, the boss), and the exit portal (hold E). The GameModeParticipant
+  state gives the client the membership (the compass, the respawn screen of the mode, the TaskGameMode tasks). A death puts the character
+  at the start of the instance. An instance with no member waits for the timeout of its mode (600 s) and the same character joins it again
+  unless its content succeeded. `tools/world instance list` shows the instances of the entrances too.
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is

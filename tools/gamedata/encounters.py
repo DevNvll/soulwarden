@@ -76,7 +76,9 @@ from creature_data import CATALOG_PATH, WANTED, WORLD, Catalog, Sources, slice_a
 from encounter_recipes import read_recipes  # noqa: E402
 
 OUTPUT_NAME = "encounter-data.json"
-FORMAT = 1
+# Stage QG9a: format 2: the instance recipes (members "mode", "map", "daily") and "instanceObjects". A backend of before refuses the file:
+# it would run an instance recipe as a placement of the main world.
+FORMAT = 2
 AMBUSH = "an ambush"
 SUMMONED = "a summoned opponent"
 SEQUENCE = "an interaction sequence"
@@ -139,6 +141,11 @@ STATE = "EntityActiveStateChangedObjective"
 # Stage QG5c5: the objective of a child stage that ends with its parent (the sustain stages of the monoliths; the client makes no task for
 # it: static read D1 of stage QG5c4, 0x7C7DF0).
 WAIT_PARENT = "WaitForParentObjective"
+# Stage QG9a: the objectives of an instance recipe (the encounter of a mode root slice, docs/systems/instances.md): the cutscene of a stage
+# (its time limit with succeedOnTimeout, or the end of the cutscene of the client) and the event of a stage (Intro_Complete: no slice or
+# table of the client sends it; the runner meets it at the start of its stage, a rule of this project).
+CUTSCENE = "CutsceneFinishedObjective"
+EVENT = "EncounterEventObjective"
 # Stage QG5c5: the actions that the runner runs (EntityEventAction is a part of the client, the handler of the stage status).
 ACTIONS = ("EntityEventAction", "KillSpawnsAction", "DestroySliceAction")
 # The detector shapes that the runner tests (encounter_recipes.detector_shape) and the size that each one needs.
@@ -346,6 +353,19 @@ def later_stages(recipe: dict, index: int) -> list[dict]:
     return [recipe["stages"][at] for start in after for at in descendants(recipe, start)]
 
 
+def background_stages(recipe: dict, index: int) -> list[dict]:
+    """Stage QG9a: @return The stages of the manager order before the top stage of `index` that still run when it starts: in an instance
+    recipe, a manager stage with a WaitForParentObjective (the setup of Medea: it spawns the caster that the boss fight tracks) runs to the
+    end of the encounter, with its child stages."""
+    if not recipe.get("mode"):
+        return []
+    order = manager_order(recipe)
+    top = top_of(recipe, index)
+    before = order[:order.index(top)] if top in order else []
+    return [recipe["stages"][at] for start in before if recipe["stages"][start]["objective"]["type"] == WAIT_PARENT
+            for at in descendants(recipe, start)]
+
+
 def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracked: str | None, below: list[dict], members: dict[str, dict],
                      earlier: list[dict] | None = None, consumer: int | None = None) -> list[str]:
     """@return The causes of one objective of the stage `name` (the rules of the docstring); `below` is the stage and its child stages, and
@@ -385,6 +405,10 @@ def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracke
             reach += [(part, spawn) for part in earlier for spawn in part["spawns"]
                       if members.get(spawn["member"], {}).get("kind") == "object"
                       and (consumer is None or survives(recipe, owners[id(part)], spawn, consumer))]
+            # Stage QG9a: in an instance recipe, the members of a manager stage that still runs (a WaitForParentObjective stage) count too.
+            if consumer is not None:
+                reach += [(part, spawn) for part in background_stages(recipe, consumer) for spawn in part["spawns"]
+                          if members.get(spawn["member"], {}).get("kind") == "creature"]
         if tracked and not any(tracks(objective, spawn, members) for _, spawn in reach):
             causes.append(f"the stage {name} tracks a slice that it, its child stages, and the stages before it do not spawn")
         # Code review of stage QG5c2, finding QG5C2R-R3: the spawns that can count for the objective (its own and those of its child
@@ -402,6 +426,12 @@ def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracke
                           f"slices, and its spawns can give only {possible}")
     elif kind == WAIT_PARENT:
         pass  # Stage QG5c5: a child stage that ends with its parent (docs/systems/encounters.md).
+    elif kind == CUTSCENE and recipe.get("mode"):
+        # Stage QG9a: the cutscene of a stage of an instance recipe ends at the end of the cutscene of the client or at its time limit.
+        if objective["timeLimit"] <= 0 or not objective["succeedOnTimeout"]:
+            causes.append(f"the cutscene stage {name} has no timed success")
+    elif kind == EVENT and recipe.get("mode"):
+        pass  # Stage QG9a: the event of a stage of an instance recipe is met at the start of its stage (a rule of this project).
     else:
         causes.append(f"the objective {kind} of the stage {name}: a later stage")
     return causes
@@ -418,8 +448,13 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
         causes.append("the manager does not start the encounter by itself (m_autoActivate 0: a start of an event)")
     if not good_detector(recipe.get("detector")):
         causes.append("the detector of the participants is not a sphere, a cylinder, or an axis box with a size")
+    if recipe.get("daily"):
+        causes.append("the daily alternative of the encounter of the mode (its selection rule is in the mode script, which the client does "
+                      "not have)")
     parent = recipe.get("parent") or {}
-    if parent.get("kind", "area") != "area" or not parent.get("spawnOnEnable", True):
+    if recipe.get("mode"):
+        pass  # Stage QG9a: the instance system starts the encounter of its mode at the start of an instance (the mode script is absent).
+    elif parent.get("kind", "area") != "area" or not parent.get("spawnOnEnable", True):
         # Stage QG5c4: the rules of the spawner entity (encounter_recipes.spawner_rules): a prefab or a point spawner starts with
         # m_spawnOnInitialize; the prefab spawners of the Bathory hall and of the rotating bookcase have it 0 and m_spawnOnTrigger 0 (an
         # event of their parent slice starts them).
@@ -459,6 +494,11 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
                 if not any(part["type"] == DESTROYED and tracks(part, spawn, members) for part in objectives_of(stage)) \
                         and not any(part["type"] == DESTROYED and tracked_of(part) and tracks(part, spawn, members)
                                     for other in later for part in objectives_of(other)):
+                    if recipe.get("mode"):
+                        # Stage QG9a: in an instance recipe a start object that no objective tracks is not made ("skip" of the spawn): the
+                        # crystal of Medea (its role is in the boss tree, which the client does not have; a known limit).
+                        spawn["skip"] = True
+                        continue
                     causes.append(f"the start object {short} is in a stage that does not track it")
             # Stage QG5c5: a group member (more than one creature spawner in its slice: the portal waves, the boat landings) makes one
             # creature for each part (the backend: each part with its kind "SLICE#N" of creatures.json).
@@ -473,13 +513,13 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
             if number > 0 and (kind not in (DESTROYED, SPAWNED) or objective["timeLimit"] > 0):
                 causes.append(f"the objective {number + 1} of the stage {name} is not a destroyed or a spawned objective with no time limit")
                 continue
-            if kind == WAIT_PARENT and index in manager_order(recipe):
+            if kind == WAIT_PARENT and index in manager_order(recipe) and not recipe.get("mode"):
                 # Stage QG5c5: a WaitForParentObjective of a stage of the manager has no parent that ends it.
                 causes.append(f"the stage {name} waits for its parent, and it is a stage of the manager")
             causes.extend(objective_causes(recipe, label, objective, kind, tracked, below, members, earlier, index))
             if objective.get("failureCondition"):
                 causes.append(f"a failure condition of the stage {label}")
-            if objective.get("background"):
+            if objective.get("background") and not (kind == CUTSCENE and recipe.get("mode")):
                 causes.append(f"a background activation of the stage {label}")
         for action in stage["startActions"] + stage["endActions"]:
             if action["type"] not in ACTIONS:
@@ -529,6 +569,10 @@ def build(sources: Sources) -> dict:
             "unreachable": recipe["unreachable"], "pattern": pattern_label(recipe),
             "refused": causes,
         }
+        if recipe.get("mode"):
+            entry["mode"] = recipe["mode"]
+            entry["map"] = recipe["map"]
+            entry["daily"] = recipe["daily"]
         season = next((value for folder, value in SEASON_FOLDERS.items() if recipe["slice"].startswith(folder)), None)
         if season is not None:
             entry["season"] = season
@@ -536,10 +580,14 @@ def build(sources: Sources) -> dict:
             refused[cause.split(":")[0] if cause.startswith(("the member ", "the start object ")) else cause.split(" (")[0]] += 1
         out.append(entry)
     counts = dict(counts)
+    instance_objects = sorted(reader.mode_objects, key=lambda entry: (entry["mode"], entry["key"]))
     counts.update(recipes=len(out), taken=sum(1 for entry in out if not entry["refused"]),
+                  instanceRecipes=sum(1 for entry in out if entry.get("mode")),
+                  instanceTaken=sum(1 for entry in out if entry.get("mode") and not entry["refused"]),
+                  instanceObjects=len(instance_objects),
                   members=dict(collections.Counter(member["kind"] for member in members.values())),
                   refusals=dict(refused.most_common()))
-    return {"format": FORMAT, "world": WORLD, "counts": counts, "recipes": out, "members": members}
+    return {"format": FORMAT, "world": WORLD, "counts": counts, "recipes": out, "members": members, "instanceObjects": instance_objects}
 
 
 def main() -> int:

@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 34> codecs{{
+    static constexpr std::array<StateCodec, 35> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -81,6 +81,9 @@ std::span<const StateCodec> player_codecs() {
          nullptr, true},
         // The daily bonuses of the faction missions (stage QG6b): owner only, when the character has a use.
         {world::ComponentKey::gameEvent, kGameEventSlot, kTypeGameEventState, encode_game_event_state, nullptr, true},
+        // The membership in a game mode (stage QG9a): owner only, while the character is in an instance and the empty map after its leave.
+        {world::ComponentKey::gameModeParticipant, kGameModeParticipantSlot, kTypeGameModeParticipantState, encode_game_mode_state, nullptr,
+         true},
     }};
     return codecs;
 }

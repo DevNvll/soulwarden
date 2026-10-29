@@ -241,9 +241,16 @@ void Interactions::register_handler(gamedata::InteractionKind kind, std::uint32_
     m_handlers[{kind, optionId}] = &handler;
 }
 
+void Interactions::register_kind_handler(gamedata::InteractionKind kind, InteractionHandler& handler) {
+    m_kindHandlers[kind] = &handler;
+}
+
 InteractionHandler* Interactions::handler_of(gamedata::InteractionKind kind, std::uint32_t optionId) const {
-    const auto found = m_handlers.find({kind, optionId});
-    return found == m_handlers.end() ? nullptr : found->second;
+    if (const auto found = m_handlers.find({kind, optionId}); found != m_handlers.end()) {
+        return found->second;
+    }
+    const auto byKind = m_kindHandlers.find(kind);
+    return byKind == m_kindHandlers.end() ? nullptr : byKind->second;
 }
 
 Entity* Interactions::find_entity(EntityId id) const {
@@ -308,9 +315,14 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
         return InteractionVerdict::dead;
     }
     if (character.space != kMainSpace) {
-        // Stage DG1: each object of this system is an object of the main world: a character in an instance has no object near it (the
-        // objects of an instance level are stage DG2). The request changes nothing (rule MP-5).
-        return InteractionVerdict::unknownObject;
+        // Stage DG1: each level object of this system is an object of the main world: a character in an instance has no level object near it
+        // (the objects of an instance level are stage DG2). The request changes nothing (rule MP-5). Stage QG9a: a server child of the space
+        // of the character (the exit portal of its instance) is there.
+        const auto child = m_instances.find(request.object.group);
+        const Entity* entity = child != m_instances.end() ? find_entity(child->first) : nullptr;
+        if (entity == nullptr || entity->space != character.space) {
+            return InteractionVerdict::unknownObject;
+        }
     }
     // The reference: a bound of a level object (the reference map of the data), or of a server child (its G is its entity id).
     Site site;
@@ -323,7 +335,9 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
         boundIndex = ref->bound;
         const auto state = m_objects.find(ref->object);
         boundState = state != m_objects.end() ? &state->second.bounds[ref->bound] : nullptr;
-    } else if (const auto found = m_instances.find(request.object.group); found != m_instances.end()) {
+    } else if (const auto found = m_instances.find(request.object.group);
+               found != m_instances.end() && find_entity(found->first) != nullptr && find_entity(found->first)->space == character.space) {
+        // Stage QG9a: a server child of the space of the character (a child of an instance is not there for the main world).
         const Instance& instance = found->second;
         for (std::uint32_t index = 0; index < instance.object.bounds.size(); ++index) {
             if (instance.object.bounds[index].target == request.object.target) {
@@ -397,8 +411,10 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     if (distance_sq(character.position, bound.position) > bound.rangeSq) {
         return InteractionVerdict::tooFar;
     }
-    if (option->requiredLevel > character.progression.level || option->requiredItemCount != 0 || !option->requiredItem.empty()
-        || option->requiredCurrency != 0 || !bound.progression.empty() || bound.progressionRank != 0) {
+    // Stage QG9a [data; live L1]: an option row with a required item and the count 0 asks for no item (the Enter options of the solo trial
+    // entrances name KeyDynasty or KeyAmrine with the count 0: the window of the client shows no item requirement, and it sends the request).
+    if (option->requiredLevel > character.progression.level || option->requiredItemCount != 0 || option->requiredCurrency != 0
+        || !bound.progression.empty() || bound.progressionRank != 0) {
         return InteractionVerdict::requirement;
     }
     for (const std::int32_t required : {option->requiredAchievement, bound.requiredAchievement}) {
@@ -973,14 +989,14 @@ void Interactions::body_removed(EntityId creature) {
 }
 
 Interactions::SpawnedContainer Interactions::spawn_container(std::uint32_t templateIndex, const state::WorldPosition& place, float yawDegrees,
-                                                            const std::string& key) {
+                                                            const std::string& key, SpaceId space) {
     SpawnedContainer result;
     if (!std::isfinite(yawDegrees)) {
         return result;
     }
     const float half = yawDegrees * 3.14159265358979F / 360.0F;
     const gamedata::Rotation rotation{0.0F, 0.0F, std::sin(half), std::cos(half)};
-    result.entity = spawn(templateIndex, place, rotation, key, -1, 0, "", {}, "", -1, 0);
+    result.entity = spawn(templateIndex, place, rotation, key, -1, 0, "", {}, "", -1, 0, space);
     if (result.entity != nullptr) {
         result.generation = m_instances.at(result.entity->id).generation;
     }
@@ -989,7 +1005,8 @@ Interactions::SpawnedContainer Interactions::spawn_container(std::uint32_t templ
 
 Entity* Interactions::spawn(std::uint32_t templateIndex, const state::WorldPosition& place, const gamedata::Rotation& rotation,
                             const std::string& key, std::int64_t spawnedIndex, EntityId parent, const std::string& parentKey,
-                            const std::array<std::uint8_t, 16>& parentActor, const std::string& region, int permissionRule, int depth) {
+                            const std::array<std::uint8_t, 16>& parentActor, const std::string& region, int permissionRule, int depth,
+                            SpaceId space) {
     const gamedata::InteractionData* catalog = data();
     if (catalog == nullptr || templateIndex >= catalog->templates().size() || depth > kChildDepth || !valid_position(place)) {
         return nullptr;
@@ -1016,7 +1033,7 @@ Entity* Interactions::spawn(std::uint32_t templateIndex, const state::WorldPosit
     for (const gamedata::InteractionBound& bound : slice.bounds) {
         body.bounds.push_back(ObjectBound{bound.slot, true, 0});
     }
-    Entity& entity = m_world.spawn_object(body, place);
+    Entity& entity = m_world.spawn_object(body, place, space);
     Instance instance;
     instance.templateIndex = templateIndex;
     instance.generation = ++m_generation;
@@ -1065,7 +1082,7 @@ Entity* Interactions::spawn(std::uint32_t templateIndex, const state::WorldPosit
         const state::WorldPosition childPlace = gamedata::transform_point(place, rotation, child.position);
         const gamedata::Rotation childRotation = gamedata::compose_rotation(rotation, child.rotation);
         Entity* made = spawn(child.templateIndex, childPlace, childRotation, key + "/" + std::to_string(++childNumber), -1, id, parentKey,
-                             parentActor, region, -1, depth + 1);
+                             parentActor, region, -1, depth + 1, space);
         if (made != nullptr) {
             m_instances.at(id).children.push_back(made->id);
         }

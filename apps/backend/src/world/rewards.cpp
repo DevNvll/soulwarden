@@ -415,6 +415,9 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
             refused = "its damage is less than the part of the health of the credit";
         } else if (now - entry.last > timeLimit) {
             refused = "its last hit is older than the time of the credit";
+        } else if (character->space != creature.space) {
+            // Stage QG9a (finding DG1R-R8 of the review of stage DG1): two places of two spaces have no distance.
+            refused = "it is in a different space";
         } else if (character->life.dead) {
             refused = "it is dead";
         } else if (m_world.creatures().behavior().ignores(character->characterId)) {

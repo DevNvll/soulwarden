@@ -126,7 +126,7 @@ names: a stop for them would give no file at all.
 tools/gamedata/check_interactions_tool.py is the check of these rules, with made-up sources.
 
 Output (one line of JSON):
-  {"format": 5, "world": TEXT, "counts": {...}, "excluded": {CAUSE: N, ...},
+  {"format": 6, "world": TEXT, "counts": {...}, "excluded": {CAUSE: N, ...},
    "templates": [{"slice", "asset", "sub", "kind", "root", "slots": {"position", "buildable", "ownership", "vitals", "territory"},
                   "buildableState", "permissionRule", "assembly": {"key", "fee", "entity", "component", "resolved"} or null,
                   "bounds": [{as the bounds of an object, with "entity" (the Interact entity of the slice), "position" in the
@@ -152,13 +152,18 @@ Output (one line of JSON):
                             "clientChild", "spawner", "unresolved", "template"} or {"npc", "direct"},
                 "board" (format 5, a mission board only): {"territory", "provider", "spawner", "territoryId", "claim"},
                 "provider" (stage QG6b, a person with an ObjectiveProvider only: a faction representative): {"communityGoal",
-                            "useTerritoryId", "missionTypes", "pvpDisabled"}}, ...],
+                            "useTerritoryId", "missionTypes", "pvpDisabled"},
+                "entrance" (format 6, stage QG9a, an object of the kind dungeonEntrance only): {"mode", "solo", "slot", "target",
+                            "exit": [X, Y, Z]}}, ...],
    "personsApart" (stage QG4): [{"npc", "cause", "world", "slice", "via": [SLICE, ...], "placement", "unresolved"}, ...],
    "encounterObjects" (stage QG5c2): {SLICE PATH: {"template", "variationSlot", "variant"}, ...}: the start object of each encounter
    recipe of the quests (encounter_recipes.py), a server child of the encounter system, with the slot of its VariationData component and
    the row index of its variant (variationSlot 0: no variation state). A backend of before does not read it.
    "claims" (stage QG6b): {TERRITORY: the ActorId of the Claim landmark of the territory (32 hexadecimal digits), ...}: the provider
-   identity of a faction board and the destination of its missions. A backend of before does not read it.}
+   identity of a faction board and the destination of its missions. A backend of before does not read it.
+   "instanceObjects" (format 6, stage QG9a): {SLICE PATH: template index, ...}: the server children of the mode root slices of the game
+   modes that encounter_recipes.py reads (the exit portal of a story instance, kind dungeonExit), which the instance system of the backend
+   makes in the space of an instance.}
   `key` is the placement UUID (the durable key of the object), `actor` the 32 hexadecimal digits of the actor id,
   `target` and `component` and an option entity 16 hexadecimal digits, `asset` the 32 hexadecimal digits of the slice
   asset id and `sub` its sub id (the metadata state of the record of the object). "options" of a bound are indexes into
@@ -199,7 +204,7 @@ from slice_ids import (BASE_CLASS_FIELDS, COMPONENTS_FIELD, ENTITY_TYPE, ID_FIEL
                        Element, component_id, find_field, id_value)
 
 OUTPUT_NAME = "interaction-data.json"
-FORMAT = 5
+FORMAT = 6
 UI_DATABASE = "sharedassets/genericassets/ui/uidatabase.uidb"
 CRAFTING_STATIONS = "sharedassets/genericassets/craftingstations.craftstationdb"
 # The station slices of the settlements (stage 3.7a, decision D1: the _t2 variant of a master slice whose key has no row).
@@ -247,6 +252,11 @@ SPAWNER_CLASS = uuid.UUID("b52d0d52-99cd-41be-b6f7-d2519c15bf14")
 # Stage QG5a: the GatherableController (gathering.py CONTROLLER_CLASS) and its gatherable row, for a quest object child of a spawner.
 CONTROLLER_CLASS = uuid.UUID("0b382af4-7946-4698-9223-206d1187b612")
 GATHERABLE_ENTRY = field_id("m_gatherableEntryId")
+# Stage QG9a (docs/systems/instances.md): the DungeonEntranceComponent of an entrance of a game mode (slot 3 of
+# 4_1_trial_entrance_questmedea: m_gameMode, m_isSinglePlayerDungeon) and the entity of its exit point (the entity "ExitPoint" of the slice).
+ENTRANCE_MODE = field_id("m_gameMode")
+ENTRANCE_SOLO = field_id("m_isSinglePlayerDungeon")
+EXIT_POINT_NAME = "ExitPoint"
 # Stage QG5a: the variation tables of the quest objects of a gather (gathering.py QUEST_TABLES): a child of a spawner with such a slice and a
 # bound of GatherOption is an object of the file (the client id rule of a child of a level placement, client 0x6160B60).
 QUEST_GATHER_TABLES = ("Gatherable_Quest", "Gatherables_NPCRescue_01", "Gatherable_Quest_AncientGlyph")
@@ -389,6 +399,9 @@ KINDS = (
     ("ToggleDoorOption", "door"), ("TeleportToOtherSideOfDoor", "door"), ("TeleportDoorEnter", "door"),
     ("TeleportDoorExit", "door"),
     ("BedInteractionAnimation", "restFurniture"),
+    # Stage QG9a (format 6, docs/systems/instances.md): the entrance of a game mode (OpenDungeonMenu, then an Enter option of action 72) and
+    # the exit portal of an instance (ExitDungeon, action 74).
+    ("OpenDungeonMenu", "dungeonEntrance"), ("ExitDungeon", "dungeonExit"),
 )
 KIND_OF = dict(KINDS)
 KIND_ORDER = {name: index for index, (name, _) in enumerate(KINDS)}
@@ -905,6 +918,9 @@ class Template:
         self.swap_state = -1
         self.swap_controllers: list[tuple[int, str, int]] = []
         self.npc_entity: int | None = None
+        # Stage QG9a: the DungeonEntranceComponent of an entrance of a game mode: its mode, the solo flag, its entity, its component id, and
+        # its slot (None: the slice has none).
+        self.entrance: dict | None = None
         self.entity_names: dict[int, str] = {}
         entities: dict[int, dict] = {}
         interacts: list[tuple[int, Element]] = []
@@ -1003,6 +1019,14 @@ class Template:
                              "pvpDisabled": flag_of(no_pvp, f"{what}: m_disablePvpMissions") if no_pvp is not None else False}
         if component.type_id in (INSTANCED_LOOT_CLASS, LOOT_DROP_CLASS, DELAYED_EVENT_CLASS, STORAGE_CLASS):
             self._read_loot_part(what, entity_id, name, component)
+        mode = find_field(component, ENTRANCE_MODE)
+        solo = find_field(component, ENTRANCE_SOLO)
+        if mode is not None and solo is not None and self.entrance is None:
+            identifier = component_id(component)
+            if identifier is None:
+                raise Failure(f"{what}: the DungeonEntranceComponent has no component id")
+            self.entrance = {"mode": text_of(mode).strip(), "solo": flag_of(solo, f"{what}: m_isSinglePlayerDungeon"), "entity": entity_id,
+                             "component": identifier, "slot": self._slot(component, what)}
         if component.type_id == CONTROLLER_CLASS:
             self.controller_entries.append(text_of(find_field(component, GATHERABLE_ENTRY)).strip())
         if component.type_id == NPC_CLASS and not self.npc_key:
@@ -1945,6 +1969,18 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 entry = {"key": identifier, "kind": kind, "slice": slice_path, "asset": asset[0].hex(), "sub": asset[1],
                          "actor": actor.hex(), "region": region, "position": object_position, "assembly": assembly_entry(template, k),
                          "bounds": bounds}
+                if template.entrance is not None and kind == "dungeonEntrance":
+                    # Stage QG9a: the entrance of a game mode. Its DungeonEntranceComponent (the target of the result 3094: its instance id
+                    # by the XOR rule plus its component id), the mode of m_gameMode (never the text of the option: the Medea entrance
+                    # offers EnterQuestCaerDun), and its exit point in the world (the entity ExitPoint; none: no member "exit").
+                    entrance = template.entrance
+                    entry["entrance"] = {"mode": entrance["mode"], "solo": entrance["solo"], "slot": entrance["slot"],
+                                         "target": f"{((entrance['entity'] ^ k) + entrance['component']) & 0xFFFFFFFFFFFFFFFF:016x}"}
+                    exit_entity = next((identifier for identifier, name in template.entity_names.items() if name == EXIT_POINT_NAME), None)
+                    if exit_entity is not None and exit_entity in template.matrices:
+                        local = template.matrices[exit_entity]
+                        entry["entrance"]["exit"] = [round(value, 3) for value in apply(matrix, (local[3], local[7], local[11]))]
+                    counts["entrances"] = counts.get("entrances", 0) + 1
                 if template.is_person():
                     # A direct person (stage 2.5c): its NPC component names it.
                     entry["person"] = person_binding(slice_path, template, None)
@@ -2012,6 +2048,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     # index of its selected variant in its variation table (the file row order; static read C: 733 for 04A_Side02_02_EncounterStart_01 of
     # Gatherable_Quest). Without the VariationData state the client shows the mesh of the object but no prompt (live check L3).
     encounter_objects: dict[str, dict] = {}
+    instance_objects: dict[str, int] = {}
     if encounters:
         import encounter_recipes  # noqa: E402 (encounter_recipes imports this module)
         reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog)
@@ -2029,6 +2066,16 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
             elif template.selected_variant:
                 exclude("a variant of a start object with no VariationData slot or no row of its variation table (no variation state)")
             encounter_objects[member["slice"]] = entry
+        # Stage QG9a (format 6, docs/systems/instances.md): the server children of the mode root slices of the story instances
+        # (encounter_recipes.Reader.mode_objects: the exit portal, the checkpoint, the quest gatherable) with an Interact bound and a
+        # PositionInTheWorld component: the instance system of the backend makes them in the space of an instance.
+        for entry in reader.mode_objects:
+            if entry["slice"] in instance_objects or not sources.has(entry["slice"]):
+                continue
+            template = load_template(entry["slice"], child=True)
+            if template.root is None or template.slots["position"] == 0 or not template.bounds:
+                continue
+            instance_objects[entry["slice"]] = template_entry(entry["slice"], None)
     sources.check_complete()
     exclude(CAUSE_DISTRIBUTION, 0)
     # One journal bit for two achievements: the journal cannot tell the pages apart (finding INT-R4).
@@ -2048,6 +2095,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     counts["fixtures"] = len(fixtures)
     counts["lootContainers"] = len(loot_containers)
     counts["encounterObjects"] = len(encounter_objects)
+    counts["instanceObjects"] = len(instance_objects)
     counts["byKind"] = dict(sorted(counts["byKind"].items()))
     counts["byOption"] = dict(sorted(counts["byOption"].items()))
     counts["spawnedByKey"] = {}
@@ -2082,7 +2130,8 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     return {"format": FORMAT, "world": WORLD, "counts": counts, "excluded": dict(sorted(excluded.items())),
             "unresolved": dict(sorted(unresolved.items())), "options": option_list, "achievements": achievement_list,
             "templates": template_list, "spawned": spawned, "fixtures": fixtures, "lootContainers": loot_containers, "objects": objects,
-            "personsApart": apart, "encounterObjects": encounter_objects, "claims": {str(key): value for key, value in claim_map.items()}}
+            "personsApart": apart, "encounterObjects": encounter_objects, "claims": {str(key): value for key, value in claim_map.items()},
+            "instanceObjects": dict(sorted(instance_objects.items()))}
 
 
 def main() -> int:

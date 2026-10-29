@@ -1,8 +1,9 @@
 # Instances and spaces
 
 Read this document before a change of the spaces of the world, the instances (the story instances of the quests and the expeditions),
-the move of a character between two spaces, or the level change of a session in one connection. The wire contracts are in the protocol
-notes (section 4.66, and section 3.5 for the account rule). The world, the entity table, and the interest of a session are in
+the move of a character between two spaces, the level change of a session in one connection, or the entrance, the membership, and the
+leave of a game mode. The wire contracts are in the protocol notes (section 4.66, section 4.67 for the entrance and the membership, and
+section 3.5 for the account rule). The encounter of a mode is in [Encounters](encounters.md). The world, the entity table, and the interest of a session are in
 [World and sessions](world-and-sessions.md); the position rules in [Position](position.md).
 
 ## Start here
@@ -15,6 +16,9 @@ notes (section 4.66, and section 3.5 for the account rule). The world, the entit
 | The game modes (the maps of the instances) and their tool | `gamedata/game_modes.h` (`GameModes`, `GameMap`), `tools/gamedata/game-modes.sh` (`game_modes.py`, `check_game_modes_tool.py`), game data `game-modes.json`, [Game data](../development/game-data.md), test case IN3 |
 | The commands | `server/http/instance_commands.cpp`, `server/http/character_commands.h` (`enter_instance`, `return_instance`, `instances_json`, `game_maps_json`), the development routes `/v1/dev/world/instance/enter`, `/v1/dev/world/instance/return`, `/v1/dev/world/instances`, `/v1/dev/world/game-maps`, `tools/world instance` |
 | Two sessions (MP-10), the scans of the systems, the load | Test cases IN8, IN9, IN10, IL1 |
+| The entrance of a game mode, the result 3094, the exit portal, the empty timer (stage QG9a) | `world/instances.cpp` (`EntranceHandler`, `ExitHandler`, `Instances::entrance_result`, `enter_mode`, `in_mode`, `start_content`, `member_gone`, `content_succeeded`, `dungeon_result`), `gamedata/interaction_data.h` (`DungeonEntrance`, kinds `dungeonEntrance` and `dungeonExit`, `instance_object`), `server/rep/instance_messages.h`, test cases SI1, SI6, SI7 (`tests/story_instance_tests.cpp`) |
+| The GameModeParticipant state, the leave 3309 and 1980, TaskGameMode (stage QG9a) | `world/entity.h` (`GameModeMembership`), `Instances::membership_changed`, `server/rep/states/game_mode_state.cpp`, `RepSession::handle_game_mode_request`, `world/quests.cpp` (`task_type::kGameMode`, `mode_changed`), test cases SI2, SI3, SI6 |
+| The corrections of the code review of stage DG1 (the paths that cross two spaces) | `tests/review_dg1_tests.cpp` (cases DG1R1 to DG1R8), the section "The paths across two spaces" below |
 
 ## Rules
 
@@ -85,7 +89,8 @@ agent of stage DG1 where the client and the data do not decide, [orchestrator] a
   character that moved into an instance gets the stop at once, and it keeps its level, its context instance, and its bundle sequence
   (case IN8) [agent; MP-2].
 - The objects of the interaction system (the level objects, the server children, the loot bags) are objects of the main world: a session
-  in an instance observes none of them [agent: the objects of an instance level are stage DG2].
+  in an instance observes none of them [agent: the objects of an instance level are stage DG2]. Stage QG9a: a server child that the
+  instance system makes in the space of an instance (the exit portal of a mode) is an object of that space only [agent].
 
 ### The instance object
 
@@ -108,8 +113,10 @@ agent of stage DG1 where the client and the data do not decide, [orchestrator] a
 - The exit (the development command `instance return`) is one transaction: the position row gets the return place, and the member row
   goes. Then the member goes, and `World::move_to_space` moves the character to its return place in the main world. A refused exit
   changes nothing: the character stays in the instance [agent].
-- An instance with no member ends at once [agent: an instance of this stage has no content; the timeout of an empty instance
-  (TimerThresholdDefault 600 s [data]) is stage DG3].
+- An instance with no content ends at once when its last member goes [agent]. Stage QG9a: an instance with content (the encounter of its
+  mode or its exit portal) waits for TimerThresholdDefault of its mode (600 s [data]) with no member; a former member that enters the mode
+  again in that time joins it (its timer stops), unless its content succeeded; then the entry makes a new instance [agent]. At the end of
+  the time the instance ends with its content (the encounter system ends the runs of the space, then the portal goes).
 - A member that leaves the world with its entity (the end of its session, a removal, a delete, a backend stop that ends the sessions) does
   the exit rows; its next world entry is at its return place in the main world [orchestrator: decision D9; live: a leave to the main menu
   from Amrine, then Play]. A newer session that takes the entity of the character (a session replaced) keeps it in the instance [agent].
@@ -118,10 +125,11 @@ agent of stage DG1 where the client and the data do not decide, [orchestrator] a
   stopped with `kill -9` in Amrine; the next start wrote "instance 3 (DungeonAmrine) of an earlier start ended with the backend stop", and
   the login was at the return place].
 - A respawn in an instance is at the start of its map, in its space [agent: the checkpoints (respawn type 10) are stage DG3].
-- An instance has no content in this stage: no creature, no object, no level data (stage DG2). A creature of a command near a character
-  in an instance is refused (409) [agent].
-- A map whose level is the main world (the story instances in `newworld_vitaeeterna`, for example QuestCaerDun) is an instance with its own
-  space and a level change to the same level text [agent; not checked live: open problem of stage DG1].
+- An instance of a different level has no content: no creature, no object, no level data (stage DG2). A creature of a command near a
+  character in an instance is refused (409) [agent].
+- A map whose level is the main world (the story instances in `newworld_vitaeeterna`, for example QuestMedea) is an instance with its own
+  space and a level change to the same level text [agent; live: stage QG9a]. Its space uses the terrain, the navigation, and the collision
+  data of the main world (`World::main_level`) [agent: the instance has only its own content].
 
 ### The systems in an instance (the global scans)
 
@@ -135,13 +143,76 @@ until the level data of an instance comes (stage DG2) [agent]:
   different space is lost): the space of the creature or of the character;
 - the abilities, the spells, the projectiles, the passive rules, the heart rune, the chain of a perk: the space of the caster, of the
   spell, of the creature, or of the target;
-- the interaction request (a use of an object, a gather, a station, a person): refused in an instance (no object there);
+- the interaction request (a use of an object, a gather, a station, a person): in an instance only a server child of the space of the
+  character (the exit portal; stage QG9a);
 - the LootTracker of the chests, the bags of the LootTracker and of the storage map, the discard of an item (refused in an instance: a bag
   is an object of the main world), the proximity quest objects, the place tasks and the trigger tasks of the quests, the location rule of
   a drop, and the territory of a character (`World::territory_of`: 0 in an instance): only the main world.
 
 The full list of the scans and the reason of each one is in the result of stage DG1
 (`~/Games/soulwarden/work/evidence/dungeons/dg1/implement/RESULT.md`, criterion I4).
+
+### The story instances of the main world level (stage QG9a)
+
+The first one is QuestMedea (quest 06A_MSQ_21, the boss Medea in Thornhall). The sources: the static read E of stage QG9a
+(`~/Games/soulwarden/work/evidence/quests/qg9a/implement/static/E/ANSWERS.md`) and the live runs L1 to L5 of stage QG9a.
+
+- The entrance is a level object of the kind `dungeonEntrance` (interaction data format 6, member `entrance`): the mode of its
+  DungeonEntranceComponent (`m_gameMode`; never the text of the option: the Medea entrance offers EnterQuestCaerDun), the solo flag, the
+  slot and the facet target of the component, and its exit point [data; client 0x2FF5720]. OpenDungeonMenu (action 71) is accepted: the
+  client opens its window itself. The Enter option (action 72) runs the checks of `Instances::entrance_result` and sends 3094 [client
+  0x2FFB4F0; live].
+- The checks of the entry, in this order: the map of the mode is there (one map, of that mode); the character is in the main world and in
+  no instance (else 11, GroupAlreadyInDungeon); its level is RequiredLevel of the mode or more; the backend runs the content of the mode
+  (`Encounters::runs_mode`: each instance recipe of the mode is taken by the runner). A refusal is 10 (EntranceActivationFailure) and
+  changes nothing [agent: the client has no value for "content that the server does not run"]. The required item of the Enter option of
+  the data has the count 0: no item [data; live].
+- The success: 3094 with 0, and the entry in the next tick of the world (`World::after`), so that the reply 3743 of the request goes first
+  [agent; live: a move inside the request ends its committed use]. The client sends no 946 before the level change, and the backend needs
+  none [client: E1c; live].
+- A new instance of a mode starts its content after the move of the character (the participants are in the space): the encounter of each
+  instance recipe of the mode waits in the space for a character in its detector (`Encounters::start_space`), and the exit portal of the
+  mode (the server children of the mode root slice, `instanceObjects` of the encounter data, a template of the kind `dungeonExit`) is made
+  in the space at its place of the data [agent: the mode script that spawns it is not in the client]. A recipe of a mode never runs at its
+  placement in the main world [agent].
+- The membership of a character is the instance of its space (`Instances::in_mode`). It is in the entity for the encoder
+  (`Entity::gameModeMembership`: the reserved actor of the instance, its G, the CRCs of the mode and of the map, the entry time) and goes at
+  the leave; the GameModeParticipant state of the owner shows it (protocol notes 4.67) [client 0x32BA3B0, 0x32B78C0; live]. A session
+  stores no instance state.
+- TaskGameMode (task type 54) is done while the character is in the mode of its GameModeID, and never for a task with
+  GameModeMustBeMutated 1 (the backend has no mutation) [client 0x3AD5CC0]. A kill, an event, or an item task with GameModeID counts only
+  in that mode (the matched tasks) [client 0x3AD5CC0; live: the kill task of Medea]. The quest system looks again at the tasks of a
+  character at each change of its membership (the entry, the leave, a new session) [agent].
+- The leave: the exit portal (ExitDungeon, action 74; only a portal of the instance of the character, in its space), 3309 with the key of
+  the membership of the character, and 1980 with the leave event 9BB080D0 [client 0x3273BB0, 0x26FEC60; live: the portal]. Each one is
+  the exit of an instance (its rows, the move to the return place), in the next tick. 3309 with an other key changes nothing [agent].
+- A death in the instance: the respawn is at the start of the map in its space (the rule of stage DG1) [agent; live]. The encounter of the
+  mode resets when its participants are dead or away for its grace time, and starts again at the next character in its detector
+  (the rule of the encounters) [data: the grace time of the recipe; live].
+- The success of the content: when each encounter of the mode in the space succeeded (`Instances::content_succeeded`). The instance keeps
+  its members; a later entry after its success makes a new instance [agent].
+- The cost: each rule reads only the instances, their spaces, and the recipes of their modes (MP-8). The empty timers are in the tick of
+  the instances [agent].
+
+### The paths across two spaces (the code review of stage DG1)
+
+The review of stage DG1 found eight paths that crossed two spaces (`~/Games/soulwarden/work/evidence/dungeons/dg1/code-review/FINDINGS.md`).
+Stage QG9a corrected each one; cases DG1R1 to DG1R8 fail on the tree of stage DG1 [agent]:
+
+- A contact of a creature that waits for its time hits no target in a different space; a cast or a release of a creature ends when its
+  target is in a different space (R1).
+- A cast of a character keeps its space (`Cast::space`): a timed step of the cast in a different space (a volley, a throw, a summon, a heal,
+  an area, a counter) does nothing (R2).
+- A move to a different space resets the LootTracker states of the chests and of the bags, and the quest object trackers are only in the
+  owner record of the main world (R3).
+- The return place of an entry must be a place of a travel, also at the exit (an older row): else the entry or the exit is refused
+  (`badReturnPlace`) (R4).
+- The exit rows of a departure that the database refused try again at each tick and at each world entry; the character does not enter the
+  world while its rows wait (R5).
+- The sight and the line tests of the navigation (`sees`, `line_stop`, `line_ready`) take the space: in a space of a different level
+  nothing stops them (R6).
+- A strike in an instance hits no quest object of the main world (R7).
+- The credit of a kill pays no contributor in a different space (R8).
 
 ## Commands
 
@@ -153,7 +224,8 @@ tools/world instance list                        # the instances, their members,
 tools/world list                                 # each entity with its space (0: the main world) and the line "instances"
 ```
 
-The commands are in the development routes only (the harness gate) until stage DG3 gives the entrance of the game.
+The commands are in the development routes only (the harness gate). Stage QG9a: the entrance of the game enters a solo mode of the main
+world level whose content the backend runs (QuestMedea); the other modes refuse it (result 10).
 
 ## Traps
 
@@ -172,3 +244,12 @@ The commands are in the development routes only (the harness gate) until stage D
   the interest number 1 is the own entity again.
 - The account rule changes the values of a second session of an account: case C1 expects instance 2 for the client of session 1 that
   connects again as session 3 (the next instance of its account), not the instance of the session id.
+- Stage QG9a: the client shows the prompt of the Medea entrance only when the camera looks at it. After a travel the camera can look away;
+  turn the character to the entrance before the key E (live run L1).
+- Stage QG9a: the exit portal needs a hold of the key E (`tools/hx 'key 0x45 900'`); a short press sends nothing.
+- Stage QG9a: a travel to the platform of the Medea fight (z 57) can put the character below the floor; the fight then fails and resets.
+  Walk in from the start of the map.
+- Stage QG9a: the leave button of the escape menu of the client was empty in the live runs (no text, nothing sent). Use the exit portal.
+- Stage QG9a: the handlers of the entrances and of the exit portals are handlers of the kind (`Interactions::register_kind_handler`): the
+  Enter options of the data have many names (EnterQuestCaerDun, EnterDungeonAmrine, ...). A new handler of one option of these kinds
+  comes before the kind handler.

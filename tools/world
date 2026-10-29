@@ -555,7 +555,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         ended = ", the instance ended" if document.get("ended") else ""
         print(f"world: done: instance {instance['id']} (space {instance['space']}, map {instance['map']}, level {instance['level']}), "
               f"{len(instance['members'])} member(s); the character is at {x:.2f} {y:.2f} {z:.2f}{ended}")
-    elif isinstance(document, dict) and "instances" in document and "counts" in document:
+    elif isinstance(document, dict) and "instances" in document and "counts" in document and "links" not in document:
+        # Stage QG9a: the encounter view has "instances" and "counts" too (and "links"): its printer is below.
         print(instances_text(document))
     elif isinstance(document, dict) and "maps" in document and "loaded" in document:
         if not document["loaded"]:

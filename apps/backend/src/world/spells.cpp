@@ -449,7 +449,7 @@ void Spells::summon_shot(Entity& spell, Live& live) {
         }
         const WorldCapsule capsule = capsule_of(entity);
         const float gap = capsule_gap(spell.position, capsule);
-        if (gap > volume->radius || (target != nullptr && gap >= best) || !m_world.navigation().sees(origin, capsule_center(capsule))) {
+        if (gap > volume->radius || (target != nullptr && gap >= best) || !m_world.navigation().sees(origin, capsule_center(capsule), entity.space)) {
             return;
         }
         target = &entity;
@@ -525,7 +525,7 @@ void Spells::trap_step(Entity& spell, Live& live) {
             ++m_counts.looked;
             if (entity.kind == EntityKind::creature && !entity.creature.dead && !entity.creature.immune()
                 && capsule_gap(spell.position, capsule_of(entity)) <= offense->radius
-                && m_world.navigation().sees(eye, capsule_center(capsule_of(entity)))) {
+                && m_world.navigation().sees(eye, capsule_center(capsule_of(entity)), entity.space)) {
                 hit.push_back(entity.id);
             }
         });
@@ -603,7 +603,7 @@ void Spells::aura_step(Entity& spell, Live& live) {
                 && std::fabs(entity.position.z - spell.position.z) <= spell_rules::kHeight && m_world.friendly(*caster, entity)) {
                 state::WorldPosition chest = entity.position;
                 chest.z += 1.5F;
-                if (m_world.navigation().sees(center, chest)) {
+                if (m_world.navigation().sees(center, chest, entity.space)) {
                     inside.insert(entity.id);
                 }
             }
@@ -1155,7 +1155,7 @@ void Spells::strike_sample(Entity& spell, Live& live, WorldClock::time_point sam
                 capsule_of(entity, creatures != nullptr && creatures->player_capsule() ? &*creatures->player_capsule() : nullptr);
             state::WorldPosition middle = capsule_center(capsule);
             middle = {middle.x - back[0], middle.y - back[1], middle.z - back[2]};
-            if (!m_world.navigation().sees(eye, middle)) {
+            if (!m_world.navigation().sees(eye, middle, entity.space)) {
                 return;
             }
         }

@@ -42,6 +42,10 @@ compares the status and the output file of each case:
     is an object that the client makes: the client id of its place (the rule of a person child), the actor G and 8 zero bytes, the XOR
     rule for its bound, and the member board (the slot of its TerritoryInterface, its provider flags, the spawner); it is not in
     "spawned". A board whose provider is not a community board and a board of a client-authoritative spawner are no board object.
+  - stage QG9a (format 6): the entrance of a game mode (a bound with OpenDungeonMenu and an Enter option, a DungeonEntranceComponent
+    with m_gameMode and m_isSinglePlayerDungeon, an entity ExitPoint) is an object of the kind dungeonEntrance with its member entrance:
+    the mode (trimmed), the solo flag, the slot and the facet target of the component (the XOR rule), and the place of the exit point.
+    The made-up game copy has the two game mode tables that the recipe reader of the encounters needs.
 The test program of the backend runs it (cases IT10, IR5, RY6 to RY8, NC1).
 
 Usage: check_interactions_tool.py [WORK_FOLDER] [--review | --review-stations | --persons]
@@ -84,6 +88,10 @@ ROOT, PAGE_ENTITY, INTERACT_COMPONENT = 0x1000, 0x1001, 0x5000
 NO_ENTITY = 0xFFFFFFFF
 # Stage 2.5b: a settlement with a station spawner, the station, its forge, and the keg fixture.
 SETTLEMENT_ID = "0a0b0c0d-0000-4000-8000-000000000005"
+# Stage QG9a: the entrance of a game mode (DungeonEntranceComponent in slot 3, its exit point 4 m to the north).
+ENTRANCE_ID = "0a0b0c0d-0000-4000-8000-000000000006"
+ENTRANCE_SLICE = "slices/test/entrance.dynamicslice"
+ENTRANCE_ROOT, ENTRANCE_BOUND, ENTRANCE_EXIT, ENTRANCE_INTERACT, ENTRANCE_COMPONENT = 0x8000, 0x8001, 0x8002, 0x8100, 0x8200
 SETTLEMENT_SLICE = "slices/test/settlement.dynamicslice"
 STATION_SLICE = "slices/test/station.dynamicslice"
 VISUAL_SLICE = "slices/test/forge.dynamicslice"
@@ -205,6 +213,36 @@ def station_slice(key: str) -> list[Element]:
     ])]
 
 
+def entrance_slice() -> list[Element]:
+    """The entrance of a game mode (stage QG9a, the form of 4_1_trial_entrance_questmedea): the bound with OpenDungeonMenu and an Enter
+    option, the DungeonEntranceComponent (m_gameMode, m_isSinglePlayerDungeon; slot 3), and the entity ExitPoint 4 m to the north."""
+    return [element(None, children=[
+        entity(ENTRANCE_ROOT, "Entrance", [transform(NO_ENTITY, (0.0, 0.0, 0.0))]),
+        entity(ENTRANCE_BOUND, "Interaction", [
+            transform(ENTRANCE_ROOT, (0.0, 1.0, 0.0)),
+            interact(["OpenDungeonMenu", "EnterQuestTest"], slot=2, identifier=ENTRANCE_INTERACT, option_entity=ENTRANCE_BOUND),
+            component(uuid.UUID(int=9), ENTRANCE_COMPONENT, 3, [text("m_gameMode", " Test_Story "), element("m_isSinglePlayerDungeon", b"\x01")])]),
+        entity(ENTRANCE_EXIT, "ExitPoint", [transform(ENTRANCE_ROOT, (0.0, 4.0, 0.0))]),
+    ])]
+
+
+def check_entrance(document: dict) -> bool:
+    """@return True when the entrance is an object of the kind dungeonEntrance with its member entrance (format 6): the mode (trimmed), the
+    solo flag, the slot and the facet target of its DungeonEntranceComponent (the XOR rule), and the place of its exit point."""
+    entrance = next((entry for entry in document["objects"] if entry["key"] == ENTRANCE_ID), None)
+    if entrance is None or entrance["kind"] != "dungeonEntrance" or document.get("format") != tool.FORMAT:
+        return False
+    group = int.from_bytes(bytes.fromhex(entrance["actor"])[:8], "little")
+    k = ENTRANCE_ROOT ^ group
+    target = ((ENTRANCE_BOUND ^ k) + ENTRANCE_COMPONENT) & 0xFFFFFFFFFFFFFFFF
+    member = entrance.get("entrance") or {}
+    exit_place = member.get("exit") or [0.0, 0.0, 0.0]
+    names = [document["options"][index]["name"] for index, _ in entrance["bounds"][0]["options"]]
+    return (member.get("mode") == "Test_Story" and member.get("solo") is True and member.get("slot") == 3 and member.get("target") == f"{target:016x}"
+            and all(abs(a - b) < 1e-3 for a, b in zip(exit_place, (1050.0, 2004.0, 50.0))) and names == ["OpenDungeonMenu", "EnterQuestTest"]
+            and document["counts"].get("entrances") == 1 and all("entrance" not in entry for entry in document["objects"] if entry is not entrance))
+
+
 def board_slice(community: bool) -> list[Element]:
     """The town board (stage QG6a): Position slot 1 on the root; the Interaction entity with the bound (slot 2), the TerritoryInterface
     (slot 3), and the ObjectiveProvider (no slot) with m_isCommunityGoalBoard."""
@@ -307,6 +345,9 @@ class MadeUpSources:
              "rotation": {"x": 0.0, "y": 0.0, "z": math.sqrt(0.5), "w": math.sqrt(0.5)},
              "sliceName": "Slices/Test/Settlement.slice", "sliceAssetId": "{0A0B0C0D-0000-4000-8000-0000000000EE}:2"},
         ]
+        if mode == "entrance":
+            placements.append({"id": ENTRANCE_ID, "worldPosition": {"x": 1050.0, "y": 2000.0, "z": 50.0}, "rotation": {"w": 1.0},
+                               "sliceName": "Slices/Test/Entrance.slice", "sliceAssetId": "{0A0B0C0D-0000-4000-8000-0000000000FF}:2"})
         if mode == "two-slices":
             placements.append(dict(placements[0], sliceName="Slices/Test/Other.slice",
                                    sliceAssetId="{0A0B0C0D-0000-4000-8000-0000000000DD}:2"))
@@ -346,6 +387,7 @@ class MadeUpSources:
                                                                            component(getattr(tool, "POSITION_CLASS", uuid.UUID(int=3)), 0x5100, 1, [])])])],
             KEG_SLICE: keg_slice(),
             BAG_SLICE: bag_slice(mode),
+            ENTRANCE_SLICE: entrance_slice(),
         }
         layer = {"Other": []} if mode == "missing-capitals" else {"Capitals": placements}
         person_achievement = "Lore_unlock_00_Test_Title_02" if mode == "duplicate-bit" else ""
@@ -358,6 +400,11 @@ class MadeUpSources:
             tool.TABLES_FOLDER + "javelindata_achievements.datasheet": sheet("Achievements", tool.ACHIEVEMENT_TABLE_TYPE, [
                 {"AchievementID": "Lore_unlock_00_Test_Title_01", "AchievementIndex": 2032},
                 {"AchievementID": "Lore_unlock_00_Test_Title_02", "AchievementIndex": 2032 if mode == "duplicate-bit" else 2033}]),
+            # Stage QG9a: the game mode tables that the recipe reader of the encounters needs (a solo mode with no mode root slice).
+            tool.TABLES_FOLDER + "javelindata_gamemodes.datasheet": sheet("GameModes", "GameModeData", [
+                {"GameModeId": "Test_Story", "IsSoloTrial": "1"}]),
+            tool.TABLES_FOLDER + "javelindata_gamemodemaps.datasheet": sheet("GameModeMaps", "GameModeMapData", [
+                {"GameModeMapId": "Test_Story", "GameModeId": "Test_Story", "SlicePath": "", "CoatlicueName": "coatlicue/newworld_vitaeeterna"}]),
             tool.CATALOG_PATH: b"made-up",
             UI_DATABASE: b"made-up",
             getattr(tool, "CRAFTING_STATIONS", "made-up/stations"): b"made-up",
@@ -385,7 +432,8 @@ class MadeUpSources:
             return [element(None, children=[option_row("ReadLore", 47, True), option_row("AddLoreToJournal", 50, False),
                                             option_row("OpenConversation", 63, True), option_row("OpenCraftingOption", 20, True),
                                             option_row("Trigger", 33, True, 5.0), option_row("TakeAllOption", 28, True),
-                                            option_row("OpenStorageOption", 26, True), option_row("OpenMissionBoardOption", 51, True)])]
+                                            option_row("OpenStorageOption", 26, True), option_row("OpenMissionBoardOption", 51, True),
+                                            option_row("OpenDungeonMenu", 71, True), option_row("EnterQuestTest", 72, False)])]
         if path == getattr(tool, "CRAFTING_STATIONS", None):
             # The crafting station database: one row (its name and its crafting types).
             return [element(None, children=[element(None, children=[text("Name", "Blacksmith5"),
@@ -427,6 +475,7 @@ CASES = [
     ("bag-shared", False, "a loot container with no player-unique Storage: not a personal bag (stage 3.5b.2)"),
     ("board-not-community", True, "a board whose ObjectiveProvider is not a community board: no board object (stage QG6a)"),
     ("board-client", True, "a board of a client-authoritative spawner: no board object (stage QG6a)"),
+    ("entrance", True, "the entrance of a game mode: the kind dungeonEntrance and its member entrance (stage QG9a, format 6)"),
 ]
 # The cases of the code review of stage 2.5a (--review, case IR5).
 REVIEW_CASES = [
@@ -903,6 +952,8 @@ def main() -> int:
             correct = (not document.get("spawned") and check_board(document) and len(document["fixtures"]) == 1)
         elif correct and mode in ("board-not-community", "board-client"):
             correct = check_station(document) and check_board(document, present=False)
+        elif correct and mode == "entrance":
+            correct = check_entrance(document)
         elif correct and mode == "equal-placement":
             correct = len(stage_25a_objects(document)) == 2 and document["counts"]["placements"] == 6
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""

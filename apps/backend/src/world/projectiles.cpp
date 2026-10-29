@@ -466,7 +466,7 @@ ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, Attack
     state::WorldPosition place = character->position;
     place.z += projectile_rules::kLaunchHeight;
     if (!valid_position(claim.origin) || distance3(claim.origin, character->position) > projectile_rules::kOriginReach
-        || m_world.navigation().line_stop(place, claim.origin)) {
+        || m_world.navigation().line_stop(place, claim.origin, character->space)) {
         return refuse(ShotVerdict::badOrigin);
     }
     const float size = length(claim.direction);
@@ -513,10 +513,10 @@ ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, Attack
             const state::WorldPosition contact = touch ? along(launch.origin, far, *touch) : launch.origin;
             // A wall on the line of the launch before its contact with the capsule stops the shot there (code review of stage
             // 3.3b-S2b, finding F2: a line to the nearest point of the surface can pass beside a corner of the wall).
-            const std::optional<float> wall = touch ? m_world.navigation().line_stop(launch.origin, far) : std::nullopt;
+            const std::optional<float> wall = touch ? m_world.navigation().line_stop(launch.origin, far, target->space) : std::nullopt;
             if (!first || (wall && *wall < *touch) || !valid_position(claim.nearPoint)
                 || distance3(claim.nearPoint, target->position) > projectile_rules::kNearPointRange
-                || m_world.navigation().line_stop(launch.origin, surface_toward(capsule, contact))) {
+                || m_world.navigation().line_stop(launch.origin, surface_toward(capsule, contact), target->space)) {
                 return refuse(ShotVerdict::nearTooFar);
             }
             launch.nearTarget = target->id;
@@ -831,7 +831,8 @@ void Projectiles::pierce_hits(Projectile& projectile, const state::WorldPosition
             continue;
         }
         // The tolerance of a hit does not reach through a wall (the rule of a basic shot, code review of stage 3.3b-S3, finding F6).
-        if (m_world.navigation().line_stop(along(projectile.position, end, *touch), surface_toward(capsule, along(projectile.position, end, *touch)))) {
+        const state::WorldPosition contact = along(projectile.position, end, *touch);
+        if (m_world.navigation().line_stop(contact, surface_toward(capsule, contact), creature->space)) {
             continue;
         }
         touches.emplace_back(*touch, id);
@@ -918,7 +919,7 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
         const state::WorldPosition end = along(projectile.position, next, part);
         // A wall or the ground on the segment (the cells of the navigation data), and the first creature whose capsule the
         // segment touches (the creatures near the segment: the position index).
-        const std::optional<float> wall = m_world.navigation().line_stop(projectile.position, end);
+        const std::optional<float> wall = m_world.navigation().line_stop(projectile.position, end, caster->space);
         const state::WorldPosition middle = along(projectile.position, end, 0.5F);
         const float range = distance3(projectile.position, end) * 0.5F + reach() + attack.radius + projectile_rules::kHitTolerance;
         std::vector<EntityId> candidates;
@@ -948,7 +949,8 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
             }
             // The tolerance of a hit does not reach through a wall (code review of stage 3.3b-S3, finding F6): no wall between the
             // point of the contact and the surface of the capsule.
-            if (m_world.navigation().line_stop(along(projectile.position, end, *touch), surface_toward(capsule, along(projectile.position, end, *touch)))) {
+            const state::WorldPosition contact = along(projectile.position, end, *touch);
+            if (m_world.navigation().line_stop(contact, surface_toward(capsule, contact), creature->space)) {
                 continue;
             }
             first = touch;
@@ -1149,7 +1151,7 @@ bool Projectiles::fly(CreatureFlight& flight, WorldClock::time_point now) {
         // A wall or the ground on the segment, and the first character whose capsule the segment touches (the characters near the
         // segment: the position index; no tolerance: a shot of a creature has the radius of its attack only, a rule of this project).
         ++m_creatureCounts.wallTests;
-        const std::optional<float> wall = m_world.navigation().line_stop(flight.position, end);
+        const std::optional<float> wall = m_world.navigation().line_stop(flight.position, end, creature->space);
         const state::WorldPosition middle = along(flight.position, end, 0.5F);
         const float range = distance3(flight.position, end) * 0.5F + reach + release.radius;
         std::vector<EntityId> candidates;

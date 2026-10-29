@@ -94,6 +94,8 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
   creature type (a nest row has NoExpNoCoin: 0 experience), and the respawn time of its spawner (an area spawner: its two respawn ranges
   [agent]). Live I4: the kill of a "Shoreside Cursed Banner" counts 1 of 8 for `Quest_02792` and gives 79 experience; test case QG5C1B: two
   characters with the credit each get the kill one time.
+- Stage QG9a (finding DG1R-R8 of the review of stage DG1): a credit entry of a character in a different space than the creature pays
+  nothing ("it is in a different space"): two places of two spaces have no distance (case DG1R8) [review].
 - The loot file is complete as a whole (finding F2, case RL2). The backend refuses the file
   (and gives no reward) when a base row names a creature type that the reward modifiers do
   not have or an event that the events do not have, or when the credit data has fewer credit

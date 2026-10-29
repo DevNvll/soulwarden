@@ -248,6 +248,11 @@ enum class ComponentKey {
      * dailyBonusesUsed, the uses of the daily bonus of the faction missions. Owner only.
      */
     gameEvent,
+    /**
+     * Stage QG9a (docs/systems/instances.md): the GameModeParticipant state of a character (slot 24, type 3312): the active game mode of its
+     * instance (field 0 activeGameModes, one entry) and the flag PlayerCanQuit (field 1). Owner only; after a leave the empty map.
+     */
+    gameModeParticipant,
 };
 
 /**
@@ -256,6 +261,24 @@ enum class ComponentKey {
  * `syncReference` changes (apply 0x4905130): the chest system adds one to both at each change. Live check L3 of stage 3.5b.1: the ring
  * of the prompt runs `remaining` / `speed` seconds; the status Done (3) and Failure (2) end the gather in the client.
  */
+/**
+ * Stage QG9a (docs/systems/instances.md, protocol notes 4.67): the membership of a character in the instance of a game mode, as the client
+ * gets it (an entry of activeGameModes of the GameModeParticipant state; static read E2 of stage QG9a: the full replacement 0x32D96E0, the
+ * entry `A:16 G:u64 F:u64 C:u32 M:u32 W:u64 X:u64`). The instance system sets it at the entry and clears it at the leave; a session stores
+ * none.
+ */
+struct GameModeMembership {
+    /** The server-facet reference of the game mode entity of the instance (A, G, F): an actor of the id allocator of the instance. */
+    std::array<std::uint8_t, 16> actor{};
+    std::uint64_t group{0};
+    std::uint64_t facet{0};
+    /** C: the CRC-32 of the lower-case GameModeId (IsInGameMode 0x32BA3B0 compares it); M: of the lower-case GameModeMapId. */
+    std::uint32_t modeCrc{0};
+    std::uint32_t mapCrc{0};
+    /** W: the time of the entry (the synced wall clock, Unix nanoseconds). */
+    std::uint64_t enteredNs{0};
+};
+
 struct GatherProgress {
     /** None 0, Success 1 (the open runs), Failure 2 (a cancel), Done 3 (the completion). */
     std::uint8_t status{0};
@@ -2250,6 +2273,17 @@ struct Entity {
      * empty: an empty list takes the objective off). Only the encounter system changes them.
      */
     std::vector<EntityId> encounterLinks;
+    /**
+     * Stage QG9a: the cutscene of a running cutscene stage of an encounter of the instance of the character that the server granted (6707;
+     * the CRC-32 of its lower-case name; 0: none). Its end (6705) ends that stage (Encounters::cutscene_ended). A value of the world.
+     */
+    std::uint32_t encounterCutscene{0};
+    /**
+     * Stage QG9a: the membership of the character in the instance of a game mode (the GameModeParticipant state), and true after its first
+     * membership in this world entry (the state then sends the empty map at a leave).
+     */
+    std::optional<GameModeMembership> gameModeMembership;
+    bool gameModeKnown{false};
     bool encounterLinked{false};
     /** The items of the loot bag that the character opened (stage 3.5b.2, slot 76): the loot bag system sets them. */
     Bag selectedContainer;

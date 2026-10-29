@@ -77,6 +77,8 @@ m_behaviorTreeAssets (the asset id, 16 bytes, the asset type, the length of the 
   trees-other-folder            a path that is not in sharedassets/ai/behaviortrees the tool stops (Failure)
   trees-cut-length              a length that is not the length of the path         the tool stops (Failure)
 
+Stage QG9a: the made-up game copy has the two game mode tables (MODE_TABLES) that the recipe reader of the encounters needs.
+
 Usage: check_creature_tool.py WORK_FOLDER     status 0: each case gives its result
 """
 
@@ -95,6 +97,15 @@ from unittest.mock import patch
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import creature_data as cd  # noqa: E402
+from check_combat_tool import sheet  # noqa: E402
+
+# Stage QG9a: the game mode tables that the recipe reader of the encounters needs (a solo mode of the main world level with no mode root
+# slice: no instance recipe).
+MODE_TABLES = {cd.TABLES_FOLDER + "javelindata_gamemodes.datasheet": sheet("GameModes", "GameModeData", [
+                   {"GameModeId": "Test_Story", "IsSoloTrial": "1"}]),
+               cd.TABLES_FOLDER + "javelindata_gamemodemaps.datasheet": sheet("GameModeMaps", "GameModeMapData", [
+                   {"GameModeMapId": "Test_Story", "GameModeId": "Test_Story", "SlicePath": "",
+                    "CoatlicueName": "coatlicue/newworld_vitaeeterna"}])}
 
 CASES = ("none", "valid", "empty", "missing-reference", "missing-waypoint", "nonfinite-position", "nonfinite-basis")
 MARK = "the file of an earlier run\n"
@@ -186,6 +197,8 @@ class Sources:
         return [cd.REGIONS_FOLDER + "r_+00_+00/capitals/test/test.metadata"] if suffix == ".metadata" else []
 
     def read(self, path: str) -> bytes:
+        if path in MODE_TABLES:
+            return MODE_TABLES[path]
         if path.endswith(".capitals.json"):
             return json.dumps({"Capitals": [{"id": "check-placement", "worldPosition": {"x": 1000, "y": 1000, "z": 50},
                                             "sliceName": "check-spawner.dynamicslice"}]}).encode()

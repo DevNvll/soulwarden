@@ -113,6 +113,8 @@ The source of each rule is in brackets: game data, client code, live check (the 
 
 - Stage DG1 ([Instances](instances.md)): a bag is an object of the main world. A discard of a character in an instance is refused
   (`notValid`: the items stay), and the LootTracker and the storage map of a character take only the bags of its space [agent].
+- Stage QG9a (finding DG1R-R3 of the review of stage DG1): a move to a different space clears the bag entries of the LootTracker, the
+  storage map, and the selected container of the character (`LootBags::space_changed`; case DG1R3) [review].
 
 ## Commands
 

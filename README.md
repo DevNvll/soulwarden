@@ -126,6 +126,15 @@ This is an independent project with no connection to Amazon Games. The repositor
   or of an encounter that the server does not run, the chests of a place with no shape, the artifacts of season 8, the work orders of a
   crafting quest, and the soul fragments of the lost memories (`Quest_42000`). A faction mission of the old faction cannot be handed in
   after a faction change, and the faction board shows "Daily Bonuses Available 3/3" again at 00:00 UTC with no new open.
+- The first story instance (stage QG9a): "Medea" of the Windsward main story (`06A_MSQ_21`). At the entrance in Thornhall press E, then
+  "Enter" in the window of the game: the loading screen, then your character is alone in the instance (the compass shows the name of the
+  mode). The intro cutscene plays, Medea fights with her frost bolt, the outro plays after her death, and the quest counts the kill. The
+  portal near the start (hold E) takes you back to the place of the entry; then talk to Leovix and hand in the quest at Medea. A death in the instance puts
+  you at its start. If you leave before the end, the instance waits 10 minutes, and the entrance takes you back to the same fight. Not
+  yet: the crystal, the exhaustion, and the summons of Medea (her fight is the frost bolt only), the leave button of the escape menu (use
+  the portal), the other 12 solo instances of the main world (their entrance shows a refusal), and the expeditions. The support list has
+  647 quests now: the 8 rows of `06A_MSQ_21` are supported, and 13 rows of instances that the server does not run are not counted as
+  supported any more.
 - Territory standing (stage QG1). The standing of a territory goes up to rank 300: the points above a rank go to the next rank, and each new rank gives character experience (for example 125 at rank 1 of Windsward) and one standing point ("token"). A quest gives its standing to the territory where you hand it in (the notice shows "+100 Windsward Standing"). Open the map (M), the second tab "Territories": a territory with a free token shows a badge; click it to "Claim your reward" and choose a card (Standing Gain, XP Gain, Gather, Station Fee, Trading Fee, Storage, House Ownership; the house card keeps the token). Standing Gain, XP Gain, and Gather act now while you are in that territory; the other cards are kept for their later systems. The standing, the tokens, and the cards stay after a restart. The Windsward main story goes on after "Feast to Famine" (Marcel Dupont, then Saatvik Agrawal).
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.

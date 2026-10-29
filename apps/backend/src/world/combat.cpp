@@ -911,7 +911,7 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     }
     // Code review of stage QG5c1, finding QG5C1R-R2: a contact through a wall is refused before a path takes a phase, a strike, or a
     // result (the ability contact, the attack graph, and the light or heavy attack below); the rule of the sight of the creatures.
-    if (!m_world.navigation().sees(attacker->position, target->position)) {
+    if (!m_world.navigation().sees(attacker->position, target->position, target->space)) {
         return refuse(HitVerdict::blocked);
     }
     // A contact in the window of a phase of an ability that plays (world/abilities.h): a hit of

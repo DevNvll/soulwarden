@@ -48,6 +48,16 @@ enum class EncounterObjectiveKind : std::uint8_t {
      * makes no task for it (static read D1 of stage QG5c4, 0x7C7DF0); a parent does not wait for it.
      */
     waitParent,
+    /**
+     * Stage QG9a: CutsceneFinishedObjective of an instance recipe (the IGC of a story instance: m_cutsceneName, m_timeLimit, m_succeedOnTimeout):
+     * the stage ends at the end of the cutscene of a participant (6705 after its grant) or at its time limit.
+     */
+    cutscene,
+    /**
+     * Stage QG9a: EncounterEventObjective of an instance recipe (m_eventId Intro_Complete): no slice or table of the client sends the event;
+     * the runner meets it at the start of its stage (a rule of this project).
+     */
+    event,
     /** A class that the runner does not run (the recipe is refused by the tool). */
     other,
 };
@@ -77,6 +87,11 @@ struct EncounterSpawn {
     std::vector<EncounterPlace> locations;
     /** Stage QG5c5: the alias of a spawn of an alias (lower case; `member` is the slice of it that the tool chose). Empty: no alias. */
     std::string alias;
+    /**
+     * Stage QG9a ("skip" of the tool): a start object of an instance recipe that no objective tracks (the crystal of Medea: its role is in the
+     * boss tree, which the client does not have): the runner does not make it.
+     */
+    bool skip{false};
 };
 
 /**
@@ -128,6 +143,11 @@ struct EncounterObjective {
     std::vector<std::string> trackedSlices;
     std::string title;
     std::string description;
+    /** Stage QG9a: the cutscene of a cutscene objective (its text and the CRC-32 of its lower-case text: the u32 of 6703 and 6705). */
+    std::string cutscene;
+    std::uint32_t cutsceneCrc{0};
+    /** Stage QG9a: the event of an event objective (m_eventId). */
+    std::string eventId;
     /** Stage QG5c4: the triggers of an entity-state objective (a character in one of their shapes ends the stage). */
     std::vector<EncounterTrigger> triggers;
     /**
@@ -236,8 +256,32 @@ struct EncounterRecipe {
      * recipe only with its season rule (encounter_rules::kDarknessAtAllTimes).
      */
     std::string season;
+    /**
+     * Stage QG9a (format 2): an instance recipe: the encounter of the mode root slice of a game mode (its GameModeId and its map). It runs only
+     * in an instance of its mode (Encounters::start_space), never at a placement of the main world. Empty: a recipe of the main world.
+     */
+    std::string mode;
+    std::string map;
+    /** Stage QG9a: the daily alternative of the encounter of a mode (the tool refuses it). */
+    bool daily{false};
     /** The causes of the data that the runner does not run (tools/gamedata/encounters.py). Empty: no cause of the data. */
     std::vector<std::string> refused;
+};
+
+/**
+ * Stage QG9a (format 2, the member instanceObjects): an object of the mode root slice of a game mode that is not an encounter (the exit
+ * portal, the fog wall, the checkpoint, the quest gatherable): its mode, its map, its key ("ROOT_PLACEMENT/SPAWNER_ENTITY"), its slice, its
+ * world place and yaw, and m_spawnOnInitialize of its spawner.
+ */
+struct InstanceObject {
+    std::string mode;
+    std::string map;
+    std::string key;
+    std::string slice;
+    std::string spawner;
+    state::WorldPosition position;
+    float yaw{0.0F};
+    bool onInit{false};
 };
 
 /**
@@ -314,6 +358,10 @@ public:
         return m_members;
     }
     [[nodiscard]] const EncounterMember* member(std::string_view slice) const;
+    /** Stage QG9a: the objects of the mode root slices (format 2; a file of format 1 has none). */
+    [[nodiscard]] const std::vector<InstanceObject>& instance_objects() const {
+        return m_instanceObjects;
+    }
 
 private:
     bool fail(std::string cause);
@@ -322,6 +370,7 @@ private:
     std::string m_error;
     std::vector<EncounterRecipe> m_recipes;
     std::vector<EncounterMember> m_members;
+    std::vector<InstanceObject> m_instanceObjects;
     std::map<std::string, std::uint32_t, std::less<>> m_memberIndex;
 };
 

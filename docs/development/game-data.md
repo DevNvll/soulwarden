@@ -687,6 +687,24 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   member `townExcluded` (the enabled town rows whose objective has no row: none in this build); the backend of stage QG8 refuses a file
   whose town buckets miss another enabled town row of the goals Gather, Kill, Explore (finding QG6BR-R1). The file of stage QG6b has every
   town row in a bucket and loads as it is. `tools/release.sh` takes the two changed files.
+- Stage QG9a ([Instances](../systems/instances.md), [Encounters](../systems/encounters.md)) changes three files. Write the three again from
+  one game copy (`tools/gamedata/creatures.sh`, `interactions.sh`, `encounters.sh`): the recipe reader `encounter_recipes.py` needs the
+  game mode tables (`javelindata_gamemodes`, `javelindata_gamemodemaps`) and stops with no file without them.
+  - `encounter-data.json` format 2: the instance recipes (the encounters of the mode root slices of the 13 solo modes of the main world
+    level: IsSoloTrial 1 and CoatlicueName `coatlicue/newworld_vitaeeterna`), each with `mode`, `map`, and `daily`; a spawn can have
+    `skip` (a start object that no objective tracks); an objective can have `cutscene` (CutsceneFinishedObjective) or `eventId`
+    (EncounterEventObjective); the top-level member `instanceObjects` (each server child of a mode root slice: `mode`, `map`, `key`,
+    `slice`, `spawner`, `position`, `yaw`, `onInit`); counts `modeRoots`, `instanceRecipes`, `instanceTaken`, `instanceObjects`. The
+    build: 419 encounters, 88 recipes (64 before), 61 with no cause of the tool (59 before), 24 instance recipes, 2 of them with no cause
+    (QuestMedea, one part of QuestYonas), 113 instance objects. A backend of before refuses the file (format 2).
+  - `interaction-data.json` format 6: the kinds `dungeonEntrance` (OpenDungeonMenu; 42 objects, each with the member `entrance`: `mode`,
+    `solo`, `slot`, `target`, `exit`) and `dungeonExit` (ExitDungeon; 4 templates), and the member `instanceObjects` (`{SLICE: TEMPLATE}`:
+    the 14 server children of the mode root slices with an Interact bound). 177 templates (153 before); the other objects keep their
+    values (44,630). A backend of before refuses the file (format 6).
+  - `creatures.json` (still format 4): the member kinds of the instance recipes (250 member kinds, 213 before; 585 slices, 550 before;
+    4,151 kinds, 4,114 before); the 33,023 spawn points keep their values.
+  `tools/release.sh` takes the three files with the game data folder. The check of the tools: `check_encounters_tool.py` (cases
+  `instance`, `skip`) and `check_interactions_tool.py` (case `entrance`; the made-up game copy has the two game mode tables).
 - Stage QG6b changes `mission-data.json` (the member `rewardModifiers`) and `interaction-data.json` (still format 5: the member `claims`
   and the member `provider` of 63 persons; the other objects keep their values). Write both from one game copy
   (`tools/gamedata/missions.sh`, `interactions.sh`). A backend of stage QG6a reads the two new files and gives the same support manifest

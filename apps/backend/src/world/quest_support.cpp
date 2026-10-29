@@ -195,6 +195,10 @@ std::string reason_kind(const std::string& reason) {
     }
     static const std::vector<std::pair<std::string, std::string>> kinds{
         {"the engine has no evaluator for the task type ", "task: no evaluator for the type "},
+        // Stage QG9a: the game modes that the backend does not run (one class for each cause).
+        {"TaskGameMode with GameModeMustBeMutated", "task: TaskGameMode with GameModeMustBeMutated (no mutation context)"},
+        {"TaskGameMode of the mode ", "task: TaskGameMode of a mode that the backend does not run"},
+        {"the task counts only in the game mode ", "task: a task of a game mode that the backend does not run"},
         {"the location rule (EnforceLocationRequirement)", "task: the location rule with no point of interest shape (EnforceLocationRequirement)"},
         {"no trigger volume of the tag", "task: no trigger volume of its tag"},
         {"no point of interest shape", "task: no point of interest shape of its tags"},
@@ -364,6 +368,12 @@ struct QuestSupport::Index {
     /** The vitals categories and the kill events of the creatures of the spawn points (lower case). */
     std::unordered_set<std::string> killCategories;
     std::unordered_set<std::string> killEvents;
+    /**
+     * Stage QG9a: the modes that the backend runs (lower case GameModeId: an entrance of the interaction data and the content of the
+     * encounter system, Encounters::runs_mode), and the kill categories of the members of the instance recipes of each such mode.
+     */
+    std::unordered_set<std::string> modes;
+    std::unordered_map<std::string, std::unordered_set<std::string>> modeKillCategories;
     /** Stage QG2a: the categories of the quest drops of a kill (the rule of the kill with no id of the base row). */
     std::unordered_set<std::string> dropCategories;
     /** Stage QG6b: the drop categories of the placed creatures whose body can be skinned (a gather drop of a body matches them). */
@@ -567,6 +577,15 @@ void QuestSupport::build() {
     const gamedata::QuestData& data = *index.quests;
     const auto& objectives = data.objectives();
     index.tables.reserve(objectives.size());
+    // Stage QG9a: the modes that the backend runs: an entrance of the interaction data (the kind dungeonEntrance, its m_gameMode) and the
+    // content of the encounter system (Encounters::runs_mode: each instance recipe of the mode that is not a daily alternative is taken).
+    if (const gamedata::InteractionData* interactions = m_world.interactions().data()) {
+        for (const gamedata::InteractionObject& object : interactions->objects()) {
+            if (object.entrance && m_world.encounters().runs_mode(object.entrance->mode)) {
+                index.modes.insert(lower_text(object.entrance->mode));
+            }
+        }
+    }
     index.gives.assign(objectives.size(), {});
     if (const gamedata::ProgressionTables* tables = options.progressionTables; tables != nullptr && tables->loaded()) {
         for (const gamedata::FactionRow& faction : tables->factions()) {
@@ -762,10 +781,22 @@ void QuestSupport::build() {
                 placed[point.kind] = true;
             }
         }
-        // Stage QG5c2: the creature members of the encounter recipes that the runner takes (world/encounters.h) are sources too.
+        // Stage QG5c2: the creature members of the encounter recipes that the runner takes (world/encounters.h) are sources too. Stage
+        // QG9a: an instance recipe only for a mode that the backend runs (its entrance and its content), and its kinds are the kill sources
+        // of the tasks of that mode too.
+        std::vector<std::string> modeOf(creatures->kinds().size());
         for (const EncounterPlacement& placement : m_world.encounters().loaded_placements()) {
             if (!placement.refused.empty()) {
                 continue;
+            }
+            const std::string mode = lower_text(placement.recipe->mode);
+            if (!mode.empty() && index.modes.count(mode) == 0) {
+                continue;
+            }
+            for (const gamedata::CreatureKind* kind : placement.kinds) {
+                if (kind != nullptr && !mode.empty()) {
+                    modeOf[static_cast<std::size_t>(kind - creatures->kinds().data())] = mode;
+                }
             }
             for (const gamedata::CreatureKind* kind : placement.kinds) {
                 if (kind != nullptr) {
@@ -797,6 +828,9 @@ void QuestSupport::build() {
                                                        ? options.lootTables->kill_categories(vitals, kind.vitals, kind.category, false)
                                                        : std::vector<std::string>{lower_text(kind.vitals), lower_text(kind.category)};
             index.killCategories.insert(categories.begin(), categories.end());
+            if (!modeOf[at].empty()) {
+                index.modeKillCategories[modeOf[at]].insert(categories.begin(), categories.end());
+            }
             index.dropCategories.insert(drops.begin(), drops.end());
             // Stage QG6b (GATHERDROP.md): the gather of a skinned body matches a category of its creature too (Gathering::complete).
             // Code review of stage QG6b, finding QG6BR-R6: only a skinning row that the backend gathers (the rule of add_row below: no
@@ -922,6 +956,10 @@ void QuestSupport::build() {
     if (const gamedata::EncounterData* encounters = m_world.encounters().data(); encounters != nullptr) {
         for (const EncounterPlacement& placement : m_world.encounters().loaded_placements()) {
             const gamedata::EncounterRecipe& recipe = *placement.recipe;
+            // Stage QG9a: an instance recipe produces its events only in an instance of a mode that the backend runs.
+            if (!recipe.mode.empty() && index.modes.count(lower_text(recipe.mode)) == 0) {
+                continue;
+            }
             std::vector<std::pair<std::string, std::string>> events;
             std::vector<std::pair<std::uint32_t, std::string>> rows;
             if (!recipe.successEvent.empty()) {
@@ -1516,9 +1554,14 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
         }
         case task_type::kKillContribution: {
             std::string found;
+            // Stage QG9a: a kill task with a GameModeID counts only in that mode: the members of the instance recipes of the mode.
+            const auto modeCategories = index.modeKillCategories.find(lower_text(task.gameMode));
+            const std::unordered_set<std::string>* categories =
+                task.gameMode.empty() ? &index.killCategories
+                                      : (modeCategories != index.modeKillCategories.end() ? &modeCategories->second : nullptr);
             for (const std::string& target : task.targets) {
                 creatures.push_back(target);
-                if (found.empty() && index.killCategories.count(target) != 0) {
+                if (found.empty() && categories != nullptr && categories->count(target) != 0) {
                     found = target;
                 }
             }
@@ -1813,6 +1856,18 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
                 fact.supplier = "the faction choice of the recruitment (3161 with the Faction_Selection service of " + task.itemName + ")";
             }
             break;
+        case task_type::kGameMode:
+            // Stage QG9a (research story-instances.md 2): the membership of an instance of the mode (the entrance of the interaction data,
+            // the content of the encounter system); GameModeMustBeMutated needs a mutation context, which the backend has not.
+            if (task.modeMutated) {
+                block("TaskGameMode with GameModeMustBeMutated: the backend has no mutation context of a game mode");
+            } else if (index.modes.count(lower_text(task.gameMode)) == 0) {
+                block("TaskGameMode of the mode " + task.gameMode + ", which the backend does not run (no entrance or no content of the mode; "
+                      "docs/systems/instances.md)");
+            } else {
+                fact.supplier = "the membership of an instance of the mode " + task.gameMode + " (its entrance)";
+            }
+            break;
         case task_type::kObjective:
             if (data.objective(task.itemName) == nullptr) {
                 block("the quest data has no child objective " + task.itemName);
@@ -1824,6 +1879,11 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
             block("the engine has no evaluator for the task type " + (task.typeName.empty() ? std::to_string(task.type) : task.typeName)
                   + " (a later stage)");
             break;
+        }
+        // Stage QG9a: a task with a GameModeID counts only in that mode (Quests::matched_tasks): a mode that the backend does not run
+        // gives it no fact.
+        if (fact.supported && !task.gameMode.empty() && task.type != task_type::kGameMode && index.modes.count(lower_text(task.gameMode)) == 0) {
+            block("the task counts only in the game mode " + task.gameMode + ", which the backend does not run (docs/systems/instances.md)");
         }
         // Stage QG2a: the location rule of a task (EnforceLocationRequirement with a POITag: the counters, the drops, the possession and the
         // equip tasks progress only in a point of interest of a tag; Quests::matched_tasks, plan_drops, Plan::location_ok). With no shape of

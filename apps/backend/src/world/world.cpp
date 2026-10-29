@@ -432,6 +432,13 @@ void World::whisper(SessionId session, std::uint32_t whisperCrc) {
     }
 }
 
+void World::dungeon_result(SessionId session, std::uint64_t target, std::uint64_t entity, std::uint32_t result) {
+    const auto sink = m_sinks.find(session);
+    if (sink != m_sinks.end() && sink->second != nullptr) {
+        sink->second->dungeon_result(target, entity, result);
+    }
+}
+
 void World::damage_taken(SessionId session, const DamageTaken& damage) {
     const auto sink = m_sinks.find(session);
     if (sink != m_sinks.end() && sink->second != nullptr) {
@@ -466,8 +473,15 @@ EnterResult World::enter(SessionId session,
                          const std::string& characterId,
                          const std::string& personaId) {
     EnterResult result;
-    // Stage DG1: the member rows of an earlier start go first: the row of the character has its return place.
+    // Stage DG1: the member rows of an earlier start go first: the row of the character has its return place. Code review of stage DG1,
+    // finding DG1R-R5: a character whose exit rows still wait for the database does not enter (a later save could be undone by its row).
     m_instances.recover();
+    if (m_instances.exit_pending(characterId)) {
+        log::write("world: character %s does not enter: the exit rows of its departure from an instance wait for the database",
+                   characterId.c_str());
+        result.error = EnterError::unknownCharacter;
+        return result;
+    }
     const auto character = m_store.find_character(characterId);
     if (!character) {
         log::write("world: no character %s in the store: session s%u does not enter", characterId.c_str(), session);
@@ -798,12 +812,14 @@ Entity& World::make_object(const ObjectBody& body, const ActorId& actor, const s
     return entity;
 }
 
-Entity& World::spawn_object(const ObjectBody& body, const state::WorldPosition& position) {
+Entity& World::spawn_object(const ObjectBody& body, const state::WorldPosition& position, SpaceId space) {
     const ActorId actor = m_ids.next(ActorKind::otherEntity);
     Entity& entity = m_entities[entity_group_id(actor)];
     entity.id = entity_group_id(actor);
     entity.actor = actor;
     entity.kind = EntityKind::object;
+    // Stage QG9a: a server child of an instance (the exit portal) is in the space of its instance.
+    entity.space = space;
     entity.object = body;
     entity.name = "object";
     entity.position = position;
@@ -845,7 +861,7 @@ void World::remove_object(EntityId id) {
     }
 }
 
-Entity* World::make_encounter(const EncounterBody& body, const state::WorldPosition& position) {
+Entity* World::make_encounter(const EncounterBody& body, const state::WorldPosition& position, SpaceId space) {
     if (!valid_position(position)) {
         return nullptr;
     }
@@ -854,6 +870,8 @@ Entity* World::make_encounter(const EncounterBody& body, const state::WorldPosit
     entity.id = entity_group_id(actor);
     entity.actor = actor;
     entity.kind = EntityKind::encounter;
+    // Stage QG9a: the root of an encounter of an instance (an instance recipe) is in the space of its instance.
+    entity.space = space;
     entity.encounter = body;
     entity.name = "encounter";
     entity.position = position;
@@ -1112,6 +1130,11 @@ SpaceMoveError World::move_to_space(const std::string& characterId, SpaceId spac
     entity->space = space;
     entity->position = place;
     m_index.insert(entity->id, space, place);
+    // Code review of stage DG1, finding DG1R-R3: the LootTracker of the new space (the chests and the bags of the old space go; the
+    // quest object entries are only for the main world: the encoder) and the storage selection, with no cache of the old place.
+    m_chests.space_changed(*entity);
+    m_lootBags.space_changed(*entity);
+    touch(entity->id, ComponentKey::lootTracker);
     entity->positionEstimated = true;
     entity->moving = false;
     entity->positionRevision = ++m_revision;

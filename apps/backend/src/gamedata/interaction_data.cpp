@@ -26,6 +26,11 @@ constexpr std::uint64_t kFormatPersons = 4;
  * TerritoryInterface component and its ObjectiveProvider), and the slot territory of a template (the stations and the camps have it).
  */
 constexpr std::uint64_t kFormatBoards = 5;
+/**
+ * Format 6 (stage QG9a): format 5, the kinds dungeonEntrance and dungeonExit, the member entrance of an object, and the member
+ * instanceObjects (the server children of the mode root slices of the story instances).
+ */
+constexpr std::uint64_t kFormatEntrances = 6;
 
 constexpr std::pair<const char*, InteractionKind> kKindTexts[] = {
     {"lorePage", InteractionKind::lorePage},
@@ -41,6 +46,8 @@ constexpr std::pair<const char*, InteractionKind> kKindTexts[] = {
     {"restFurniture", InteractionKind::restFurniture},
     {"other", InteractionKind::other},
     {"missionBoard", InteractionKind::missionBoard},
+    {"dungeonEntrance", InteractionKind::dungeonEntrance},
+    {"dungeonExit", InteractionKind::dungeonExit},
 };
 
 std::string lower_ascii(std::string_view text) {
@@ -357,7 +364,31 @@ public:
                 return fail("a bound of the object " + object.key + " is not correct");
             }
         }
-        return assembly(entry, object.assembly) && person(entry, object) && board(entry, object) && person_provider(entry, object);
+        return assembly(entry, object.assembly) && person(entry, object) && board(entry, object) && person_provider(entry, object)
+               && entrance(entry, object);
+    }
+
+    /** Stage QG9a (format 6): the member entrance of an object: {mode, solo, slot, target, exit}. An object of the kind dungeonEntrance has it. */
+    bool entrance(const json& entry, InteractionObject& object) {
+        if (!entry.contains("entrance")) {
+            return object.kind != InteractionKind::dungeonEntrance || fail("the entrance " + object.key + " has no member entrance");
+        }
+        const json& value = entry["entrance"];
+        DungeonEntrance parsed;
+        if (object.kind != InteractionKind::dungeonEntrance || !value.is_object() || !text(value, "mode", parsed.mode) || parsed.mode.empty()
+            || !flag(value, "solo", parsed.solo) || !slot(value, "slot", parsed.slot) || !hex64(value, "target", parsed.target)) {
+            return fail("the entrance of the object " + object.key + " is not {mode, solo, slot, target} of an object of the kind "
+                        "dungeonEntrance");
+        }
+        if (value.contains("exit")) {
+            state::WorldPosition exit;
+            if (!position(value, "exit", exit)) {
+                return false;
+            }
+            parsed.exit = exit;
+        }
+        object.entrance = std::move(parsed);
+        return true;
     }
 
     /** The ObjectiveProvider of a mission board (stage QG6a): {communityGoal, useTerritoryId, missionTypes, pvpDisabled}. */
@@ -605,8 +636,9 @@ bool InteractionData::load(const std::string& path) {
         return false;
     }
     const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kFormatLevel && format != kFormat && format != kFormatContainers && format != kFormatPersons && format != kFormatBoards) {
-        m_error = "the file does not have the format 1, 2, 3, or 4";
+    if (format != kFormatLevel && format != kFormat && format != kFormatContainers && format != kFormatPersons && format != kFormatBoards
+        && format != kFormatEntrances) {
+        m_error = "the file does not have the format 1, 2, 3, 4, 5, or 6";
         return false;
     }
     for (const char* list : {"options", "achievements", "objects"}) {
@@ -838,7 +870,35 @@ bool InteractionData::load(const std::string& path) {
         m_error = cause;
         return false;
     }
+    // Stage QG9a (format 6): the server children of the mode root slices (a slice path to its template; a file of before has none).
+    std::map<std::string, std::uint32_t, std::less<>> instanceObjects;
+    if (document.contains("instanceObjects")) {
+        const json& list = document["instanceObjects"];
+        if (!list.is_object()) {
+            *this = InteractionData{};
+            m_error = "the member instanceObjects is not an object";
+            return false;
+        }
+        for (const auto& [slice, index] : list.items()) {
+            if (!index.is_number_unsigned() || index.get<std::uint64_t>() >= m_templates.size()) {
+                *this = InteractionData{};
+                m_error = "the instance object " + slice + " names a template that the file does not have";
+                return false;
+            }
+            instanceObjects.emplace(lower_ascii(slice), static_cast<std::uint32_t>(index.get<std::uint64_t>()));
+        }
+    }
+    m_instanceObjects = std::move(instanceObjects);
     return true;
+}
+
+std::optional<std::uint32_t> InteractionData::instance_object(std::string_view slice) const {
+    const auto found = m_instanceObjects.find(lower_ascii(slice));
+    return found != m_instanceObjects.end() ? std::optional<std::uint32_t>(found->second) : std::nullopt;
+}
+
+void InteractionData::set_instance_objects(std::map<std::string, std::uint32_t, std::less<>> objects) {
+    m_instanceObjects = std::move(objects);
 }
 
 bool InteractionData::set_encounter_objects(std::map<std::string, EncounterObject, std::less<>> objects) {

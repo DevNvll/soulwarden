@@ -731,6 +731,12 @@ struct Quests::Plan {
             }
             return target >= 1 && static_cast<std::int64_t>(entity.progression.level) >= target ? node.target : 0U;
         }
+        if (task.type == task_type::kGameMode) {
+            // Stage QG9a (research story-instances.md 2; client predicate 0x3AD5CC0, IsInGameMode 0x32BA3B0, activation 0x3B04800, callback
+            // 0x3B07220): satisfied while the character is a member of an instance of the mode of GameModeID (the current membership, not a
+            // victory). GameModeMustBeMutated needs a mutation context, which the backend has not: never satisfied.
+            return !task.modeMutated && owner.m_world.instances().in_mode(entity, task.gameMode) ? node.target : 0U;
+        }
         if (task.type == task_type::kChooseFaction) {
             // Stage QG7: TaskChooseFaction of a recruitment (docs/systems/factions.md): satisfied while the character has the faction of the
             // recruitment of its objective (the faction whose RequiredAchievementId is the completion achievement of the objective), or any
@@ -1498,6 +1504,10 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
             if ((task.type == task_type::kHaveLevel && !trimmed_text(task.itemName).empty()) || task.type == task_type::kChooseFaction) {
                 subscriptions.add("prog", entry);
             }
+            // Stage QG9a: TaskGameMode looks again at a change of the membership of the character (the entry, the leave, a new session).
+            if (task.type == task_type::kGameMode) {
+                subscriptions.add("mode", entry);
+            }
             if (!open) {
                 continue; // The counters and the drops need an Active task.
             }
@@ -2077,6 +2087,7 @@ void Quests::left(const Entity& entity) {
     m_itemsDirty.erase(entity.id);
     m_placesDirty.erase(entity.id);
     m_levelsDirty.erase(entity.id);
+    m_modesDirty.erase(entity.id);
     m_pushDirty.erase(entity.id);
     m_progressionsDirty.erase(entity.id);
     m_rankUpsDirty.erase(entity.id);
@@ -2223,7 +2234,8 @@ void Quests::achievements_changed(Entity& entity) {
     refresh(entity, false, false, true, false, "achievement change");
 }
 
-void Quests::refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause, bool progressions) {
+void Quests::refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause, bool progressions,
+                     bool modes) {
     if (data() == nullptr || !entity.quests.loaded) {
         return;
     }
@@ -2321,6 +2333,9 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
     }
     if (progressions) {
         look("prog"); // Stage QG7: TaskHaveLevel of a categorical progression, TaskChooseFaction.
+    }
+    if (modes) {
+        look("mode"); // Stage QG9a: TaskGameMode.
     }
     // Code review of stage QG5b, finding QG5BR-R2: a task change of this refresh (an item, a place, a level) can change an ObjectiveFlow of an
     // NPA (the task states), thus the indexed achievement waits of the character are settled again too (the fixed point of the plan).
@@ -2755,6 +2770,11 @@ std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> Quests::matc
                     continue; // EnforceLocationRequirement (0x825DAD0): only in the place of the task.
                 }
             }
+            // Stage QG9a: GameModeID of the task (+0x1F0; the mode predicate of the base task 0x3AD5CC0): the fact counts only for a character
+            // that is in the mode now (the kill of Medea_Caster of 06A_MSQ_21_DefeatBoss_defeatMedea in QuestMedea).
+            if (!task.gameMode.empty() && (task.modeMutated || !m_world.instances().in_mode(entity, task.gameMode))) {
+                continue;
+            }
             matched.emplace_back(entry, amount);
         }
     }
@@ -3080,6 +3100,12 @@ void Quests::equip_grant(Entity& entity, const std::string& itemId, std::uint32_
     }
 }
 
+void Quests::mode_changed(const Entity& entity) {
+    if (data() != nullptr && entity.quests.loaded) {
+        m_modesDirty.insert(entity.id);
+    }
+}
+
 void Quests::level_changed(const Entity& entity) {
     if (data() != nullptr && entity.quests.loaded) {
         m_levelsDirty.insert(entity.id);
@@ -3383,8 +3409,18 @@ void Quests::died(Entity& entity) {
 
 void Quests::tick() {
     if (m_itemsDirty.empty() && m_placesDirty.empty() && m_levelsDirty.empty() && m_pushDirty.empty() && m_equips.empty()
-        && m_progressionsDirty.empty() && m_rankUpsDirty.empty() && m_selfHandIns.empty() && m_selfHandInRetries.empty()) {
+        && m_progressionsDirty.empty() && m_rankUpsDirty.empty() && m_selfHandIns.empty() && m_selfHandInRetries.empty()
+        && m_modesDirty.empty()) {
         return;
+    }
+    // Stage QG9a: TaskGameMode of the characters whose membership changed.
+    std::set<EntityId> modes;
+    modes.swap(m_modesDirty);
+    for (const EntityId id : modes) {
+        Entity* entity = m_world.find(id);
+        if (entity != nullptr && entity->kind == EntityKind::player) {
+            refresh(*entity, false, false, false, false, "change of the game mode", false, true);
+        }
     }
     // Code review of stage QG7, finding QG7R-R2: the self hand-ins whose retry time of a store failure passed.
     const WorldClock::time_point clockNow = m_world.clock().now();

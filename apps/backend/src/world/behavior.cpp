@@ -507,7 +507,7 @@ void Behavior::sense() {
                 return;
             }
             // A wall between the two stops the vision (the navigation data; with no data nothing stops it).
-            if (!m_world.navigation().sees(creature.position, character->position)) {
+            if (!m_world.navigation().sees(creature.position, character->position, creature.space)) {
                 return;
             }
             ++m_counts.targetsBySight;
@@ -646,7 +646,7 @@ void Behavior::melee(Entity& creature, Entity& target, float seconds, const Mele
     const bool near = away <= stop + 0.05F && level;
     // A wall between the creature and its target stops the attack too: the creature then goes on its path.
     const bool sees = (near || away - stop < data.runSpeed * seconds + behavior_rules::kCrowdRange || away <= reach) && level
-                      && m_world.navigation().sees(creature.position, target.position);
+                      && m_world.navigation().sees(creature.position, target.position, creature.space);
     if (near && sees) {
         turn_to(creature, target.position);
         if (now >= mind.ready) {
@@ -752,7 +752,7 @@ void Behavior::melee(Entity& creature, Entity& target, float seconds, const Mele
         // no way to it. The creature waits at its place (the place nearest to the target), turns
         // to it, and attacks it when it comes into the reach.
         turn_to(creature, target.position);
-        if (away <= reach && level && now >= mind.ready && m_world.navigation().sees(creature.position, target.position)) {
+        if (away <= reach && level && now >= mind.ready && m_world.navigation().sees(creature.position, target.position, creature.space)) {
             start_attack(creature, target, attackIndex, values);
         }
         break;
@@ -1227,6 +1227,10 @@ void Behavior::contact(const PendingContact& pending) {
     Entity* target = fightable(pending.target);
     if (target == nullptr) {
         missed = "the target is not there";
+    } else if (target->space != creature->space) {
+        // Code review of stage DG1, finding DG1R-R1: the target moved to a different space while the attack played (an instance at the
+        // same coordinates): the contact misses it.
+        missed = "the target is in a different space";
     } else {
         away = horizontal_distance(creature->position, target->position);
         if (away > data.reach + behavior_rules::kContactTolerance
@@ -1234,7 +1238,7 @@ void Behavior::contact(const PendingContact& pending) {
             missed = "the target is out of the reach";
         } else if (away > 0.3F && angle_to(creature->position, creature->creature.yaw, target->position) > behavior_rules::kContactAngle) {
             missed = "the target is not in front of the creature";
-        } else if (!m_world.navigation().sees(creature->position, target->position)) {
+        } else if (!m_world.navigation().sees(creature->position, target->position, creature->space)) {
             // A wall stops a contact too: the target can go behind a wall while the attack plays
             // (code review of stage 3.4d, finding F1).
             missed = "a wall is between the creature and its target";
@@ -1314,7 +1318,7 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
         }
     }
     const bool walks = can_walk(creature) && !creature.creature.rooted(now);
-    const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position);
+    const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position, creature.space);
     // A creature that walks into its band from farther walks on to the hold distance (`hold` of its band: some steps of the target
     // need no new walk; stage 3.4f-B, the rule of the research Q3 that the code of stage 3.4f-A did not keep: it stopped at the edge).
     const bool inBand = sees && away <= (mind.closing && walks ? band.hold : band.outer);
@@ -1567,7 +1571,9 @@ void Behavior::release(const PendingRelease& pending) {
         cancelled = "the creature lost the target of the shot";
     }
     Entity* target = cancelled == nullptr ? fightable(pending.target) : nullptr;
-    if (cancelled == nullptr && (target == nullptr || target->kind != EntityKind::player)) {
+    // Code review of stage DG1, finding DG1R-R1: a target in a different space is not there (the release and the cast of an attack that
+    // played while the target moved to an instance).
+    if (cancelled == nullptr && (target == nullptr || target->kind != EntityKind::player || target->space != creature->space)) {
         cancelled = "the target is not there";
     }
     if (cancelled != nullptr) {
@@ -1617,7 +1623,7 @@ bool Behavior::think_area(Entity& creature, Entity& target, float seconds, const
     const float range = area_range(body.areas[area].casts.front());
     const float away = horizontal_distance(creature.position, target.position);
     const float rise = std::fabs(creature.position.z - target.position.z);
-    const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position);
+    const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position, creature.space);
     const float hold = std::max(range - values.holdMargin, behavior_rules::kNearest);
     const bool inRange = sees && away <= (mind.closing && only ? hold : range);
     // The pause after the last attack: the pause of a melee attack (mind.ready), or the repeat of the basic shot (mind.shotReady) when it
@@ -1825,7 +1831,9 @@ void Behavior::cast(const PendingCast& pending) {
         cancelled = "the creature lost the target of the area attack";
     }
     Entity* target = cancelled == nullptr ? fightable(pending.target) : nullptr;
-    if (cancelled == nullptr && (target == nullptr || target->kind != EntityKind::player)) {
+    // Code review of stage DG1, finding DG1R-R1: a target in a different space is not there (the release and the cast of an attack that
+    // played while the target moved to an instance).
+    if (cancelled == nullptr && (target == nullptr || target->kind != EntityKind::player || target->space != creature->space)) {
         cancelled = "the target is not there";
     }
     if (cancelled != nullptr) {

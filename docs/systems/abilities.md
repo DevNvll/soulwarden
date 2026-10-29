@@ -430,6 +430,9 @@ The three bow abilities of the build of the user: Penetrating Shot (`Ability_Bow
   shots (protocol notes 4.22: L1, L3, L7), its rule in `Abilities::plan` with the rows and the
   spells of the data, a test case, and a live video. Do not make a message of the server for
   an ability that is not proved.
+- Stage QG9a (finding DG1R-R2 of the review of stage DG1, [Instances](instances.md)): a cast keeps the space of its press
+  (`Cast::space`). A timed step of the cast whose caster is in a different space now (a shot of a volley, a throw and its return, a
+  summon, a heal, an area, a counter) does nothing, also after the end of the instance (case DG1R2) [review].
 
 ## Commands
 

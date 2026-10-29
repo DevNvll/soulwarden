@@ -444,6 +444,12 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
   world content). The spawn point rule takes the places of the characters of the main world only: a character in an instance makes no
   creature of a point at the same coordinates (case IN10). A creature of a command near a character in an instance is refused (409): the
   creatures of an instance level come with its level data (stage DG2) [agent].
+- Stage QG9a ([Instances](instances.md), [Encounters](encounters.md)): the members of an instance recipe are creatures of the space of the
+  instance (`Creatures::spawn_member` with a space); the spawn points of the main world stay main world content.
+- Stage QG9a: the declared casts (`gamedata::kDeclaredCasts`, creature_data.cpp): a creature slice whose ranged action the creature data
+  does not find as a basic shot (its action is not Cast_One_Projectile) gets its declared action as its basic cast. The one entry:
+  `ai_ww_medea_caster_console` with Spell_Frostbolt [data: the action list of the slice; agent: the crystal, the exhaustion, and the
+  summons of the boss tree are not in the client, a known limit]. Live: Medea casts the frost bolt at the character in the fight.
 
 ## Open points
 

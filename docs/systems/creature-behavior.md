@@ -414,6 +414,8 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 - Stage DG1 ([Instances](instances.md)): the vision, the roam selection, the crowd rule, and the rule "observed" use the space of the
   creature (the position index by space); a target in a different space is lost ("the target went to a different space"; case IN10)
   [agent].
+- Stage QG9a (finding DG1R-R1 of the review of stage DG1): a contact of a creature that waits for its time (a bite, a swing) hits no target
+  in a different space, and a cast or a release of a creature ends when its target is in a different space (case DG1R1) [review].
 
 ## Commands
 

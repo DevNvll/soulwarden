@@ -73,6 +73,7 @@ inline constexpr std::uint32_t kTypeEncounterManagerState = 6786; // the Encount
 inline constexpr std::uint32_t kTypeEncounterStageState = 2133;   // the Encounter component state (stage QG5c2; constructor 0x26E58D0)
 inline constexpr std::uint32_t kTypeVariationState = 14;          // MB::VariationComponentReplicatedState (stage QG5c2; constructor 0x42C5E80)
 inline constexpr std::uint32_t kTypeFactionState = 3152;          // MB::FactionComponentReplicatedState (stage QG7; constructor 0x30A7910)
+inline constexpr std::uint32_t kTypeGameModeParticipantState = 3312; // GameModeParticipant state (stage QG9a; constructor 0x329ACB0)
 inline constexpr std::uint32_t kTypeSocialState = 4176;           // MB::SocialReplicatedState (stage QG7; constructor 0x3ED7110)
 inline constexpr std::uint32_t kTypeObjectiveInteractorState = 3829; // MB::ObjectiveInteractorReplicatedState (stage QG6a; constructor 0x3A1B9E0)
 inline constexpr std::uint32_t kTypeGameEventState = 497; // the GameEvent state (stage QG6b; constructor 0x31E5850)
@@ -142,6 +143,8 @@ inline constexpr std::uint32_t kSeasonsSlot = 73;
 inline constexpr std::uint32_t kFactionSlot = 49;
 /** Stage QG7: the component JavSocial of the entity Social of the player slice (research social.md: slot 55). */
 inline constexpr std::uint32_t kSocialSlot = 55;
+/** Stage QG9a: the GameModeParticipant component of the player slice (slot 24; research expeditions.md, the player components). */
+inline constexpr std::uint32_t kGameModeParticipantSlot = 24;
 /** Stage QG6a: the ObjectiveInteractor component of the player slice (research mission-boards.md 1.1: slot 10, type 3829). */
 inline constexpr std::uint32_t kObjectiveInteractorSlot = 10;
 /** Stage QG6b: the GameEvent component of the player slice (research factions.md 4.4: slot 68, type 497). */
@@ -263,6 +266,11 @@ struct StateCodec {
 [[nodiscard]] std::vector<hub::Bytes> encode_faction_state(const world::Entity& entity, View view, const PartsRequest& request);
 /** Stage QG7: @return The empty Social state of the owner (states/social_state.cpp, type 4176, slot 55): the friend list of the client. */
 [[nodiscard]] hub::Bytes encode_social_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * Stage QG9a: @return The GameModeParticipant state of the owner (states/game_mode_state.cpp, type 3312, slot 24): the active game mode of
+ * the instance of the character and the flag PlayerCanQuit, or the empty map after a leave.
+ */
+[[nodiscard]] hub::Bytes encode_game_mode_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** Stage QG6a: @return The provider state of a character (states/objective_interactor_state.cpp, type 3829, slot 10), owner only. */
 [[nodiscard]] hub::Bytes encode_objective_interactor_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** Stage QG6b: @return The GameEvent state of a character (states/game_event_state.cpp, type 497, slot 68): its daily bonus uses, owner only. */

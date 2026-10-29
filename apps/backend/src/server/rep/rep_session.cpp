@@ -19,6 +19,7 @@
 #include "server/rep/mana_messages.h"
 #include "server/rep/conversation_messages.h"
 #include "server/rep/quest_messages.h"
+#include "server/rep/instance_messages.h"
 #include "server/rep/replication.h"
 #include "server/rep/time_messages.h"
 #include "server/rep/travel_messages.h"
@@ -415,6 +416,14 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
     case kTypeCutsceneEnded:
         check_route(route, type, body, firstOfType);
         handle_cutscene_ended(body);
+        break;
+    case kTypeRequestLeaveGameMode:
+    case kTypeGameModeClientEvent:
+    case kTypeTeleportIntoDungeon:
+        // Stage QG9a: the leave of the instance of a game mode (3309, the client event 1980 of the escape menu and of the dungeon HUD) and
+        // the teleport request of the queue HUD (946: no answer, the entry of a solo trial does not need it).
+        check_route(route, type, body, firstOfType);
+        handle_game_mode_request(type, body);
         break;
     case kTypeCancelCommittedInteraction:
         check_route(route, type, body, firstOfType);
@@ -2028,11 +2037,66 @@ void RepSession::handle_cutscene_ended(std::span<const std::uint8_t> body) {
     send_message(kTypeCutsceneEndFinalized, cutscene_finalized_body(own->id));
     // Stage 1.8b: the end of the granted cutscene of the character completes its task (a 6705 with no started pending cutscene: no change).
     m_world.quests().cutscene_ended(*m_world.find(m_observer.own()));
+    // Stage QG9a: the granted cutscene of a cutscene stage of an encounter of its instance ends that stage.
+    (void)m_world.encounters().cutscene_ended(*m_world.find(m_observer.own()));
     ++m_cutsceneEnds;
     log::write("rep: the client ended a cutscene (type %u): message \"cutscene end request finalized\" (type %u) sent, "
                "the input of the character is free again",
                kTypeCutsceneEnded,
                kTypeCutsceneEndFinalized);
+}
+
+void RepSession::handle_game_mode_request(std::uint32_t type, std::span<const std::uint8_t> body) {
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    if (type == kTypeTeleportIntoDungeon) {
+        // Static read E1c of stage QG9a: the queue HUD sends it at the accept of a dungeon invite (WaitingEntry); a solo trial enters at its
+        // entrance (3094 Success, then the level change). No answer.
+        log::write("rep: the client asks for the teleport into a dungeon (message %u, %zu bytes): no queue of a game mode, no change", type,
+                   body.size());
+        return;
+    }
+    bool leave = false;
+    if (type == kTypeRequestLeaveGameMode) {
+        const std::optional<LeaveGameModeRequest> request = read_leave_game_mode(body);
+        if (!request) {
+            log::write("rep: leave of a game mode (type %u, %zu bytes) does not have the form of the message: no change", type, body.size());
+            return;
+        }
+        if (!own_facet(*own, request->target, request->entity, kGameModeParticipantComponentName, type, "leave of a game mode")) {
+            return;
+        }
+        // The reference is the key of the active game mode of the character (caller 0x32D2A10: the first entry of activeGameModes).
+        const std::optional<world::GameModeMembership>& membership = own->gameModeMembership;
+        if (!membership || request->id != membership->actor || request->first != membership->group || request->second != membership->facet) {
+            log::write("rep: leave of a game mode (type %u) names a game mode that is not the active one of the character: no change", type);
+            return;
+        }
+        leave = true;
+    } else {
+        const std::optional<CutsceneRequest> event = read_cutscene_request(body);
+        if (!event || !own_facet(*own, event->target, event->entity, kGameModeParticipantComponentName, type, "client event of a game mode")) {
+            return;
+        }
+        // The leave event of the escape menu and of the dungeon HUD (SendClientEvent 2612035792 = 9BB080D0; static read E2d of stage QG9a).
+        if (event->cutscene != kGameModeLeaveEvent) {
+            log::write("rep: the client event %08x of a game mode (message %u): no rule, no change", event->cutscene, type);
+            return;
+        }
+        leave = own->gameModeMembership.has_value();
+        if (!leave) {
+            log::write("rep: the leave event of a game mode (message %u) of a character in no game mode: no change", type);
+            return;
+        }
+    }
+    if (leave) {
+        log::write("rep: the client asks to leave its game mode (message %u)", type);
+        m_world.after(std::chrono::milliseconds(0), [characterId = own->characterId](world::World& world) {
+            (void)world.instances().leave(characterId, world::InstanceLeave::request);
+        });
+    }
 }
 
 void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
@@ -2679,6 +2743,13 @@ void RepSession::handle_cutscene_request(std::span<const std::uint8_t> body) {
                    kTypeCutsceneGranted);
         return;
     }
+    // Stage QG9a: the cutscene of a running cutscene stage of an encounter of the instance of the character (the IGC of a story instance).
+    if (m_world.encounters().cutscene_requested(*own, message->cutscene)) {
+        send_message(kTypeCutsceneGranted, cutscene_granted_body(own->id, message->cutscene));
+        log::write("rep: the client asks for the cutscene %08x (message %u): a cutscene stage of its instance, granted (message %u)",
+                   message->cutscene, kTypeRequestStartCutscene, kTypeCutsceneGranted);
+        return;
+    }
     log::write("rep: the client asks for the cutscene %08x (message %u): no task of the character waits for it, no answer", message->cutscene,
                kTypeRequestStartCutscene);
 }
@@ -2730,6 +2801,12 @@ void RepSession::handle_objective_request(std::span<const std::uint8_t> body, st
                world::quest_request_text(request.result), request.detail.empty() ? "" : " (", request.detail.c_str(),
                request.detail.empty() ? "" : ")",
                request.result == world::QuestRequestResult::refused ? (std::string(": ") + world::quest_error_text(request.error)).c_str() : "");
+}
+
+void RepSession::dungeon_result(std::uint64_t target, std::uint64_t entity, std::uint32_t result) {
+    send_message(kTypeDungeonActivateResult, dungeon_result_body(target, entity, result));
+    log::write("rep: the result %u of the entry at the entrance %016llx sent (message %u, target %016llx)", static_cast<unsigned>(result),
+               static_cast<unsigned long long>(entity), kTypeDungeonActivateResult, static_cast<unsigned long long>(target));
 }
 
 void RepSession::whisper(std::uint32_t whisperCrc) {

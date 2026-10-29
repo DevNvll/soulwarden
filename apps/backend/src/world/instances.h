@@ -1,9 +1,13 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "gamedata/game_modes.h"
@@ -31,10 +35,40 @@
 // This stage has no content in an instance (no creature, no object, no level data: stage DG2). The entry is the development command
 // "instance enter" (the development routes, with the harness gate) until stage DG3 gives the entrance of the game.
 
+namespace soulwarden::backend::gamedata {
+struct DungeonEntrance;
+} // namespace soulwarden::backend::gamedata
+
 namespace soulwarden::backend::world {
 
 class World;
 struct Entity;
+class InteractionHandler;
+
+/**
+ * Stage QG9a: the result of an entry request at the entrance of a game mode: the value of eDungeonActivateResponse, the u32 of 3094 (enum
+ * registration 0x54D473F to 0x54D484D; research dungeons.md 3.3). The backend gives Success, and EntranceActivationFailure for each refusal
+ * of a check that has no value of its own [agent].
+ */
+namespace dungeon_result {
+inline constexpr std::uint32_t kSuccess = 0;
+inline constexpr std::uint32_t kSoloGroupFailure = 7;
+inline constexpr std::uint32_t kPendingActivation = 8;
+inline constexpr std::uint32_t kEntranceActivationFailure = 10;
+inline constexpr std::uint32_t kGroupAlreadyInDungeon = 11;
+} // namespace dungeon_result
+
+/** Stage QG9a: why a member left its instance (the log and the counts). */
+enum class InstanceLeave : std::uint8_t {
+    /** The development command "instance return" (and the admin command). */
+    command,
+    /** The exit portal of the instance (ExitDungeon, action 74). */
+    exitPortal,
+    /** The request 3309 of the client (RequestLeaveGameMode). */
+    request,
+};
+
+[[nodiscard]] const char* instance_leave_text(InstanceLeave cause);
 
 /** The level of the main world (the wire constants of the level information, protocol notes 4.1). */
 inline constexpr const char* kMainLevel = "newworld_vitaeeterna";
@@ -74,6 +108,25 @@ struct Instance {
     WorldClock::time_point started{};
     /** The members by character id. */
     std::map<std::string, InstanceMember> members;
+    /**
+     * Stage QG9a: an instance with content (the encounters of its mode, world/encounters.h; its exit portal) and no member: it ends at this
+     * time (TimerThresholdDefault of the mode on the world clock). No value: a member is in it, or it has no content (it ends at once).
+     */
+    std::optional<WorldClock::time_point> emptyUntil;
+    /** Stage QG9a: the characters that left the instance while it has content: an entry of one of them at the entrance joins it again. */
+    std::set<std::string> former;
+    /** Stage QG9a: the content of the mode started in the space (the encounters and the objects of the instance). */
+    bool content{false};
+    /** Stage QG9a: the content of the mode succeeded (each encounter of the mode in the space): no join again of a former member. */
+    bool succeeded{false};
+    /** Stage QG9a: the objects of the instance that the instance system made (the exit portal: server children of the interaction system). */
+    std::vector<EntityId> objects;
+    /**
+     * Stage QG9a: the game mode entity of the instance in the GameModeParticipant state of its members (an actor of the id allocator and G of
+     * it; the backend makes no record of it [agent: the client has no GameMode slice record of the original server to compare]).
+     */
+    std::array<std::uint8_t, 16> modeActor{};
+    EntityId modeEntity{0};
 };
 
 enum class InstanceError {
@@ -95,6 +148,11 @@ enum class InstanceError {
     full,
     /** The database did not accept the rows. Nothing changed. */
     storage,
+    /**
+     * Code review of stage DG1, finding DG1R-R4: the place of the character is not a place of a travel (travel_position: a height below
+     * -99 m, for example): it cannot be a return place. Nothing changed.
+     */
+    badReturnPlace,
 };
 
 [[nodiscard]] const char* instance_error_text(InstanceError error);
@@ -119,11 +177,22 @@ struct InstanceCounts {
     /** Member rows of an earlier start that the recovery put at their return place. */
     std::uint64_t recovered{0};
     std::uint64_t refused{0};
+    /** Stage QG9a: the entry requests at an entrance (accepted and refused), the joins again, the leaves by the portal and by 3309, the
+     *  empty instances that their timer ended. */
+    std::uint64_t entranceRequests{0};
+    std::uint64_t entranceRefused{0};
+    std::uint64_t rejoined{0};
+    std::uint64_t portalLeaves{0};
+    std::uint64_t requestLeaves{0};
+    std::uint64_t emptyEnded{0};
 };
 
 class Instances {
 public:
     Instances(World& world, state::Store& store, const gamedata::GameModes* data);
+    ~Instances();
+    Instances(const Instances&) = delete;
+    Instances& operator=(const Instances&) = delete;
 
     /** @return The game modes, or null when the backend has none. */
     [[nodiscard]] const gamedata::GameModes* data() const {
@@ -143,7 +212,27 @@ public:
      * A character leaves its instance and goes to its return place (the development command "instance return"). The rows of the exit
      * are one transaction; with no commit nothing changes. An instance with no member ends (this stage: an instance has no content).
      */
-    [[nodiscard]] InstanceResult leave(const std::string& characterId);
+    [[nodiscard]] InstanceResult leave(const std::string& characterId, InstanceLeave cause = InstanceLeave::command);
+
+    /**
+     * Stage QG9a: the checks of an entry request at the entrance of a game mode (the handler of the Enter option, action 72): the backend has
+     * the game modes, the mode of the entrance (m_gameMode) has one map, the encounter system runs the content of the mode
+     * (Encounters::runs_mode), the character is in the main world and in no instance, and its level is RequiredLevel of the mode or more.
+     * @return The result of 3094 (dungeon_result).
+     */
+    [[nodiscard]] std::uint32_t entrance_result(const Entity& character, const gamedata::DungeonEntrance& entrance) const;
+    /**
+     * Stage QG9a: the entry of a character at the entrance of a mode: it joins again the empty instance of the mode that it left (the timer
+     * of the instance runs), else it enters a new instance (enter). The checks of entrance_result first.
+     */
+    [[nodiscard]] InstanceResult enter_mode(const std::string& characterId, const std::string& mode);
+    /**
+     * Stage QG9a (the evaluator of TaskGameMode, docs/systems/quests.md): @return True while the character is a member of an instance of the
+     * mode (IsInGameMode 0x32BA3B0 compares the mode CRC of each active game mode; the comparison of the text ignores the case).
+     */
+    [[nodiscard]] bool in_mode(const Entity& character, std::string_view mode) const;
+    /** Stage QG9a: the encounter system reports the success of the content of the instance of a space (the log; the counts). */
+    void content_succeeded(SpaceId space);
 
     /**
      * The entity of a member leaves the world (World::remove_entity: a session that ended, a removal; decision D9): the exit rows, the
@@ -153,9 +242,14 @@ public:
 
     /**
      * The member rows of an earlier start (a backend stop ends each instance): each character goes to its return place, and its row goes,
-     * in one transaction. The first tick and the first world entry call it; later calls do nothing.
+     * in one transaction. Each tick and each world entry call it; after a commit later calls do nothing (code review of stage DG1, finding
+     * DG1R-R5: a refused transaction tries again). The exit rows of a departure that the database refused try again here too.
      */
     void recover();
+    /** Code review of stage DG1, finding DG1R-R5: @return True while the exit rows of a departure of the character wait for the database. */
+    [[nodiscard]] bool exit_pending(const std::string& characterId) const {
+        return m_pendingExits.contains(characterId);
+    }
 
     void tick();
 
@@ -175,6 +269,16 @@ public:
 
 private:
     void end_instance(std::uint64_t id, const char* cause);
+    /** Stage QG9a: a member went from an instance (leave, character_left): the instance ends now, or waits empty for its timer. */
+    void member_gone(Instance& instance, const std::string& characterId, const char* cause);
+    /** Stage QG9a: the content of the mode of a new instance: the encounters of its mode and its objects (the exit portal). */
+    void start_content(Instance& instance);
+    /**
+     * Stage QG9a: the membership of a character changed: its GameModeParticipant state (the entry of its instance, or none) and its
+     * TaskGameMode tasks.
+     */
+    void membership_changed(const std::string& characterId);
+
     /** The exit rows of a member in one transaction: the position row gets the return place, and the member row goes. */
     [[nodiscard]] bool write_exit(const InstanceMember& member);
 
@@ -188,7 +292,12 @@ private:
     std::map<SpaceId, std::uint64_t> m_bySpace;
     std::map<std::string, std::uint64_t> m_byCharacter;
     bool m_recovered{false};
+    /** Code review of stage DG1, finding DG1R-R5: the departures whose exit rows the database refused (they try again in recover). */
+    std::map<std::string, InstanceMember> m_pendingExits;
     InstanceCounts m_counts;
+    /** Stage QG9a: the handlers of the entrance (OpenDungeonMenu, the Enter options) and of the exit portal (ExitDungeon). */
+    std::unique_ptr<InteractionHandler> m_entranceHandler;
+    std::unique_ptr<InteractionHandler> m_exitHandler;
 };
 
 } // namespace soulwarden::backend::world

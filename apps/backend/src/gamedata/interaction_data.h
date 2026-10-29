@@ -55,6 +55,13 @@ enum class InteractionKind : std::uint8_t {
     other,
     /** Stage QG6a: a mission board (the town project board of a settlement: a server child; docs/systems/mission-boards.md). */
     missionBoard,
+    /**
+     * Stage QG9a (format 6, docs/systems/instances.md): the entrance of a game mode (OpenDungeonMenu, action 71, then an Enter option of
+     * action 72), a level object with its DungeonEntranceComponent (the member entrance of the object).
+     */
+    dungeonEntrance,
+    /** Stage QG9a (format 6): the exit portal of an instance (ExitDungeon, action 74), a server child of the instance system. */
+    dungeonExit,
 };
 
 [[nodiscard]] const char* interaction_kind_text(InteractionKind kind);
@@ -215,6 +222,22 @@ struct MissionProvider {
     bool pvpDisabled{false};
 };
 
+/**
+ * Stage QG9a (format 6, the member entrance of an object of the kind dungeonEntrance): the DungeonEntranceComponent of an entrance of a game
+ * mode (4_1_trial_entrance_questmedea: slot 3).
+ */
+struct DungeonEntrance {
+    /** m_gameMode: the GameModeId of the mode (never the text of an option: the Medea entrance offers EnterQuestCaerDun). */
+    std::string mode;
+    /** m_isSinglePlayerDungeon. */
+    bool solo{false};
+    /** The slot of the component and its facet target (the instance id of its entity by the XOR rule plus its component id): 3094 goes there. */
+    std::uint32_t slot{0};
+    std::uint64_t target{0};
+    /** The place of the entity ExitPoint of the slice in the world. No value: the slice has none. */
+    std::optional<state::WorldPosition> exit;
+};
+
 struct InteractionObject {
     /** The placement UUID: the durable key of the object. */
     std::string key;
@@ -245,6 +268,8 @@ struct InteractionObject {
      * the provider identity of the board and the destination of its town missions. No value: the data has none (the actor of the board).
      */
     std::optional<std::array<std::uint8_t, 16>> claim;
+    /** Stage QG9a (format 6): the entrance of a game mode (an object of the kind dungeonEntrance). No value: not an entrance. */
+    std::optional<DungeonEntrance> entrance;
 };
 
 /** A unit quaternion (x, y, z, w): the rotation of a server child. */
@@ -441,6 +466,13 @@ public:
      */
     [[nodiscard]] const EncounterObject* encounter_object(std::string_view slice) const;
     /**
+     * Stage QG9a (format 6, the member instanceObjects): @return The template of a server child of a mode root slice (the exit portal of a
+     * story instance) by its slice path, or no value.
+     */
+    [[nodiscard]] std::optional<std::uint32_t> instance_object(std::string_view slice) const;
+    /** Stage QG9a: sets the server children of the mode root slices (tests; the indexes are not checked). */
+    void set_instance_objects(std::map<std::string, std::uint32_t, std::less<>> objects);
+    /**
      * Sets the start objects (the member encounterObjects; tests). @return False (no change) for an index that is not a template, or a
      * variation slot that is above 4095 or is a slot of an other state of the template.
      */
@@ -520,6 +552,7 @@ private:
     std::map<std::string, LootContainer> m_lootContainers;
     /** Stage QG5c2: the template of each start object of the encounter recipes (the lower-case slice path). */
     std::map<std::string, EncounterObject, std::less<>> m_encounterObjects;
+    std::map<std::string, std::uint32_t, std::less<>> m_instanceObjects;
     /** Stage QG6b: the claim of each territory (the member claims). */
     std::map<std::uint16_t, std::array<std::uint8_t, 16>> m_claims;
     /** Stage QG4: the persons apart, and the lower-case NPC id to their positions. */

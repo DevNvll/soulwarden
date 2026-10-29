@@ -6,6 +6,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -190,6 +191,8 @@ struct EncounterInstance {
     std::uint32_t placement{0};
     std::uint64_t generation{0};
     EntityId root{0};
+    /** Stage QG9a: the space of the instance (an instance recipe runs in the space of an instance of its mode; kMainSpace: the main world). */
+    SpaceId space{kMainSpace};
     EncounterPhase phase{EncounterPhase::waiting};
     /** The position in the stage order of the manager of the stage that runs. */
     std::uint32_t current{0};
@@ -334,6 +337,36 @@ public:
     /** A character left the world: it is no participant, and its link goes with its entity. */
     void character_left(const Entity& character);
 
+    // Stage QG9a (docs/systems/instances.md): the instance recipes, the encounters of the mode root slice of a game mode. They run only in
+    // the space of an instance of their mode, never at a placement of the main world.
+
+    /**
+     * @return True when the runner runs the content of a mode: the mode has an instance recipe that is not a daily alternative, and the
+     *         runner takes each such recipe of the mode (the instance system refuses an entry otherwise: an empty copy of the world).
+     */
+    [[nodiscard]] bool runs_mode(std::string_view mode);
+    /**
+     * The instance system made an instance of a mode in a space: each taken instance recipe of the mode (not a daily alternative) waits in
+     * that space. Its encounter starts when a character of the space is in its detector [agent: the mode script and the AreaBoss trigger of
+     * the mode root that would start it are not in the client]; a failed fight starts again the same way; a success ends the recipe in that
+     * space. @return The number of the recipes of the space.
+     */
+    std::size_t start_space(SpaceId space, std::string_view mode);
+    /** The instance of a space ended: each encounter of the space ends (its members and its root go), and its recipes go. */
+    void end_space(SpaceId space);
+    /** @return True when each instance recipe of a space succeeded (the content of the instance is done). */
+    [[nodiscard]] bool space_done(SpaceId space) const;
+    /**
+     * Stage QG9a: the cutscene `crc` of a running cutscene stage of an instance of the space of the character (6703 of its client): the
+     * session grants it (6707). @return True when such a stage runs.
+     */
+    [[nodiscard]] bool cutscene_requested(Entity& character, std::uint32_t crc);
+    /**
+     * Stage QG9a: the client of the character ended its cutscene (6705, no id): the running cutscene stage of the granted cutscene of the
+     * character (Entity::encounterCutscene) in its instance succeeds. @return True when a stage ended.
+     */
+    bool cutscene_ended(Entity& character);
+
     /** @return The slice of a start object of a running stage (the gathering system: its row and its tag), or null. */
     [[nodiscard]] const std::string* start_object(EntityId object) const;
 
@@ -387,6 +420,8 @@ private:
         aggro,
         /** Stage QG5c3: the end of a member that ends itself (its id in `payout`). */
         memberEnd,
+        /** Stage QG9a: an EncounterEventObjective of an instance recipe is met (the stage in `stage`). */
+        eventMet,
     };
     /**
      * Code review of stage QG5c4, finding QG5C4R-R3: a finder whose quest write the store refused: its attempts, and the tasks that each event
@@ -438,7 +473,9 @@ private:
     void take_due();
     void take_events();
     void update_participants(EncounterInstance& instance);
-    void make_instance(std::uint32_t placement);
+    void make_instance(std::uint32_t placement, SpaceId space = kMainSpace);
+    /** Stage QG9a: the instance recipes of the spaces wait for a character of their space in their detector. */
+    void scan_spaces();
     void activate(EncounterInstance& instance);
     void start_stage(EncounterInstance& instance, std::uint32_t stage);
     void spawn(EncounterInstance& instance, std::uint32_t stage, std::uint32_t spawn);
@@ -501,6 +538,14 @@ private:
     /** The instances by their root entity, and the root of the instance of each live placement. */
     std::map<EntityId, EncounterInstance> m_instances;
     std::unordered_map<std::uint32_t, EntityId> m_live;
+    /**
+     * Stage QG9a: the instance recipes of each space of an instance (their placement indexes), the instance of each (placement, space) that
+     * runs, the (placement, space) pairs whose encounter succeeded (no new instance), and the root of each (placement, generation).
+     */
+    std::map<SpaceId, std::vector<std::uint32_t>> m_spaces;
+    std::map<std::pair<std::uint32_t, SpaceId>, EntityId> m_spaceLive;
+    std::set<std::pair<std::uint32_t, SpaceId>> m_spaceDone;
+    std::map<std::pair<std::uint32_t, std::uint64_t>, EntityId> m_byGeneration;
     /** The members and the start objects of the instances: entity to its placement and generation. */
     std::unordered_map<EntityId, std::pair<std::uint32_t, std::uint64_t>> m_memberOf;
     /** The start objects of the running stages: entity to its member slice. */

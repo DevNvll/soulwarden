@@ -849,6 +849,12 @@ private:
     struct Cast {
         std::uint64_t number{0};
         CastPlan plan;
+        /**
+         * Code review of stage DG1, finding DG1R-R2: the space of the caster at the press. The delayed work of the cast (an area phase, a
+         * summon, a heal, a shot, a counter) acts only while the caster is in this space (a cast of an instance that ended does nothing in
+         * the main world). The paid costs and the cooldown keep their rules.
+         */
+        SpaceId space{kMainSpace};
         std::uint32_t ability{0};
         std::uint32_t table{0};
         EntityId caster{0};

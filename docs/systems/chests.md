@@ -119,6 +119,9 @@ The source of each rule is in brackets: game data, client code, live check (the 
 
 - Stage DG1 ([Instances](instances.md)): the chests are chests of the main world: the LootTracker of a character in an instance has no
   chest entry [agent].
+- Stage QG9a (finding DG1R-R3 of the review of stage DG1): a move to a different space clears the chest entries of the LootTracker of the
+  character (`Chests::space_changed`) and marks the state: the owner record of the new context has none (case DG1R3) [review]. The quest
+  object trackers of the owner record (questObjectTracker, questGatherTracker) are only in the main world (case DG1R7).
 
 ## Commands
 

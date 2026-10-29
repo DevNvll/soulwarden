@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "gamedata/loot_tables.h"
+#include "gamedata/quest_data.h"
 
 namespace soulwarden::backend::gamedata {
 namespace {
@@ -16,6 +17,8 @@ namespace {
 using nlohmann::json;
 
 constexpr std::uint64_t kFormat = 1;
+/** Stage QG9a: format 2: the instance recipes (members mode, map, daily), the spawns that the runner skips, and instanceObjects. */
+constexpr std::uint64_t kFormatInstances = 2;
 // The coordinates of the world (the rule of the other loaders of places).
 constexpr double kMaxCoordinate = 100000.0;
 // Stage QG5c3: the largest radius of a proximity object and the largest size of a detector shape (meters; the data has 35 m and 50 m).
@@ -243,6 +246,8 @@ EncounterObjectiveKind objective_kind(const std::string& type) {
            : type == "SliceSpawnedObjective"             ? EncounterObjectiveKind::spawned
            : type == "EntityActiveStateChangedObjective" ? EncounterObjectiveKind::entityState
            : type == "WaitForParentObjective"            ? EncounterObjectiveKind::waitParent
+           : type == "CutsceneFinishedObjective"         ? EncounterObjectiveKind::cutscene
+           : type == "EncounterEventObjective"           ? EncounterObjectiveKind::event
                                                          : EncounterObjectiveKind::other;
 }
 
@@ -270,6 +275,9 @@ bool read_objective(const json& objective, EncounterObjective& out) {
     out.trackedSlices = lower_list(objective, "trackedSlices");
     out.title = text_of(objective, "title");
     out.description = text_of(objective, "description");
+    out.cutscene = text_of(objective, "cutscene");
+    out.cutsceneCrc = out.cutscene.empty() ? 0 : quest_crc(out.cutscene);
+    out.eventId = text_of(objective, "eventId");
     if (out.kind == EncounterObjectiveKind::entityState && objective.contains("triggers") && objective["triggers"].is_array()) {
         for (const json& item : objective["triggers"]) {
             EncounterTrigger trigger;
@@ -325,8 +333,9 @@ bool EncounterData::load_text(const std::string& text) {
     if (document.is_discarded() || !document.is_object()) {
         return fail("the file is not a JSON object");
     }
-    if (!document.contains("format") || !document["format"].is_number_unsigned() || document["format"].get<std::uint64_t>() != kFormat) {
-        return fail("the file does not have format 1");
+    const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
+    if (format != kFormat && format != kFormatInstances) {
+        return fail("the file does not have format 1 or 2");
     }
     if (!document.contains("recipes") || !document["recipes"].is_array() || !document.contains("members") || !document["members"].is_object()) {
         return fail("the file does not have the members recipes and members");
@@ -408,6 +417,9 @@ bool EncounterData::load_text(const std::string& text) {
         recipe.layer = text_of(entry, "layer");
         recipe.pattern = text_of(entry, "pattern");
         recipe.season = lower_text(text_of(entry, "season"));
+        recipe.mode = text_of(entry, "mode");
+        recipe.map = text_of(entry, "map");
+        recipe.daily = flag_of(entry, "daily");
         if (!hex_bytes(entry.value("asset", json()), recipe.asset) || !whole(entry, "sub", 0xFFFFFFFFULL, sub)
             || !hex_u64(entry.value("root", json()), recipe.root) || !place_of(entry.value("position", json()), recipe.position)
             || !entry.contains("yaw") || !finite_number(entry["yaw"])) {
@@ -563,6 +575,7 @@ bool EncounterData::load_text(const std::string& text) {
                 EncounterSpawn spawn;
                 spawn.member = lower_text(text_of(value, "member"));
                 spawn.alias = lower_text(text_of(value, "alias"));
+                spawn.skip = flag_of(value, "skip");
                 float delay = 0.0F;
                 if (!seconds(value, "delay", delay) || !whole(value, "count", kMaxCount, number)) {
                     return fail(what + ": a spawn of the stage " + stage.name + " has no delay of 0 to an hour or no count of 0 to "
@@ -663,6 +676,27 @@ bool EncounterData::load_text(const std::string& text) {
             }
         }
         m_recipes.push_back(std::move(recipe));
+    }
+    // Stage QG9a (format 2): the objects of the mode root slices.
+    if (document.contains("instanceObjects")) {
+        if (!document["instanceObjects"].is_array()) {
+            return fail("the member instanceObjects is not a list");
+        }
+        for (const json& item : document["instanceObjects"]) {
+            InstanceObject object;
+            object.mode = text_of(item, "mode");
+            object.map = text_of(item, "map");
+            object.key = lower_text(text_of(item, "key"));
+            object.slice = lower_text(text_of(item, "slice"));
+            object.spawner = text_of(item, "spawner");
+            object.onInit = flag_of(item, "onInit");
+            if (object.mode.empty() || object.key.empty() || object.slice.empty() || !place_of(item.value("position", json()), object.position)
+                || !item.contains("yaw") || !finite_number(item["yaw"])) {
+                return fail("an instance object has no mode, key, slice, position, or yaw");
+            }
+            object.yaw = item["yaw"].get<float>();
+            m_instanceObjects.push_back(std::move(object));
+        }
     }
     m_loaded = true;
     return true;

@@ -117,6 +117,11 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
 
 - Stage DG1 ([Instances](instances.md)): the navigation data is the data of the main world: the tiles that the backend keeps are the
   tiles near the characters of the main world; a character in an instance needs none [agent].
+- Stage QG9a: a space of the level of the main world (a story instance of `newworld_vitaeeterna`, `World::main_level`) uses the navigation
+  data of the main world: its characters need tiles, and its creatures walk on them [agent; live: the boss Medea in its arena].
+- Stage QG9a (finding DG1R-R6 of the review of stage DG1): the sight and the line tests (`sees`, `line_stop`, `line_ready`) take the space
+  of their subject. In a space of a different level nothing stops them (the rule of no data); a wall of the main world does not block a
+  heal or a shot there (case DG1R6) [review]. The ground and the slide of a space of a different level are open (stage DG2).
 
 ## Commands
 

@@ -366,11 +366,16 @@ void Navigation::want_around(const state::WorldPosition& position, float distanc
     }
 }
 
+bool Navigation::level_data(SpaceId space) const {
+    return space == kMainSpace || m_world.main_level(space);
+}
+
 void Navigation::update_wanted() {
     const WorldClock::time_point now = m_world.clock().now();
-    // Stage DG1: the navigation data is the data of the main world: a character in an instance needs no tile of it.
+    // Stage DG1: the navigation data is the data of the main world: a character in an instance of a different level needs no tile of it.
+    // Stage QG9a: a story instance of the level of the main world (QuestMedea) uses the navigation of the main world.
     m_world.for_each_character([&](const Entity& character) {
-        if (character.space == kMainSpace) {
+        if (m_world.main_level(character.space)) {
             want_around(character.position, navigation_rules::kKeepDistance, now);
         }
     });
@@ -757,9 +762,9 @@ bool Navigation::walk_segment(const Place& start, const state::WorldPosition& fr
     return at.x == end.x && at.y == end.y && at.floor == end.floor;
 }
 
-bool Navigation::sees(const state::WorldPosition& eye, const state::WorldPosition& target) const {
+bool Navigation::sees(const state::WorldPosition& eye, const state::WorldPosition& target, SpaceId space) const {
     ++m_counts.sightTests;
-    if (!has_data() || !usable(eye) || !usable(target)) {
+    if (!has_data() || !level_data(space) || !usable(eye) || !usable(target)) {
         return true;
     }
     const float cell = m_agent.cell;
@@ -849,16 +854,16 @@ bool Navigation::sees(const state::WorldPosition& eye, const state::WorldPositio
     return true;
 }
 
-bool Navigation::line_ready(const state::WorldPosition& from, const state::WorldPosition& to) {
-    if (!has_data() || !usable(from) || !usable(to)) {
+bool Navigation::line_ready(const state::WorldPosition& from, const state::WorldPosition& to, SpaceId space) {
+    if (!has_data() || !level_data(space) || !usable(from) || !usable(to)) {
         return true;
     }
     return tiles_ready(from, to, 0.0F);
 }
 
-std::optional<float> Navigation::line_stop(const state::WorldPosition& from, const state::WorldPosition& to) const {
+std::optional<float> Navigation::line_stop(const state::WorldPosition& from, const state::WorldPosition& to, SpaceId space) const {
     ++m_counts.lineTests;
-    if (!has_data() || !usable(from) || !usable(to)) {
+    if (!has_data() || !level_data(space) || !usable(from) || !usable(to)) {
         return std::nullopt;
     }
     const float cell = m_agent.cell;

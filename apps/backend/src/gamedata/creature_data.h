@@ -456,6 +456,19 @@ inline constexpr const char* kBasicShotAction = "FireBow";
  * same names (creature_behavior.py, BASIC_RANGED_ACTIONS).
  */
 inline constexpr const char* kBasicCastAction = "Cast_One_Projectile";
+/**
+ * Stage QG9a (docs/systems/creature-behavior.md, a rule of this project): the declared basic cast of a boss slice whose action list has no
+ * kBasicCastAction: the one projectile action of the slice that the creature tool reads (a ranged attack of the file) is its basic cast,
+ * with the band of a caster. The boss trees of the story instances are not in the client (research story-instances.md section 3); the
+ * other actions of the list (Spawn_Crystal, Exhausted, Summon_Minion, Spell_Ice_Storm, Spell_Ice_Spikes of Medea) wait for a later stage.
+ */
+struct DeclaredCast {
+    const char* slice;
+    const char* action;
+};
+inline constexpr DeclaredCast kDeclaredCasts[] = {
+    {"slices/encounters/msq/ai_ww_medea_caster_console.dynamicslice", "Spell_Frostbolt"},
+};
 
 /** One slice of a creature. */
 struct CreatureSlice {

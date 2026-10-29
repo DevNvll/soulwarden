@@ -1129,6 +1129,14 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
                 cast = index;
             }
         }
+        // Stage QG9a: the declared cast of a boss with no basic cast (kDeclaredCasts: Medea of the story instance QuestMedea).
+        for (std::uint32_t index = 0; !cast && index < slice.ranged.size(); ++index) {
+            for (const DeclaredCast& declared : kDeclaredCasts) {
+                if (slice.path == declared.slice && slice.actions[slice.ranged[index].action].name == declared.action) {
+                    cast = index;
+                }
+            }
+        }
         // The cast of a caster (stage 3.4f-B) when the slice has no FireBow.
         if (!slice.basicShot && cast) {
             slice.basicShot = cast;

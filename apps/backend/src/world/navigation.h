@@ -256,22 +256,27 @@ public:
      *         `target` (the two positions are the places of their feet). An object that is
      *         lower than the line does not stop the sight. With no tile of the navigation data
      *         on the line, nothing stops the sight.
+     * @param space The space of the two positions (stage QG9a, finding DG1R-R6 of the review of stage DG1): the data is the data of the
+     *        level of the main world; in a space of a different level nothing stops the sight.
      */
-    [[nodiscard]] bool sees(const state::WorldPosition& eye, const state::WorldPosition& target) const;
+    [[nodiscard]] bool sees(const state::WorldPosition& eye, const state::WorldPosition& target, SpaceId space = kMainSpace) const;
     /**
      * The line of a projectile (stage 3.3b-S3): the straight segment between two points in the air (the exact heights, no
      * eye height), cell by cell, with the same free intervals of the floors as `sees`. A part of the line below the
      * lowest floor of a cell is in the ground.
      * @return The part of the segment (0 to 1) at which it enters the first cell where a solid or the ground stops it. No
-     *         value: nothing stops it (also with no tile of the navigation data on the line, and with no data).
+     *         value: nothing stops it (also with no tile of the navigation data on the line, with no data, and in a space of a
+     *         different level: the rule of `sees`).
      */
-    [[nodiscard]] std::optional<float> line_stop(const state::WorldPosition& from, const state::WorldPosition& to) const;
+    [[nodiscard]] std::optional<float> line_stop(const state::WorldPosition& from,
+                                                 const state::WorldPosition& to,
+                                                 SpaceId space = kMainSpace) const;
     /**
      * Stage 1.8f (code review of stage 1.8e, finding QR8E-R2): @return True when the world has each tile of the navigation data that a
      * segment needs for `line_stop`. A tile that it does not have, or that is on its way, gets a request, and the result is false (the
-     * caller tries again later). No navigation data: true.
+     * caller tries again later). No navigation data, or a space of a different level: true.
      */
-    [[nodiscard]] bool line_ready(const state::WorldPosition& from, const state::WorldPosition& to);
+    [[nodiscard]] bool line_ready(const state::WorldPosition& from, const state::WorldPosition& to, SpaceId space = kMainSpace);
 
     /** The world calls it in each tick: the tiles that are ready, the tiles that the world needs, and the path searches. */
     void tick();
@@ -408,6 +413,8 @@ private:
     void want(std::int32_t tileX, std::int32_t tileY, WorldClock::time_point now);
     void want_around(const state::WorldPosition& position, float distance, WorldClock::time_point now);
     void update_wanted();
+    /** @return True when the navigation data applies to a space: the main world, or a space of the level of the main world (stage QG9a). */
+    [[nodiscard]] bool level_data(SpaceId space) const;
     void insert(std::uint64_t key, std::shared_ptr<const gamedata::NavTile> tile, std::chrono::nanoseconds time);
     void take_loaded();
     void loader_main();

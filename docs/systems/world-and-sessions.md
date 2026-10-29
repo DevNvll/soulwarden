@@ -33,6 +33,9 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   its space. `World::move_to_space` is the one path of a character to a different space; the interest scan of a session uses the space
   of its own entity, and an entity of a different space goes out of its table (the stop). A level change in one connection is
   `RepSession::change_level`.
+- Stage QG9a ([Instances](instances.md)): the GameModeParticipant state of a player (slot 24, type 3312, `ComponentKey::gameModeParticipant`)
+  is owner only: the membership of the character in a game mode (`Entity::gameModeMembership`), from the first entry of a world entry on.
+  `SessionSink::dungeon_result` sends 3094 to the session of a character.
 - The entity table of the world has one entity for each character that is in the world
   (`world/entity.h`). The name, the position, the appearance, the vitals, and each later
   state of a character are in its entity, not in `RepSession`. The world gives each entity

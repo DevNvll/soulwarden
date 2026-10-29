@@ -639,6 +639,11 @@ public:
      */
     void level_changed(const Entity& entity);
     /**
+     * Stage QG9a: the membership of a character in an instance of a game mode changed (Instances: the entry, the leave): its TaskGameMode
+     * tasks look again at the next tick.
+     */
+    void mode_changed(const Entity& entity);
+    /**
      * Stage QG7: a categorical progression of a character changed (Skills::finish: the points or the rank of a faction): its TaskHaveLevel
      * tasks of a progression and its TaskChooseFaction tasks look again at the next tick.
      */
@@ -816,7 +821,8 @@ private:
      * The predicates of the indexed tasks of some kinds (items, places, achievements, stage QG2a: the level) of a character: one plan when one
      * changed.
      */
-    void refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause, bool progressions = false);
+    void refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause, bool progressions = false,
+                 bool modes = false);
     /** Stage QG7: grants the next rank-up row of the faction of a character (next_rank_up) when it is available. */
     void grant_rank_up(Entity& entity);
     /**
@@ -874,6 +880,8 @@ private:
     void schedule_patrol(const Entity& entity);
     /** Stage QG2a: the characters whose level changed, and the characters whose bits changed (the push looks at the next tick). */
     std::set<EntityId> m_levelsDirty;
+    /** Stage QG9a: the characters whose membership in a game mode changed (TaskGameMode). */
+    std::set<EntityId> m_modesDirty;
     std::set<EntityId> m_pushDirty;
     /**
      * Stage QG7: the characters whose categorical progressions or faction changed (TaskHaveLevel of a progression, TaskChooseFaction), whose

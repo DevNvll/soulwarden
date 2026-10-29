@@ -187,6 +187,8 @@ public:
     void interaction_cancelled() override;
     /** Stage 1.8b: the whisper 5070 of a game event of a quest task (world/quests.h). */
     void whisper(std::uint32_t whisperCrc) override;
+    /** Stage QG9a: the result 3094 of an entry request at the entrance of a game mode (world/instances.h). */
+    void dungeon_result(std::uint64_t target, std::uint64_t entity, std::uint32_t result) override;
 
     /** Development aid: the client gets one message with a type and a body of a command (tools/world message). */
     void development_message(std::uint32_t type, const std::vector<std::uint8_t>& body) override;
@@ -465,6 +467,8 @@ private:
      * which the session sends at once.
      */
     void handle_cutscene_ended(std::span<const std::uint8_t> body);
+    /** Stage QG9a: 3309 RequestLeaveGameMode, the client event 1980 (the leave event 9BB080D0), and 946 TeleportIntoDungeon. */
+    void handle_game_mode_request(std::uint32_t type, std::span<const std::uint8_t> body);
     /**
      * The end of an interaction of the client (2473, stage 2.5a): the world ends the committed interaction of the character
      * when the reference is its reference. A body that is not 48 bytes changes nothing.

@@ -291,6 +291,16 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
 - Stage DG1 ([Instances](instances.md)): the objects of this system are objects of the main world. A request of a character in an
   instance is refused (`unknownObject`: no change), the grid of the object entities gives nothing for a different space, and the server
   children of the placements come only for the characters of the main world [agent: the objects of an instance level are stage DG2].
+- Stage QG9a ([Instances](instances.md)): two kinds of the game modes. `dungeonEntrance`: a level object with OpenDungeonMenu (action 71)
+  and an Enter option (action 72), its member `entrance` (interaction data format 6: the mode of its DungeonEntranceComponent, the solo
+  flag, the slot and the facet target of the component, the exit point) [data]. `dungeonExit`: the exit portal of a mode (ExitDungeon,
+  action 74), a template of `instanceObjects` (the server children of the mode root slices) [data]. The instance system has the handler
+  of each option of the two kinds (`register_kind_handler`: the Enter options have many names) [agent].
+- Stage QG9a: a server child that the instance system makes in the space of an instance (`spawn_container` with a space) is an object of
+  that space: a request of a character in an instance is checked only against the server children of its space, and the grid gives it
+  only for that space [agent].
+- Stage QG9a: a required item of an option with the count 0 is no requirement [data: the Enter options of the entrances name a key
+  (KeyDynasty) with RequiredItemCount 0; live: the Medea entrance refused the entry while the backend tested the item].
 
 ## Commands
 

@@ -289,6 +289,8 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
 - Stage DG1 ([Instances](instances.md)): the points of interest, the area shapes, and the trigger volumes are places of the main world.
   A character in an instance is in none of them: a task of a place, a trigger task, an exit task, and the location rule of a drop or an
   event wait until the character is in the main world again; its territory is 0 [agent: the level data of an instance is a later stage].
+- Stage QG9a (finding DG1R-R7 of the review of stage DG1): the destructible quest objects are objects of the main world: a strike of a
+  character in an instance hits none, also at the coordinates of an object (`QuestObjects::strike`; case DG1R7) [review].
 - TaskTriggerGameEvent [client 0x8260AE0; data GameEventData, WhisperData]: the activation applies the game event of KillEnemyType (one
   time) and completes: its whisper (the WhisperId or WhisperID of the event, else the whisper whose GameEvent names it) goes to the client of
   the character as 5070 with the CRC-32 of the lower-case WhisperId, and the AchievementId of the whisper is set; the AchievementId, the
@@ -1162,6 +1164,30 @@ the live checks are in `~/Games/soulwarden/work/evidence/quests/qg8/implement/RE
   recipes (S8), the game event rewards of a gather that the gathering does not pay (the soul fragments of Gather_LostMemory: a collectible
   progression, a standing, an achievement), the rows of an instance or of a raid (the gems and the ice of the Great Cleave, the flowers of
   C10A_M4), and the items with no declared source.
+
+### The game modes of the quests (stage QG9a)
+
+The story instance QuestMedea of quest 06A_MSQ_21 is in [Instances](instances.md) and [Encounters](encounters.md).
+
+- TaskGameMode (task type 54) is done while the character is in the mode of its GameModeID (the membership of `Instances::in_mode`: the
+  instance of the space of the character), and never for a task with GameModeMustBeMutated 1 [client 0x3AD5CC0: the predicate hashes
+  GameModeID and calls IsInGameMode 0x32BA3B0; the mutation flag at +0x2FB; agent: the backend has no mutation]. The quest system looks
+  again at the TaskGameMode tasks of a character at each change of its membership (the entry, the leave, a new session: the subscription
+  key "mode", `Quests::mode_changed`, in the next tick) [agent]. Cases SI3, SI2.
+- A task with GameModeID (a kill, an event, an item task) matches a fact only while the character is in that mode (`matched_tasks`)
+  [client 0x3AD5CC0: the base task predicate gates each task with a mode]. A kill of the same category in the main world does not count
+  for it (case SI3) [live: the kill task of Medea counted the kill in the instance].
+- The support manifest: a task with GameModeID of a mode that the backend runs (a solo mode of the main world level whose instance
+  recipes the runner takes: `Index::modes`) is supported with the rules of its type; its kill task counts the categories of the creature
+  members of the instance recipes of the mode (`Index::modeKillCategories`), not the creatures of the open world. A task with GameModeID
+  of a mode that the backend does not run has the reason "the task counts only in the game mode X, which the backend does not run"
+  [client 0x3AD5CC0; agent]. Before stage QG9a the manifest counted such a kill task with the creatures of the open world: 13 rows of the
+  manifest (the expeditions FM_04_EXP_03a, FM_06_EXP_03, FM_08_EXP_01, FM_16_EXP_14 and its C and S rows, the trials
+  09A_M11_FightMahantaram and 09A_M12_FightMedusa, and the artifact rows Objective_Artifact_Set1_2hBow, _MediumFeet, _MediumLegs,
+  Set2_1hRapier, Set2_2hBow) were supported by mistake; they are not now. The 8 rows of 06A_MSQ_21 are supported now.
+- After the leave of the instance the last task of 06A_MSQ_21 is a topic of Leovix (TaskConversationTopic), and the hand-in is at the
+  person Medea (`NpcDestinationId` 06_Medea03, the person of the swap after the trial) [data; live: 4,000 experience, 7,050 coin units,
+  QuestReward_WW_Shield, 500 standing]. The topic of Leovix needs the achievement of 06A_MSQ_18 (the quest before) [data; live].
 
 ### The corrections of the code review of stage QG8 (in stage DG1)
 

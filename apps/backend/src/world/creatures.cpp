@@ -199,7 +199,8 @@ Entity* Creatures::make(const gamedata::CreatureKind& kind,
                         const state::WorldPosition& position,
                         float yaw,
                         std::optional<std::uint32_t> spawnPoint,
-                        std::uint32_t selector) {
+                        std::uint32_t selector,
+                        SpaceId space) {
     const gamedata::CreatureSlice* body = select_body(*m_data, kind, selector);
     const float health = m_data->health(kind, level);
     if (body == nullptr || !(health > 0.0F)) {
@@ -212,9 +213,9 @@ Entity* Creatures::make(const gamedata::CreatureKind& kind,
     creature.yaw = yaw;
     creature.spawnPoint = spawnPoint;
     creature.madeAt = m_world.clock().now();
-    // Stage DG1: each creature is in the main world (the spawn points, the encounters, and the commands are main world content; the
-    // creatures of an instance level come with stage DG2).
-    Entity& entity = m_world.make_creature(creature, position, health, kMainSpace);
+    // Stage DG1: the spawn points and the commands are main world content (the creatures of an instance level come with stage DG2). Stage
+    // QG9a: a member of an encounter of an instance (world/encounters.h, the instance recipes) is in the space of its instance.
+    Entity& entity = m_world.make_creature(creature, position, health, space);
     m_creatures.insert(entity.id);
     m_counts.largest = std::max(m_counts.largest, m_creatures.size());
     if (body->spawnAction) {
@@ -269,12 +270,12 @@ CreatureResult Creatures::spawn(const std::string& kindId,
 }
 
 Entity* Creatures::spawn_member(const gamedata::CreatureKind& kind, const state::WorldPosition& position, float yaw, std::uint32_t placement,
-                                std::uint64_t generation, const gamedata::PatrolRoute* route) {
+                                std::uint64_t generation, const gamedata::PatrolRoute* route, SpaceId space) {
     if (!has_data() || !valid_position(position) || !std::isfinite(yaw) || !m_data->has_level(kind.level)) {
         return nullptr;
     }
     load_points();
-    Entity* entity = make(kind, kind.level, position, yaw, std::nullopt, m_commandSpawns++);
+    Entity* entity = make(kind, kind.level, position, yaw, std::nullopt, m_commandSpawns++, space);
     if (entity == nullptr) {
         return nullptr;
     }

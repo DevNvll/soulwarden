@@ -247,7 +247,7 @@ void Runes::explode(Entity& start) {
             continue;
         }
         // CheckObstructions: a wall between the character and the creature stops the explosion.
-        if (!m_world.navigation().sees(center, target->position)) {
+        if (!m_world.navigation().sees(center, target->position, target->space)) {
             continue;
         }
         const HitResult result =

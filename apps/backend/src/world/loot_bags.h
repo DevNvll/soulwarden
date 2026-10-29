@@ -267,6 +267,8 @@ public:
      * a short walk; else the bags of the character only.
      */
     void moved(Entity& character);
+    /** Code review of stage DG1, finding DG1R-R3: the character changed its space: its bags and its storage selection of now. */
+    void space_changed(Entity& character);
     /** The world tick: the first one loads the bags of the store; the bags whose end came (the due list). */
     void tick();
 

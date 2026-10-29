@@ -57,7 +57,10 @@ void QuestObjects::refuse(QuestObjectVerdict verdict) {
 
 void QuestObjects::strike(Entity& character, std::uint32_t visit, std::uint32_t strike) {
     const gamedata::QuestObjectData* objects = data();
-    if (objects == nullptr || character.kind != EntityKind::player || character.life.dead || character.positionEstimated) {
+    // Stage QG9a (finding DG1R-R7 of the review of stage DG1): the quest objects are objects of the main world (the rule of `look`): a
+    // strike in an instance hits none, also at the coordinates of an object.
+    if (objects == nullptr || character.kind != EntityKind::player || character.life.dead || character.positionEstimated
+        || character.space != kMainSpace) {
         return;
     }
     ++m_counts.strikes;

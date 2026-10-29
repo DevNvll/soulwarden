@@ -254,6 +254,18 @@ public:
     }
 
     /**
+     * Stage QG9a (docs/systems/instances.md): the result of an entry request of the character of this session at the entrance of a game mode
+     * (eDungeonActivateResponse): the session sends its client the message 3094 (DungeonEntranceClientFacet_OnDungeonActivateResult, the
+     * u32 result) to the DungeonEntrance component of the entrance (`target`, the facet target; `entity`, G of the entrance). A sink with
+     * no client does nothing.
+     */
+    virtual void dungeon_result(std::uint64_t target, std::uint64_t entity, std::uint32_t result) {
+        (void)target;
+        (void)entity;
+        (void)result;
+    }
+
+    /**
      * Development aid (tools/world message): the session sends its client one message with a
      * type and a body of the caller. It is for a live check of a message that has no code yet.
      * A sink with no client does nothing.
@@ -674,6 +686,15 @@ public:
     [[nodiscard]] const SpaceLevel* level_of(SpaceId space) const {
         return m_instances.level_of(space);
     }
+    /**
+     * Stage QG9a: @return True for a space whose level is the level of the main world (the main world and the story instances of
+     * newworld_vitaeeterna): its terrain, navigation, and collision data are the data of the main world (the instance has only its own
+     * content). False for a space of a different level (its level data is stage DG2) and for a space that is not there.
+     */
+    [[nodiscard]] bool main_level(SpaceId space) const {
+        const SpaceLevel* level = level_of(space);
+        return level != nullptr && level->terrain == kMainTerrain;
+    }
     /** @return The instance system (stage DG1, world/instances.h). */
     [[nodiscard]] Instances& instances() {
         return m_instances;
@@ -763,7 +784,7 @@ public:
      * it. Its actor id comes from the id allocator: the client shows the child only after its record (the metadata state and the
      * PositionInTheWorld state of its slice: live check L4). The caller checks the position (valid_position).
      */
-    Entity& spawn_object(const ObjectBody& body, const state::WorldPosition& position);
+    Entity& spawn_object(const ObjectBody& body, const state::WorldPosition& position, SpaceId space = kMainSpace);
     /**
      * Stage QG6a (docs/systems/mission-boards.md): @return The world entity (slices/globalgde.dynamicslice, sub id 2): an object entity
      * with an actor of the id allocator, its metadata state, and the LandClaimManager state (slot 2, type 3086). The first call makes
@@ -781,7 +802,7 @@ public:
      * Makes the root entity of an encounter (stage QG5c2, world/encounters.h): an actor of the id allocator, the body of its recipe, the
      * position index. Only the encounter system calls it. @return Null for a position that is not a position of the world.
      */
-    Entity* make_encounter(const EncounterBody& body, const state::WorldPosition& position);
+    Entity* make_encounter(const EncounterBody& body, const state::WorldPosition& position, SpaceId space = kMainSpace);
     /** Removes the root entity of an encounter: each session that observes it sends the stop. Only the encounter system calls it. */
     void remove_encounter(EntityId id);
 
@@ -887,6 +908,10 @@ public:
      */
     [[nodiscard]] EntityId reserve_id() {
         return entity_group_id(m_ids.next(ActorKind::otherEntity));
+    }
+    /** Stage QG9a: an actor id of the allocator that no entity has (the game mode entity of an instance in the GameModeParticipant state). */
+    [[nodiscard]] ActorId reserve_actor() {
+        return m_ids.next(ActorKind::otherEntity);
     }
 
     /** @return The account of a persona id, from the store. */
@@ -1107,6 +1132,8 @@ public:
     void interaction_cancelled(SessionId session);
     /** Stage 1.8b: gives a session a whisper for its client (SessionSink::whisper). */
     void whisper(SessionId session, std::uint32_t whisperCrc);
+    /** Stage QG9a: the result 3094 of an entry request at an entrance (SessionSink::dungeon_result). */
+    void dungeon_result(SessionId session, std::uint64_t target, std::uint64_t entity, std::uint32_t result);
     /**
      * Development aid: gives the session of a character one message for its client
      * (SessionSink::development_message).

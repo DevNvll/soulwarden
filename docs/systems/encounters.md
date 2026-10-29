@@ -25,11 +25,12 @@ wire contracts are in the protocol notes (section 4.62). The quest events are in
 | The corrections of the code review of stage QG5c3 (QG5C3R-R1 to R4) | Test cases QGR5C3A to QGR5C3D (`tests/review_qg5c3_tests.cpp`) |
 | Stage QG5c5: the Darkness events and the boat reinforcements: the season rule, the group members and their parts, the spawns of an alias, the slices of a tracked alias, the stages that wait for their parent, the DestroySliceAction, the parts that the client does not show (the fill), the start objects of an earlier stage | `world/encounters.h` (`encounter_rules::kDarknessAtAllTimes`, `EncounterPlacement::partKinds`, `fills`, `EncounterMemberRun::part`), `world/encounters.cpp` (`resolve`, `spawn`, `count_destroyed`, `children_done`, `destroy_slices`), `gamedata/encounter_data.h` (`EncounterPart`, `EncounterDestroy`, `EncounterSpawn::alias`, `EncounterObjective::trackedSlices`, `EncounterObjectiveKind::waitParent`, `EncounterRecipe::season`), `world/entity.h` (`Creature::memberRoute`), `tools/gamedata/encounter_recipes.py` (`group_parts`, `part_route`, `alias_tiers`, `Reader.alias`), test cases QG5C5A to QG5C5F (`tests/encounter_darkness_tests.cpp`) |
 | The corrections of the code review of stage QG5c4 (QG5C4R-R1 to R5) | Test cases QGR5C4A to QGR5C4F (`tests/review_qg5c4_tests.cpp`; QGR5C4F starts the world with each encounter data file missing) |
+| Stage QG9a: the instance recipes (the encounter of a mode root slice), the cutscene stage and its grant, the event stage, the background stage of the manager, the start objects that the runner skips | `world/encounters.cpp` (`runs_mode`, `start_space`, `end_space`, `space_done`, `scan_spaces`, `cutscene_requested`, `cutscene_ended`, `DueKind::eventMet`), `gamedata/encounter_data.h` (`EncounterRecipe::mode`, `map`, `daily`, `EncounterObjectiveKind::cutscene`, `event`, `EncounterSpawn::skip`, `InstanceObject`), `tools/gamedata/encounter_recipes.py` (`Reader.mode_roots`, `Reader.mode_objects`), [Instances](instances.md), test cases SI4, SI5, SI7 (`tests/story_instance_tests.cpp`) |
 
 ## Rules
 
 The source of each rule is in brackets: [data] the game data, [client ADDR] the client code (build 1.400.6031.6004151, image-relative
-addresses), [live] a live check of stage QG5c1, QG5c2, QG5c3, QG5c4, or QG5c5, [agent] a decision of the agent of the stage (a choice where the
+addresses), [live] a live check of stage QG5c1, QG5c2, QG5c3, QG5c4, QG5c5, or QG9a, [agent] a decision of the agent of the stage (a choice where the
 data does not decide), [user] a decision of the user, [review] a correction of a code review.
 
 ### The recipes
@@ -365,6 +366,41 @@ data does not decide), [user] a decision of the user, [review] a correction of a
 - Stage DG1 ([Instances](instances.md)): the placements are placements of the main world: only the characters of the main world make an
   instance of a placement; the searches near a root use the space of the root. A character that moves to an instance leaves a detector as
   after a travel (its link goes after the grace time) [agent].
+
+### The instance recipes (stage QG9a)
+
+- An instance recipe is the encounter of the mode root slice of a solo mode of the main world level (encounter data format 2: the members
+  `mode`, `map`, `daily`): the tool reads the placements of the slice of `SlicePath` of the map row (IsSoloTrial 1 of the mode row,
+  CoatlicueName of the main terrain) as parents of their encounters [data]. QuestMedea: the recipe `AI_WW_Medea_Encounter_Console` [data].
+- An instance recipe never runs at its placement of the main world. The instance system starts it in the space of a new instance of its
+  mode (`start_space`); it waits there for a character of the space in its detector, then the run starts as at a placement [agent]. The
+  end of the instance ends its runs (`end_space`) [agent].
+- The backend runs a mode only when the runner takes each instance recipe of the mode that is not a daily alternative
+  (`runs_mode`); else the entrance refuses the entry (result 10) [agent]. A daily alternative (the recipes that the mode script selects
+  for DailyTrial) is a cause of the tool [data: the mode script is not in the client].
+- The rules of an instance recipe that differ from a placement (the tool and the runner):
+  - no rule of the parent spawner (the prefab parent of a mode root has no spawn at its enable; the instance system starts the recipe)
+    [data; agent];
+  - a WaitForParentObjective stage of the manager (the setup of Medea, which spawns the boss) runs in the background to the end of the
+    run: the manager starts its next stage at once [agent; client 0x7C7DF0: the objective makes no task];
+  - a CutsceneFinishedObjective stage (`m_cutsceneName`) needs a time limit with succeedOnTimeout: it ends at the end of the cutscene of a
+    participant (6705 after the grant) or at its time limit [data: 22 s and 60 s for Medea; client 0x2F07570; live];
+  - the background activation 2 of a cutscene stage is no cause (the client starts its IGC from the start action) [client 0x26F0400];
+  - an EncounterEventObjective (`Intro_Complete`) is met at the start of its stage (a due entry) [agent: no slice or table of the client
+    sends the event];
+  - a start object that no objective tracks is not made (`skip` of the tool; the crystal of Medea: its role is in the boss tree, which the
+    client does not have) [agent; a known limit];
+  - a creature member of a background stage of the manager counts for a later destroyed objective that tracks its slice (the boss of
+    Medea) [data: the slice that the boss stage tracks].
+- The cutscene grant: a 6703 of a character whose instance has a running cutscene stage with that CRC gets 6707
+  (`cutscene_requested`), and the next 6705 of the character ends the stage (`cutscene_ended`) [client 0x2EFE880; live: the intro and
+  the outro of Medea].
+- The provoke: at the start of a destroyed stage of an instance recipe, each tracked creature member that rests gets the nearest
+  participant as its target (the boss of Medea waits in the setup stage before the participants come) [agent; live].
+- The success of each instance recipe of a space is the success of the content of the instance (`space_done`,
+  `Instances::content_succeeded`) [agent].
+- The task tree of Medea has only the cleanup leaf (the client factory makes no task for a cutscene, an event, or a WaitForParent stage
+  with no description, and the kill objective is on a stage with userWave 0) [client 0x2714D40; protocol notes 4.67].
 
 ## Commands
 

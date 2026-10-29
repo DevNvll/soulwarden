@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check of the encounter recipe tool (encounters.py) with made-up recipes and members (no file of the game). Stages QG5c2 to QG5c4.
+"""Check of the encounter recipe tool (encounters.py) with made-up recipes and members (no file of the game). Stages QG5c2 to QG9a.
 
 The tool reads the recipes of the game copy (encounter_recipes.py) and gives each recipe the causes that the runner of the backend does not
 run (refusals: the rules of the docstring of encounters.py). This check gives the rule functions made-up recipes and compares each result.
@@ -49,6 +49,11 @@ The test program of the backend runs it (case QG5C2I; QG5C2A and QG5C3A have the
                      a cause; with no removal, none
   removed-by-child   finding QG7R-R4 (stage QG6a): a count of a child whose only earlier start object a preceding child of the same parent
                      removes at its start is a cause; with no removal, none
+  instance           stage QG9a: an instance recipe (a mode): a WaitForParentObjective stage of the manager, a background cutscene stage
+                     with a timed success, an EncounterEventObjective, and a prefab parent with no spawn are taken; the same stages of an
+                     open world recipe are causes; a cutscene stage with no timed success is a cause; a daily recipe is a cause
+  skip               stage QG9a: in an instance recipe a start object that no objective tracks gets "skip" (no cause); in an open world
+                     recipe it is a cause
 
 Usage: python3 -B check_encounters_tool.py [WORK_FOLDER] [CASE...]    (status 0: each case passed; the folder is not used)
 """
@@ -372,7 +377,8 @@ def case_complete() -> bool:
     def read_stub(sources, catalog):
         if sources.missing:
             sources.absent.append("regions/r_+00_+00/capitals/test/test.capitals.json")
-        return type("Reader", (), {"members": {}})(), [], {"encounters": 0, "notQuest": 0, "parentsRead": 0, "placements": 0}
+        return type("Reader", (), {"members": {}, "mode_objects": []})(), [], {"encounters": 0, "notQuest": 0, "parentsRead": 0,
+                                                                              "placements": 0}
 
     saved = (tool.Catalog, tool.read_recipes, tool.slice_assets)
     try:
@@ -587,13 +593,57 @@ def case_shape() -> bool:
             and "_shapeEntity" not in reader.detector_shape(none))
 
 
+def instance_recipe(**changes) -> dict:
+    """@return A made-up recipe of the form of the QuestMedea recipe: the setup of the manager (WaitForParentObjective, the boss), the intro
+    cutscene (background, 20 s, succeedOnTimeout), the fight with its event child, the cleanup; a prefab parent with no spawn."""
+    value = recipe(mode="Test_Story", map="Test_Story", daily=False, parent={"kind": "prefab", "spawnOnEnable": False},
+                   stageOrder=[0, 1, 2, 3],
+                   stages=[stage("Phase 00 - Setup", tool.WAIT_PARENT, [spawn(MEMBER)]),
+                           stage("Phase 01 - Play Intro IGC", tool.CUTSCENE, [],
+                                 objective={"timeLimit": 20.0, "succeedOnTimeout": True, "background": 2}),
+                           stage("Phase 02 - Boss Fight", tool.DESTROYED, [], children=[4],
+                                 objective={"requiredCount": 1, "trackedSlice": MEMBER}),
+                           stage("Phase 03 - Cleanup", tool.TIMED, []),
+                           stage("01 Intro - Play Intro", tool.EVENT, [], objective={"eventId": "Intro_Complete"})])
+    value.update(changes)
+    return value
+
+
+def case_instance() -> bool:
+    taken = tool.refusals(instance_recipe(), members()) == []
+    world = instance_recipe()
+    for key in ("mode", "map", "daily"):
+        del world[key]
+    open_world = tool.refusals(world, members())
+    world_causes = (has(open_world, "waits for its parent, and it is a stage of the manager")
+                    and has(open_world, "the objective CutsceneFinishedObjective of the stage Phase 01")
+                    and has(open_world, "the objective EncounterEventObjective") and has(open_world, "a background activation"))
+    no_limit = instance_recipe()
+    no_limit["stages"][1]["objective"].update(timeLimit=0.0)
+    daily = tool.refusals(instance_recipe(daily=True), members())
+    return (taken and world_causes and has(tool.refusals(no_limit, members()), "the cutscene stage Phase 01 - Play Intro IGC has no timed success")
+            and has(daily, "the daily alternative"))
+
+
+def case_skip() -> bool:
+    value = instance_recipe()
+    value["stages"][0]["spawns"].append(spawn(START))
+    causes = tool.refusals(value, members())
+    world = instance_recipe()
+    for key in ("mode", "map", "daily"):
+        del world[key]
+    world["stages"][0]["spawns"].append(spawn(START))
+    return (causes == [] and value["stages"][0]["spawns"][1].get("skip") is True and "skip" not in world["stages"][0]["spawns"][1]
+            and has(tool.refusals(world, members()), "is in a stage that does not track it"))
+
+
 CASES = {"taken": case_taken, "manager": case_manager, "parent": case_parent, "objectives": case_objectives,
          "cardinality": case_cardinality, "children": case_children, "members": case_members, "visual": case_visual,
          "lifetime": case_lifetime, "shapes": case_shapes, "alias": case_alias, "later": case_later, "counts": case_counts,
          "complete": case_complete, "state": case_state, "senders": case_senders, "several": case_several, "nested": case_nested,
          "group": case_group, "shape": case_shape, "wait": case_wait, "destroy": case_destroy, "season": case_season,
          "earlier": case_earlier, "ancestor": case_ancestor, "removed-earlier": case_removed_earlier,
-         "removed-by-child": case_removed_by_child}
+         "removed-by-child": case_removed_by_child, "instance": case_instance, "skip": case_skip}
 
 
 def main() -> int:

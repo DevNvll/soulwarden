@@ -76,6 +76,8 @@ inline constexpr std::uint8_t kDie = 65;
  */
 inline constexpr std::uint8_t kPatrol = 66;
 inline constexpr std::uint8_t kCraftMultipleRecipes = 86;
+/** Stage QG9a: TaskGameMode (the enum value 54; the base-task mode predicate 0x3AD5CC0; research story-instances.md 2). */
+inline constexpr std::uint8_t kGameMode = 54;
 } // namespace task_type
 
 /** @return True for the possession tasks: the count of an item in the bag (stage 1.8c). */
@@ -179,6 +181,14 @@ struct QuestTask {
      * points of the progression (true) or its rank (false); with a blank ItemName the level of the character (activation 0x3B04F40).
      */
     bool checkPoints{false};
+    /**
+     * Stage QG9a: GameModeID (the text of the cell, trimmed; empty: none). TaskGameMode: the mode of its membership predicate (IsInGameMode
+     * 0x32BA3B0 through the bus 0x2CE2150 from the predicate 0x3AD5CC0). A kill, an event, or an item task with a mode counts only for a
+     * character in that mode.
+     */
+    std::string gameMode;
+    /** Stage QG9a: GameModeMustBeMutated (+0x2FB): the mode must have a mutation context (no row of the data is true). */
+    bool modeMutated{false};
 };
 
 /** The faction mask of a blank RequiredFaction (and of None): bit 0 bypasses the test (client parser 0x445CA30, eligibility 0x3A4C166). */

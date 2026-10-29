@@ -8021,8 +8021,119 @@ interest table of the client in Amrine and showed with its name tag).
 
 **Not sent at a level change** [project rule]: 3746 and 6709 (the end of the input lock of a travel), 3951 (the loading screen of a far
 travel), and 3954 (on player teleport). Not checked: the four floats and the list of 1635 (zero and empty), the U2 and U3 questions of
-research expeditions.md (the self identification and the spawn notice are sent; their need is not tested), and a level change to the same
-level text (a story instance in `newworld_vitaeeterna`).
+research expeditions.md (the self identification and the spawn notice are sent; their need is not tested).
+
+**A level change to the same level text** [live, stage QG9a]: the entry of a story instance of `newworld_vitaeeterna` (QuestMedea) sends
+the same sequence with the level text of the main world, a new version, and a new context instance. The client loads the level again (the
+loading screen) and spawns in the new context; the entities of the main world are not in it. Live runs of stage QG9a: four entries (one
+of them into the empty instance again) and one return by the exit portal, no fault.
+
+### 4.67 The entrance of a game mode, the result 3094, the GameModeParticipant state, the leave 3309 and 1980, the cutscene of an encounter stage (live proof of stage QG9a; static proof for the client code; the entry with no 946, the audience of the state, the value X, and the event of Intro_Complete are project rules)
+
+The static read is E of stage QG9a (`~/Games/soulwarden/work/evidence/quests/qg9a/implement/static/E/ANSWERS.md`). The live runs are L1 to
+L5 of stage QG9a (`~/Games/soulwarden/work/evidence/quests/qg9a/implement/`: the backend logs, the pictures, and the videos). The backend
+side is in docs/systems/instances.md (the story instances).
+
+**The entrance** [static; live]: the bound of the entrance slice (`4_1_trial_entrance_questmedea`) has the options OpenDungeonMenu
+(action 71, committed) and EnterQuestCaerDun (action 72, option CRC B17F828E; the text of the option is the name of an other mode, and
+the mode is `DungeonEntranceComponent.m_gameMode` = QuestMedea, CRC 95B632E9). The client sends each one in its input 1589 (protocol notes
+4.35): first 71 (the client opens `DungeonEnterScreen` itself, handler 0x2FF5720; the reply 3743 accepts the use), then, at the Enter
+button, 72 with the base action 71 (0x49A0F5A, 0x4912410: the client searches the current options by the action 72). Live: 1589 with 71,
+then 1589 with 72 base 71 about 3 s later. The required item of the Enter option (KeyDynasty) has the count 0 in the data: no item [data;
+live: the backend refused the entry while it tested the item].
+
+**3094 DungeonEntranceClientFacet_OnDungeonActivateResult** (server to client; reader 0x26D52A0, handler 0x2FFB4F0 [static]):
+
+```text
+target:u64 entity:u64 result:u32
+```
+
+- `target`: the DungeonEntrance component of the entrance (the instance id of its entity by the XOR rule plus its component id; slot 3 of
+  the Medea entrance); `entity`: G of the entrance. Live: target 53b85d6577faef54, entity d95c21d3f6dcde53.
+- `result`: eDungeonActivateResponse (registration 0x54D473F to 0x54D484D [static]): 0 Success, 1 NotEnoughMembers, 2
+  NotEnoughMembersInProximity, 3 MissingReqItem, 4 ReqItemDisabled, 5 TooManyMembers, 6 RaidGroupDisallowed, 7 SoloGroupFailure, 8
+  PendingActivation, 9 InCooldown, 10 EntranceActivationFailure, 11 GroupAlreadyInDungeon, 12 GroupTimeout, 13 MutationLevelReq, 14
+  MutationDifficultyReq, 15 ItemRemovalFailure, 16 ScheduledNotAvailable, 17 EntranceBusy.
+- The handler has no state change and no teleport. `DungeonEnterScreen.OnDungeonActivateResult`: 0 closes the window with no notice; a
+  refusal closes the window with its notice; 17 tries again after 0.5 s, three times [static]. Live: 0, the window closed, then the level
+  change of section 4.66.
+- The backend sends 0 and moves the character in the next tick (the reply 3743 of the request goes first). It sends 10 for a level below
+  RequiredLevel of the mode and for a mode whose content it does not run, 11 for a character in an instance [project rule].
+
+**946 PlayerArenaComponentServerFacet_TeleportIntoDungeon** (client to server; body `target:u64 entity:u64` only; reader 0x259E1E0, send
+stub 0x2760D20 [static]): the queue HUD sends it at the accept of a dungeon invite (WaitingEntry). The local entrance does not send it, and
+the client needs no 946 before a level change [static; live: no 946 in the runs, and the entry worked]. The backend writes one log line.
+PlayerArena (slot 4, type 2406: field 14 the state u8, 15 the deadline u64 wall ns, 16 the mode index u8) is not sent [project rule: no
+reader of a solo entry needs it; live: the HUD of the mode, the compass, and the respawn worked with no PlayerArena fragment].
+
+**The GameModeParticipant state** (slot 24 of the player slice, type 3312, constructor 0x329ACB0 [static]). Group 0 has six fields; the
+backend sends two:
+
+```text
+field 0 activeGameModes   changes:size=0  stamp:u8=1 R:size64  count:size
+                          count x { A:16raw  G:u64  F:u64  C:u32  M:u32  W:u64  X:u64 }
+field 1 flags             six raw bytes (bitset, little bit order)
+```
+
+- `changes = 0` selects the full replacement (0x32D96E0) [static]. The stamp R is the revision of the last change of the component: a
+  newer replacement has a greater stamp (0x32D785E) [static; live: the entry and the leave of six runs each applied].
+- A, G, F: the server-facet reference of the game mode entity (writer 0x32BE580, reader 0x328D6D9) [static]. The backend reserves an actor
+  for each instance and sends its 16 bytes, its G, and G as F [project rule; live: the dungeon HUD and the compass took it].
+- C: CRC-32 of the lower-case GameModeId (IsInGameMode 0x32BA3B0 compares it; TaskGameMode 0x3AD5CC0 hashes its GameModeID) [static]. M:
+  the CRC of GameModeMapId (QuestMedea: also 95B632E9) [static]. W: the entry time, Unix wall nanoseconds (0x32ABFD0 takes the greatest W)
+  [static]. X: a u64 that no checked reader tests: 0 [project rule].
+- flags: bit 22 PlayerCanQuit (getter 0x2F2C60 returns 0x16): `00 00 40 00 00 00`. The leave button of the escape menu needs it
+  (escapemenu.lua lines 517 to 533) [static]. No other bit.
+- The owner gets the entry in the instance and the empty map with no flag after the leave (the client sends its exit notification, apply
+  0x32B78C0) [static; live: the compass showed the name of the mode, then the territory of the main world again]. Nothing before the first
+  entry of a world entry. An observer gets no fragment [project rule: the audience of the original server is not found; the remote player
+  slice has the component].
+- Live (L1 to L5): the TaskGameMode task of 06A_MSQ_21 (enter the mode) became done at the entry, from the state alone.
+
+**3309 GameModeParticipantComponentServerFacet_RequestLeaveGameMode** (client to server; reader 0x3273BB0, caller 0x32D2A10 [static]):
+
+```text
+target:u64 entity:u64 A:16raw G:u64 F:u64          (48 bytes)
+```
+
+The key of the first entry of activeGameModes. The backend leaves the mode when the key is the key of the membership of the character;
+an other key changes nothing [project rule]. No UI caller was found, and no 3309 came in the live runs.
+
+**1980 GameModeParticipantComponentServerFacet_OnReceivedClientEvent** (client to server; reader 0x26FEC60 [static]): `target:u64 entity:u64
+event:u32`. The leave confirmation of the dungeon HUD and of the escape menu send the event 2612035792 = 9BB080D0 (SendClientEvent) [static].
+The backend leaves the mode for that event and writes a line for an other event [project rule]. Not checked live: the leave button of the
+escape menu was empty in the runs (no text, nothing sent); the exit portal was the leave.
+
+**The exit portal** [data; live]: a server child of the mode root (`interactobject_portalstone`, spawner Portal) with the option
+ExitDungeon (action 74, not committed; the client needs a hold of about 0.9 s). The backend makes it in the space of the instance at the
+start of the instance [project rule: the mode script that spawns it is not in the client]. Live: 1589 with 74, the leave, the level change
+to the main world, the return place.
+
+**The cutscene of an encounter stage** [static; live]: a CutsceneFinishedObjective stage with `m_backgroundActivation` 2 starts early, and
+its start action EntityEventAction activates the IGC spawner of the slice (`01_IGC_Spawner_Medea_Intro`, `m_triggerOnActivate` 1); the
+client then asks for the cutscene with the exchange of section 4.20:
+
+```text
+client 6703  target:u64 entity:u64 cutscene:u32      (the PlayerCutscene facet of the player)
+server 6707  target:u64 entity:u64 cutscene:u32      (the same CRC)
+client 6706  target:u64 entity:u64 cutscene:u32      (the start)
+client 6705  target:u64 entity:u64                   (the end, no CRC)
+```
+
+The CRCs: the intro `06A_MSQ_21_MedeaShowdownIntro_IGC` A921416F, the outro `06A_MSQ_21_MedeaShowdownOutro_IGC` FBEA1598 (CRC-32 of the
+lower-case name) [static; live: both granted, both played, both ended]. The backend grants the CRC of a running cutscene stage of the
+encounter of the space of the character, and 6705 ends that stage; the time limit of the stage (22 s and 60 s, succeedOnTimeout) ends it
+with no end of the client [project rule]. The IGC is a slice of the client: no record of the server [static: 0x2F0CD10].
+
+**The task tree of the Medea encounter** [static]: CutsceneFinishedObjective and EncounterEventObjective make a task only with a
+description (factory 0x2714D40); WaitForParentObjective makes none (0x7C7DF0). The tree of the Medea slice has only the cleanup: leaf 1
+(ObjectiveTask, target 1, time limit 1), wrapper 2, outer 3. The kill objective is on the boss stage, whose userWave is 0: no HUD task.
+The event `Intro_Complete` of the child stage: no slice or table of the client sends it; the backend meets it at the start of its stage
+[project rule].
+
+**The respawn in the mode** [static; live]: the respawn screen reads the mode from GameModeParticipant (`DungeonRespawnsPermitted` 1 of
+QuestMedea) and offers the dungeon entrance fallback; the client sends 1938 with `random=01` and an empty id. The backend puts the character
+at the start of the map in its space [project rule; live: a death by Medea, the respawn at the start, the fight again].
 
 ## 5. Open items
 

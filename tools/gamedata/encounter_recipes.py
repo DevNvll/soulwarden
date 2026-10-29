@@ -132,6 +132,7 @@ F = {name: field_id(name) for name in (
     "m_eventsOnFirstEnter", "m_event", "m_detectDeadTargets", "m_editPrefab", "m_persistPrefab", "m_gatheringStartEvent",
     "m_gatheringEndEvent", "m_shapeEntityID",
     "m_patrolPathEntity", "m_waypointIds", "m_pathTravesalPolicy", "m_taskName", "m_minDuration", "m_maxDuration", "m_matchAlignment",
+    "m_cutsceneName",
     "Tags", "Tag", "Slices", "Slice", "Schedule")}
 # Stage QG5c5: the patrol path of a creature spawner of a group member (the boat landings, the portal waves: creature_data.py PATROL_TYPE,
 # WAYPOINT_TYPE) and the number of the policies of the client (creature_data.py POLICIES).
@@ -139,6 +140,14 @@ PATH_CLASS = uuid.UUID("fa7fa996-f8c3-4cd0-8313-042fb6a66578")
 WAYPOINT_CLASS = uuid.UUID("3d1526bf-ac9c-4a5d-8b0d-00abfccd19f1")
 PATH_POLICIES = 4
 TASK_TYPE = "ObjectiveTasks"
+# Stage QG9a (docs/systems/instances.md): the tables of the game modes and of their maps. A map of a solo mode (IsSoloTrial 1) whose level is
+# the main world (CoatlicueName coatlicue\\NewWorld_VitaeEterna) has a mode root slice (SlicePath) that a layer of the main world places
+# (Dungeon/MedeaWindsward/MedeaScript in the layer 06sw_medea_script): its spawners are the encounters and the objects of the instance.
+MODES_TABLE = TABLES_FOLDER + "javelindata_gamemodes.datasheet"
+MAPS_TABLE = TABLES_FOLDER + "javelindata_gamemodemaps.datasheet"
+MAIN_TERRAIN = "coatlicue/newworld_vitaeeterna"
+# Stage QG9a: the text of the slice path of the daily alternative of an encounter of a story instance (ai_ww_medea_encounter_console_daily).
+DAILY_TEXT = "_daily"
 GATHERABLE_TYPE = "GatherableData"
 VARIATION_TYPE = "VariationData"
 
@@ -346,6 +355,9 @@ def objective_of(node) -> dict:
         objective["_tracked"] = (field(node, "m_trackedSlice"), field(node, "m_trackedAlias"))
     if kind == "EncounterEventObjective":
         objective["eventId"] = text(field(node, "m_eventId"))
+    if kind == "CutsceneFinishedObjective":
+        # Stage QG9a: the cutscene of the stage (the IGC of a story instance: 06A_MSQ_21_MedeaShowdownIntro_IGC).
+        objective["cutscene"] = text(field(node, "m_cutsceneName"))
     if kind == "EntityActiveStateChangedObjective":
         objective["target"] = number(field(node, "m_targetEntityId"))
         objective["completeOn"] = ("deactivated" if number(field(node, "m_completeOnDeactivated")) != 0
@@ -522,6 +534,9 @@ class Reader:
         self.counts = {"layers": 0, "placements": 0, "parentsRead": 0, "encounters": 0, "quest": 0, "notQuest": 0}
         self.assets: dict[str, tuple[bytes, int]] | None = None
         self.target_list: dict[str, str] | None = None
+        # Stage QG9a: the objects of the mode root slices (a spawner of the root whose slice is not an encounter: the exit portal, the fog
+        # wall, the checkpoint), each with its mode, its map, and its world place.
+        self.mode_objects: list[dict] = []
 
     def targets(self) -> dict[str, str]:
         """@return The slices of the stationary targets with a live check (creature_data.read_target_list; stage QG5c5)."""
@@ -555,6 +570,31 @@ class Reader:
             found = next((self.catalog.path(asset) for asset in slices if self.catalog.path(asset)), None)
             chosen = found or chosen
         return chosen, every
+
+    def mode_roots(self) -> dict[str, dict]:
+        """Stage QG9a: @return The mode root slices of the solo modes whose level is the main world: the lower-case slice name of a placement
+        (SlicePath of the map row, with "/") to its mode and its map. A solo mode is a row with IsSoloTrial 1 [data]; a separate level
+        (CoatlicueName of a different terrain) is stage DG2 (its level data)."""
+        modes_data = self.sources.read(MODES_TABLE)
+        maps_data = self.sources.read(MAPS_TABLE)
+        if modes_data is None or maps_data is None:
+            raise Failure(f"the game copy has no {MODES_TABLE if modes_data is None else MAPS_TABLE}")
+        modes, maps = Sheet(modes_data), Sheet(maps_data)
+        for sheet, path, columns in ((modes, MODES_TABLE, ("GameModeId", "IsSoloTrial")),
+                                     (maps, MAPS_TABLE, ("GameModeMapId", "GameModeId", "SlicePath", "CoatlicueName"))):
+            missing = [column for column in columns if column not in sheet.columns]
+            if missing:
+                raise Failure(f"{path} has no column {', '.join(missing)}")
+        solo = {modes.source(row, "GameModeId").strip().lower() for row in range(modes.row_count)
+                if modes.source(row, "IsSoloTrial").strip() == "1"}
+        roots: dict[str, dict] = {}
+        for row in range(maps.row_count):
+            mode = maps.source(row, "GameModeId").strip()
+            terrain = maps.source(row, "CoatlicueName").replace("\\", "/").strip().lower()
+            path = maps.source(row, "SlicePath").replace("\\", "/").strip().lower()
+            if mode.lower() in solo and terrain == MAIN_TERRAIN and path:
+                roots[path] = {"mode": mode, "map": maps.source(row, "GameModeMapId").strip()}
+        return roots
 
     def task_events(self) -> set[str]:
         """@return The game events (lower case) that a quest task names: KillEnemyType of the task tables."""
@@ -934,6 +974,8 @@ class Reader:
         events = self.task_events()
         recipes: dict[str, dict] = {}
         encounter_cache: dict[str, bool] = {}
+        mode_roots = self.mode_roots()
+        self.counts["modeRoots"] = 0
         for layer in self.sources.paths(REGIONS_FOLDER, ".capitals.json"):
             data = self.sources.read(layer)
             if data is None:
@@ -946,7 +988,10 @@ class Reader:
             for placement in placements:
                 self.counts["placements"] += 1
                 name = str(placement.get("sliceName", "")).lower()
-                if not any(part in name for part in PARENT_TEXTS):
+                # Stage QG9a: the placement of a mode root slice of a solo mode of the main world level (its encounters are the content of
+                # an instance of the mode, never of the main world).
+                mode_root = mode_roots.get(name.replace("\\", "/"))
+                if mode_root is None and not any(part in name for part in PARENT_TEXTS):
                     continue
                 path = spawner_path(placement, self.catalog, self.sources)
                 if path is None:
@@ -955,6 +1000,7 @@ class Reader:
                 if roots is None:
                     continue
                 self.counts["parentsRead"] += 1
+                self.counts["modeRoots"] += 1 if mode_root is not None else 0
                 world = placement_matrix(placement.get("rotation") or {}, placement.get("worldPosition") or {"x": 0, "y": 0, "z": 0})
                 for spawner_entity, info in read_entities(roots).items():
                     for component in info["components"]:
@@ -971,12 +1017,28 @@ class Reader:
                             encounter_cache[target] = target_roots is not None and any(
                                 node.type_id == MANAGER_CLASS for root in target_roots for node in walk(root))
                         if not encounter_cache[target]:
+                            object_key = f"{placement.get('id', '')}/{spawner_entity}"
+                            if mode_root is not None and all(entry["key"] != object_key for entry in self.mode_objects):
+                                # Stage QG9a: an object of the instance (the exit portal, the fog wall, the checkpoint, the quest
+                                # gatherable): its slice and its world place (one entry for each spawner entity).
+                                place = place_of(multiply(world, info["matrix"]))
+                                self.mode_objects.append({"mode": mode_root["mode"], "map": mode_root["map"],
+                                                          "key": object_key, "slice": target,
+                                                          "spawner": info["name"], **place,
+                                                          "onInit": number(field(component, "m_spawnOnInitialize")) != 0})
                             continue
                         key = f"{placement.get('id', '')}/{spawner_entity}"
                         if key in recipes:
                             continue
                         recipe = self.encounter(target, self.stream(target), multiply(world, info["matrix"]))
                         recipe["key"] = key
+                        if mode_root is not None:
+                            # Stage QG9a: an instance recipe: the content of an instance of its mode (the instance system of the backend
+                            # starts it in the space of the instance). The daily alternative is marked (its selection is in the mode
+                            # script, which the client does not have).
+                            recipe["mode"] = mode_root["mode"]
+                            recipe["map"] = mode_root["map"]
+                            recipe["daily"] = DAILY_TEXT in target.rsplit("/", 1)[-1]
                         recipe["layer"] = layer[len(REGIONS_FOLDER):-len(".capitals.json")]
                         recipe["parentSlice"] = path
                         recipe["parent"] = spawner_rules(info, component)
@@ -1017,7 +1079,8 @@ class Reader:
                         quest_events.add(member["event"].lower())
             quest_events.discard("")
             recipe["questEvents"] = sorted(event for event in quest_events if event in events)
-            recipe["quest"] = bool(recipe["questEvents"])
+            # Stage QG9a: an instance recipe is the content of its mode, also with no quest event (the kill of its boss is the quest task).
+            recipe["quest"] = bool(recipe["questEvents"]) or bool(recipe.get("mode"))
         out = []
         for key in sorted(recipes):
             recipe = recipes[key]

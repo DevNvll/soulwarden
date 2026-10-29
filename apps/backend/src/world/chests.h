@@ -212,6 +212,8 @@ public:
     void left(Entity& character);
     /** The world calls it after an accepted position of a character: a new cell makes its LootTracker again. O(1). */
     void moved(Entity& character);
+    /** Code review of stage DG1, finding DG1R-R3: the character changed its space: its tracker of now (no cell cache). */
+    void space_changed(Entity& character);
     /** The world tick: the claims whose reset time came (the due list). */
     void tick();
 

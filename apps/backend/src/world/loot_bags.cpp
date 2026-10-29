@@ -483,6 +483,13 @@ void LootBags::moved(Entity& character) {
     refresh(character, false);
 }
 
+void LootBags::space_changed(Entity& character) {
+    if (m_byCharacter.find(character.characterId) != m_byCharacter.end() || !character.bagTracker.empty() || !character.storageMap.empty()) {
+        ++m_counts.moveSelections;
+        refresh(character, false);
+    }
+}
+
 void LootBags::tick() {
     if (!m_loaded) {
         load();

@@ -62,7 +62,7 @@ void encounter_file(const Options&) {
               && data.recipes()[0].stages[2].spawns[1].delay == std::chrono::milliseconds(5000),
           "a valid file loads: 4 stages, 2 user waves (the interaction 0, the kill 1), the spawn delay of 5 s");
     json wrong = encounter_document({recipe_json(kKey, kRootAt, kStartAt, kMemberAt)});
-    wrong["format"] = 2;
+    wrong["format"] = 3; // Stage QG9a: format 2 is the format of the instance recipes.
     json order = encounter_document({recipe_json(kKey, kRootAt, kStartAt, kMemberAt)});
     order["recipes"][0]["stageOrder"] = {0, 1, 7};
     json count = encounter_document({recipe_json(kKey, kRootAt, kStartAt, kMemberAt)});

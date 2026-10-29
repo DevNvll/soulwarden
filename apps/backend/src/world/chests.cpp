@@ -253,6 +253,13 @@ void Chests::moved(Entity& character) {
     }
 }
 
+void Chests::space_changed(Entity& character) {
+    const auto found = m_own.find(character.characterId);
+    if (found != m_own.end() && data() != nullptr) {
+        refresh_tracker(character, found->second);
+    }
+}
+
 void Chests::tick() {
     const WorldClock::time_point now = m_world.clock().now();
     while (!m_due.empty() && m_due.begin()->first <= now) {

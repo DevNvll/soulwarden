@@ -1011,6 +1011,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     cast.ability = ability;
     cast.table = table;
     cast.caster = character->id;
+    cast.space = character->space;
     cast.characterId = character->characterId;
     cast.session = session;
     cast.input = press.input;
@@ -1258,7 +1259,7 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
         state::WorldPosition launch = own->position;
         launch.z += 1.5F;
         state::WorldPosition origin = shot.origin;
-        if (!valid_position(origin) || distance3(origin, own->position) > kShotOrigin || m_world.navigation().line_stop(launch, origin)) {
+        if (!valid_position(origin) || distance3(origin, own->position) > kShotOrigin || m_world.navigation().line_stop(launch, origin, own->space)) {
             origin = launch;
         }
         std::array<float, 3> direction = shot.direction;
@@ -1290,7 +1291,8 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
     state::WorldPosition origin = shot.origin;
     // The origin must be near the character, with no wall between the launch place of the server and it (code review of
     // stage 3.3a, finding F3): a client cannot put the origin behind a wall.
-    if (!valid_position(origin) || distance3(origin, character->position) > kShotOrigin || !m_world.navigation().sees(launch, origin)) {
+    if (!valid_position(origin) || distance3(origin, character->position) > kShotOrigin
+        || !m_world.navigation().sees(launch, origin, character->space)) {
         origin = launch;
     }
     std::array<float, 3> direction = shot.direction;
@@ -1549,7 +1551,7 @@ Abilities::Cast* Abilities::volley_cast(SessionId session, const std::string& ch
     }
     // The weapon of the cast (its slot and its instance) must be in the hand (code review of stage B1, finding B1-R1).
     const Entity* caster = m_world.find(found->second.caster);
-    if (caster == nullptr || !holds_cast_weapon(found->second, *caster)) {
+    if (caster == nullptr || caster->space != found->second.space || !holds_cast_weapon(found->second, *caster)) {
         return nullptr;
     }
     const std::optional<std::size_t> next = volley_next(found->second, attack, row, input);
@@ -1573,6 +1575,10 @@ void Abilities::volley_shot(Cast& cast, std::size_t index, const state::WorldPos
     const Entity* holder = m_world.find(cast.caster);
     if (holder == nullptr || !holds_cast_weapon(cast, *holder)) {
         close_volley(cast, "the weapon of the cast is not in the hand");
+        return;
+    }
+    if (holder->space != cast.space) {
+        close_volley(cast, "the caster is in a different space (code review of stage DG1, finding DG1R-R2)");
         return;
     }
     cast.shotsDone[index] = true;
@@ -1825,7 +1831,7 @@ void Abilities::spawn_summon(std::uint64_t number) {
     }
     const SpellPlan& plan = *cast.plan.spell;
     Entity* caster = m_world.find(cast.caster);
-    if (caster == nullptr || caster->kind != EntityKind::player || caster->life.dead) {
+    if (caster == nullptr || caster->kind != EntityKind::player || caster->life.dead || caster->space != cast.space) {
         end_held_cooldown(cast.characterId, cast.ability, false);
         return;
     }
@@ -1925,7 +1931,7 @@ Entity* Abilities::heal_target(Entity& caster, const gamedata::SpellRow& spell, 
         }
         state::WorldPosition chest = entity.position;
         chest.z += 1.5F;
-        if (!m_world.navigation().sees(eye, chest)) {
+        if (!m_world.navigation().sees(eye, chest, entity.space)) {
             return;
         }
         best = &entity;
@@ -1950,7 +1956,7 @@ void Abilities::cast_heal(std::uint64_t number) {
     const HealPlan plan = *cast.plan.heal;
     Entity* caster = m_world.find(cast.caster);
     const gamedata::SpellRow* spell = has_data() ? m_data->spell(plan.spell) : nullptr;
-    if (caster == nullptr || caster->kind != EntityKind::player || caster->life.dead || spell == nullptr) {
+    if (caster == nullptr || caster->kind != EntityKind::player || caster->life.dead || spell == nullptr || caster->space != cast.space) {
         ++m_counts.healsRefused;
         return;
     }
@@ -2044,7 +2050,10 @@ void Abilities::throw_projectile(Cast& cast, const state::WorldPosition& origin,
     float best = range;
     std::optional<state::WorldPosition> touched;
     const Entity* thrower = m_world.find(cast.caster);
-    m_world.for_each_near(thrower != nullptr ? thrower->space : kMainSpace, origin, range + ability_rules::kProjectileWidth, [&](Entity& entity) {
+    if (thrower == nullptr || thrower->space != cast.space) {
+        return; // Code review of stage DG1, finding DG1R-R2: the throw of a cast of a different space.
+    }
+    m_world.for_each_near(thrower->space, origin, range + ability_rules::kProjectileWidth, [&](Entity& entity) {
         if (entity.kind != EntityKind::creature || entity.creature.dead || entity.creature.immune()) {
             return;
         }
@@ -2061,7 +2070,7 @@ void Abilities::throw_projectile(Cast& cast, const state::WorldPosition& origin,
     // A wall on the line stops the projectile.
     for (float along = 0.5F; along < best; along += 0.5F) {
         const state::WorldPosition point{origin.x + dx * along, origin.y + dy * along, origin.z};
-        if (!m_world.navigation().sees(origin, point)) {
+        if (!m_world.navigation().sees(origin, point, thrower->space)) {
             best = std::max(along - 0.5F, 0.0F);
             touched.reset();
             ++m_counts.blocked;
@@ -2242,7 +2251,8 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
     // A caster that left the world does no damage; a dead caster does none with a timer of the cast (a rule of this
     // project). The phase of a spell entity hits while the spell lives: the data ends a spell at the death of its caster
     // only with EndOnCasterDeath (world/spells.h).
-    if (caster == nullptr || caster->characterId != cast.characterId || (caster->life.dead && !fromSpell) || !has_data()) {
+    if (caster == nullptr || caster->characterId != cast.characterId || (caster->life.dead && !fromSpell) || !has_data()
+        || (!fromSpell && caster->space != cast.space)) {
         return;
     }
     const PhasePlan& phase = cast.plan.phases[index];
@@ -2306,7 +2316,7 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
             continue;
         }
         // A wall between the center and the creature stops the area.
-        if (!m_world.navigation().sees(center, target->position)) {
+        if (!m_world.navigation().sees(center, target->position, target->space)) {
             ++m_counts.blocked;
             continue;
         }
@@ -2755,7 +2765,8 @@ void Abilities::counter_hit(std::uint64_t number, std::uint32_t index, EntityId 
     --cast.pending;
     Entity* caster = m_world.find(cast.caster);
     Entity* target = m_world.creatures().find(attacker);
-    if (caster == nullptr || caster->characterId != cast.characterId || caster->life.dead || target == nullptr || target->creature.dead
+    if (caster == nullptr || caster->characterId != cast.characterId || caster->life.dead || caster->space != cast.space || target == nullptr
+        || target->creature.dead
         || cast.hits.count({index, attacker}) != 0 || !has_data()) {
         return;
     }
@@ -2766,7 +2777,7 @@ void Abilities::counter_hit(std::uint64_t number, std::uint32_t index, EntityId 
     }
     // The capsule of the counter action is in front of the caster: the attacker must still be in the reach of its hit, with
     // no wall between them.
-    if (distance3(caster->position, target->position) > reach || !m_world.navigation().sees(caster->position, target->position)) {
+    if (distance3(caster->position, target->position) > reach || !m_world.navigation().sees(caster->position, target->position, caster->space)) {
         log::write("world: ability: the counter of %s does not reach creature %016llx", caster->name.c_str(),
                    static_cast<unsigned long long>(attacker));
         return;
@@ -3048,7 +3059,8 @@ void Abilities::perk_burst(Entity& caster, std::string_view spellId) {
         if (hits >= ability_rules::kAreaMost || own == nullptr || own->life.dead) {
             break;
         }
-        if (target == nullptr || target->creature.dead || target->creature.immune() || !m_world.navigation().sees(center, target->position)) {
+        if (target == nullptr || target->creature.dead || target->creature.immune()
+            || !m_world.navigation().sees(center, target->position, target->space)) {
             continue;
         }
         if (m_world.combat().strike(*own, *target, HitWeapon{itemId, slot, weapon, gearScore, {}}, *row, 1.0F, "a burst of a perk").verdict
@@ -3336,7 +3348,7 @@ void Abilities::follow_strike(Cast& cast, Entity& caster, const gamedata::Attack
                     // No pull through a wall: the sight from the chest of the caster to the creature (1.5 m and 1 m above the feet).
                     const state::WorldPosition from{caster.position.x, caster.position.y, caster.position.z + 1.5F};
                     const state::WorldPosition to{entity.position.x, entity.position.y, entity.position.z + 1.0F};
-                    if (m_world.navigation().sees(from, to)) {
+                    if (m_world.navigation().sees(from, to, entity.space)) {
                         eligible.emplace_back(horizontal_distance(caster.position, entity.position), entity.id);
                     }
                     return;
@@ -3372,7 +3384,7 @@ void Abilities::follow_strike(Cast& cast, Entity& caster, const gamedata::Attack
         });
         const state::WorldPosition from{caster.position.x, caster.position.y, caster.position.z + 1.5F};
         const state::WorldPosition to{creature->position.x, creature->position.y, creature->position.z + 1.0F};
-        if (reached && m_world.navigation().sees(from, to)) {
+        if (reached && m_world.navigation().sees(from, to, creature->space)) {
             eligible.emplace_back(away, id);
         }
     }

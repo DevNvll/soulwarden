@@ -500,6 +500,27 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
     }
     case 2027: // LootDrop (stage 3.5b.2): m_rarityLevel u32.
         return group == 0 && field == 0 ? 4 : -1;
+    case 3312: { // GameModeParticipant (stage QG9a): field 0 the full map activeGameModes (56-byte entries), field 1 the six bytes of flags.
+        if (group != 0 || field > 1) {
+            return -1;
+        }
+        if (field == 1) {
+            return 6;
+        }
+        server::hub::Reader reader(rest);
+        if (reader.size() != 0) {
+            return -1;
+        }
+        if (reader.u8() == 1) {
+            reader.size64();
+        }
+        const std::uint32_t count = reader.size();
+        if (count > 64) {
+            return -1;
+        }
+        reader.raw(56U * count);
+        return reader.ok() ? static_cast<int>(reader.position()) : -1;
+    }
     case 1594: // BuildableController (stage 2.5b): currentState (one byte); the other fields are not sent.
         return group == 0 && field == 0 ? 1 : -1;
     case 3217: // Ownership (stage 2.5b): currentPermissionRule (field 4, one byte); the other fields are not sent.
@@ -587,6 +608,7 @@ inline unsigned group_count(std::uint32_t type) {
     case 3829:
     case 3086:
     case 497:
+    case 3312:
         return 1;
     case 3752:
     case 81:

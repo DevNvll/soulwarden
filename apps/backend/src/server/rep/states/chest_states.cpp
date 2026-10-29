@@ -71,9 +71,12 @@ std::vector<hub::Bytes> encode_loot_tracker_state(const world::Entity& entity, V
     // One map: the claims of the chests (world/chests.h) and the entries of the loot bags (stage 3.5b.2, world/loot_bags.h).
     std::vector<world::LootTrackerEntry> entries = entity.lootTracker;
     entries.insert(entries.end(), entity.bagTracker.begin(), entity.bagTracker.end());
-    // Stage 1.8e: the Looted entries of the destroyed quest objects of the character (world/quest_objects.h; live check I0).
-    entries.insert(entries.end(), entity.questObjectTracker.begin(), entity.questObjectTracker.end());
-    entries.insert(entries.end(), entity.questGatherTracker.begin(), entity.questGatherTracker.end()); // Stage QG5a.
+    // Stage 1.8e: the Looted entries of the destroyed quest objects of the character (world/quest_objects.h; live check I0). Code review of
+    // stage DG1, finding DG1R-R3: they are objects of the main world: a character in an instance gets none of them.
+    if (entity.space == world::kMainSpace) {
+        entries.insert(entries.end(), entity.questObjectTracker.begin(), entity.questObjectTracker.end());
+        entries.insert(entries.end(), entity.questGatherTracker.begin(), entity.questGatherTracker.end()); // Stage QG5a.
+    }
     StateWriter state(kTrackerGroups);
     hub::Writer& map = state.field(0, 0);
     map.size(0); // No change entries: the full form.

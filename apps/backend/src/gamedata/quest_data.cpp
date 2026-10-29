@@ -261,6 +261,10 @@ bool QuestData::load_text(const std::string& text) {
         task.areaRule = rule == "leave" ? AreaRule::leave : rule == "stay inside" ? AreaRule::stayInside : AreaRule::enter;
         task.nameCrc = trimmed(task.itemName).empty() ? 0U : quest_crc(trimmed(task.itemName));
         task.checkPoints = flag(cell(cells, "ShouldCheckPoints")); // Stage QG2a: TaskHaveLevel.
+        // Stage QG9a: GameModeID (the mode of TaskGameMode, and the mode of the facts of a kill, an event, or an item task) and
+        // GameModeMustBeMutated (the task object +0x1F0 and +0x2FB of the client predicate 0x3AD5CC0; research story-instances.md 2).
+        task.gameMode = trimmed(cell(cells, "GameModeID"));
+        task.modeMutated = flag(cell(cells, "GameModeMustBeMutated"));
         taskByKey.emplace(key, static_cast<std::uint32_t>(m_tasks.size()));
         m_tasks.push_back(std::move(task));
     }

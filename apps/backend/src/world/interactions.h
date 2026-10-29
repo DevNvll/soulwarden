@@ -437,6 +437,11 @@ public:
      * replaces the first one. The handler must live as long as the world.
      */
     void register_handler(gamedata::InteractionKind kind, std::uint32_t optionId, InteractionHandler& handler);
+    /**
+     * Stage QG9a: registers the handler of each option of a kind that has no handler of its own (the entrances and the exit portals of
+     * the game modes: their Enter options have many names in the data). The handler must live as long as the world.
+     */
+    void register_kind_handler(gamedata::InteractionKind kind, InteractionHandler& handler);
     /** @return The handler of an option of a kind, or null (stage 3.6a: the gathering handler wraps the chest handler). */
     [[nodiscard]] InteractionHandler* handler(gamedata::InteractionKind kind, std::uint32_t optionId) const {
         return handler_of(kind, optionId);
@@ -538,7 +543,8 @@ public:
      * Makes a server child of a template at a place (stage 3.5b.2: a loot bag of world/loot_bags.h): the record and the ids of a server
      * child, its bounds, its uses. It stays until remove_object. `key`: its durable key (the key of the bag).
      */
-    SpawnedContainer spawn_container(std::uint32_t templateIndex, const state::WorldPosition& place, float yawDegrees, const std::string& key);
+    SpawnedContainer spawn_container(std::uint32_t templateIndex, const state::WorldPosition& place, float yawDegrees, const std::string& key,
+                                     SpaceId space = kMainSpace);
 
     /** @return The interactions of a character and the objects that are `radius` or less from it (horizontal). */
     [[nodiscard]] InteractionsView view(const std::string& characterId, float radius) const;
@@ -677,7 +683,8 @@ private:
     /** Makes a server child of a template with its template children. @return Its entity, or null (a place that is not of the world). */
     Entity* spawn(std::uint32_t templateIndex, const state::WorldPosition& place, const gamedata::Rotation& rotation,
                   const std::string& key, std::int64_t spawnedIndex, EntityId parent, const std::string& parentKey,
-                  const std::array<std::uint8_t, 16>& parentActor, const std::string& region, int permissionRule, int depth);
+                  const std::array<std::uint8_t, 16>& parentActor, const std::string& region, int permissionRule, int depth,
+                  SpaceId space = kMainSpace);
     /** The spawn rule: makes the children of the placements near the characters, removes the ones with no character near. */
     void scan();
     /** The timer of a timed use: the end of its Delay Time. */
@@ -699,6 +706,7 @@ private:
     std::unique_ptr<InteractionHandler> m_station;
     std::unique_ptr<InteractionHandler> m_fixture;
     std::map<std::pair<gamedata::InteractionKind, std::uint32_t>, InteractionHandler*> m_handlers;
+    std::map<gamedata::InteractionKind, InteractionHandler*> m_kindHandlers;
     /** The level objects whose state differs from the level data, or that have an entity, by their index. */
     std::map<std::uint32_t, ObjectState> m_objects;
     /** The server children that live, by their entity id (= G of their actor). */
@@ -736,9 +744,9 @@ private:
 
 template <class Visit>
 void Interactions::for_each_entity_near(SpaceId space, const state::WorldPosition& center, float range, Visit&& visit) {
-    // Stage DG1: the objects of this system are objects of the main world (the interaction data is the level data of the main world, and
-    // each server child is made there); a different space has none (the level data of an instance is stage DG2).
-    if (space != kMainSpace || m_entityCells.empty() || !(range >= 0.0F)) {
+    // Stage DG1: the level objects of this system are objects of the main world (the interaction data is the level data of the main world).
+    // Stage QG9a: a server child of an instance (the exit portal) is in the space of its instance: the test of the space of each entity.
+    if (m_entityCells.empty() || !(range >= 0.0F)) {
         return;
     }
     const auto low = [](float value) { return static_cast<std::int32_t>(std::floor(value / gamedata::InteractionData::kCellSize)); };
