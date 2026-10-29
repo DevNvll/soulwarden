@@ -243,6 +243,11 @@ enum class ComponentKey {
     territoryInterface,
     /** Stage QG6a: the LandClaimManager state of the world entity (type 3086, slot 2 of slices/globalgde): the claims of the towns. */
     landClaims,
+    /**
+     * Stage QG6b (docs/systems/mission-boards.md, the daily bonus): the GameEvent state of a character (slot 68, type 497): field 1
+     * dailyBonusesUsed, the uses of the daily bonus of the faction missions. Owner only.
+     */
+    gameEvent,
 };
 
 /**
@@ -1977,6 +1982,31 @@ struct MissionTownEntry {
 };
 
 /**
+ * Stage QG6b: one explicit offer of a faction board (an ObjectiveCreationParams element of field 2 of the ObjectiveInteractor state; reader
+ * 0x5CE92B0): the missionId, the destination (the claim of the territory), the origin territory, and available. `instance` is 0 before the
+ * accept and the accepted instance after it (the accept keeps the offer with available 0: 0x495A166).
+ */
+struct MissionOffer {
+    std::uint32_t mission{0};
+    std::uint64_t instance{0};
+    std::array<std::uint8_t, 16> destination{};
+    std::uint16_t origin{0};
+    bool available{true};
+    /** The slot of the weights (1 to 3: MissionWeightsData FactionPvE) and the goal of the slot (the log and the command). */
+    std::uint8_t slot{0};
+    std::string goal;
+};
+
+/**
+ * Stage QG6b: the faction board entry of a character for one territory (rows `character_faction_offers`): the offer window of the entry
+ * and the missions that a hand-in in that window made unavailable. A new window makes each mission available again.
+ */
+struct FactionBoardEntry {
+    std::uint64_t window{0};
+    std::vector<std::uint32_t> unavailable;
+};
+
+/**
  * Stage QG6a: the board state of a character (the ObjectiveInteractor state, player slot 10, type 3829): the provider that the character
  * opened last in this world entry (its actor id and its durable key, the territory of its town), the expiration of the provider data, and the
  * town entries of the character (rows `character_mission_offers`). Only the mission system changes it.
@@ -1990,7 +2020,31 @@ struct MissionBoardState {
     /** expirationTime of the state: the server clock in nanoseconds. */
     std::uint64_t expirationNs{0};
     std::map<std::uint16_t, MissionTownEntry> towns;
+    /**
+     * Stage QG6b: the opened provider is a faction board (a faction representative: its faction, the offer window, and the explicit offers of
+     * field 2 in the order of the vector that 3816 names by index). A town board has no explicit offer.
+     */
+    bool faction{false};
+    std::uint8_t providerFaction{0};
+    std::uint64_t offerWindow{0};
+    std::vector<MissionOffer> offers;
+    std::map<std::uint16_t, FactionBoardEntry> factionBoards;
     /** True when the rows of the character are loaded (the mission system has its data). */
+    bool loaded{false};
+};
+
+/**
+ * Stage QG6b: the daily bonuses of a character (GameEvent state, player slot 68, type 497, field 1 dailyBonusesUsed; rows
+ * `character_daily_bonuses`): the uses of each reward modifier (the CRC-32 of FactionMissionBonus) and the time of the next reset. Only the
+ * mission system changes it.
+ */
+struct DailyBonusUse {
+    std::uint8_t used{0};
+    /** The next reset (Unix nanoseconds): at or after it the uses are 0 again. */
+    std::uint64_t resetNs{0};
+};
+struct DailyBonuses {
+    std::map<std::uint32_t, DailyBonusUse> uses;
     bool loaded{false};
 };
 
@@ -2147,6 +2201,8 @@ struct Entity {
     QuestLog quests;
     /** Stage QG6a: the board state of the character (the provider, its town entries): the mission system changes it (world/missions.h). */
     MissionBoardState missionBoard;
+    /** Stage QG6b: the daily bonuses of the character (the GameEvent state, slot 68). */
+    DailyBonuses dailyBonuses;
     /**
      * The committed interaction of the character (stage 2.5a): a copy of the value of the interaction system. No value: none.
      * `interactionEnded` is the world revision of the last end of one (the Interactor state of a session that got the begin

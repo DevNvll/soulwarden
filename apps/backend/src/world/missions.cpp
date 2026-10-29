@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "core/logging/log.h"
+#include "gamedata/poi_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/quest_data.h"
 #include "world/interactions.h"
@@ -17,6 +18,42 @@ constexpr const char* kBoardService = "missionBoard";
 constexpr const char* kBoardOption = "OpenMissionBoardOption";
 /** The tag of the return task of the mission templates (CM_ReturnToGiver, InteractTag ReturnToGiver; factory 0x4461150, case 23). */
 constexpr const char* kReturnTag = "returntogiver";
+/** Stage QG6b: the service kind of a faction board (Interactions::grant_service). */
+constexpr const char* kFactionService = "factionBoard";
+constexpr std::uint64_t kDayNs = 86'400'000'000'000ULL;
+
+/** Stage QG6b: @return The faction of the mission types of a provider (the client enum: Syndicate 1, Marauder 2, Covenant 3), or 0. */
+std::uint8_t faction_of(const std::vector<std::string>& types) {
+    for (const std::string& type : types) {
+        const std::string name = gamedata::lower_text(type);
+        if (name == "syndicate") {
+            return 1;
+        }
+        if (name == "marauder") {
+            return 2;
+        }
+        if (name == "covenant") {
+            return 3;
+        }
+    }
+    return 0;
+}
+
+/** Stage QG6b: @return True for a faction representative of the data: a person with an ObjectiveProvider of a faction. */
+bool faction_provider(const gamedata::InteractionObject& object) {
+    return object.kind != gamedata::InteractionKind::missionBoard && object.provider && !object.provider->communityGoal
+           && faction_of(object.provider->missionTypes) != 0;
+}
+
+/** Stage QG6b: the generator of the faction offers: the LCG of java.util.Random (the rule of the town selection) [agent]. */
+struct OfferRandom {
+    std::uint64_t state;
+    explicit OfferRandom(std::uint64_t seed) : state((seed ^ kTownLcgMultiplier) & kTownLcgMask) {}
+    std::uint32_t next() {
+        state = (state * kTownLcgMultiplier + 11) & kTownLcgMask;
+        return static_cast<std::uint32_t>(state >> 16);
+    }
+};
 constexpr std::uint64_t kMinuteNs = 60'000'000'000ULL;
 
 /** @return The interval of the client: the float clamped to 1 or more (MAXSS), then truncated to a whole number of minutes (CVTTSS2SI). */
@@ -86,6 +123,10 @@ const char* mission_error_text(MissionError error) {
         return "the quest system refused";
     case MissionError::storeFailed:
         return "the database did not take the change";
+    case MissionError::badIndex:
+        return "the index is not an offer of the faction board";
+    case MissionError::wrongFaction:
+        return "the character is not of the faction of the board";
     }
     return "unknown";
 }
@@ -100,17 +141,31 @@ public:
     }
 
     [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context) override {
-        (void)character;
+        if (m_missions.data() == nullptr || context.object == nullptr) {
+            return InteractionVerdict::refused;
+        }
+        // Stage QG6b: a faction representative (OpenMissionBoardOption of its Interact component, or the conversation option 8 of the
+        // service Faction_Board: 0x37AD685 -> 0x376E845 -> OpenMissionBoardOption, action 51) opens its faction board for a character of its
+        // faction [client: the eligibility 0x37A7940 of the service; agent: the same check for the direct option].
+        if (context.object->kind != gamedata::InteractionKind::missionBoard) {
+            return faction_provider(*context.object) && character.faction.faction == faction_of(context.object->provider->missionTypes)
+                       ? InteractionVerdict::accepted
+                       : InteractionVerdict::refused;
+        }
         // A board is a level object that the client makes (its entity has its TerritoryInterface slot: Interactions::make_boards); with no
         // mission data the board offers nothing: refused.
         const Entity* board = m_world.interactions().source_entity(context);
-        if (m_missions.data() == nullptr || board == nullptr || board->kind != EntityKind::object || context.object == nullptr) {
+        if (board == nullptr || board->kind != EntityKind::object) {
             return InteractionVerdict::refused;
         }
         return InteractionVerdict::accepted;
     }
 
     void started(Entity& character, const InteractionContext& context) override {
+        if (context.object != nullptr && context.object->kind != gamedata::InteractionKind::missionBoard) {
+            (void)m_missions.faction_opened(character, *context.object);
+            return;
+        }
         const Entity* board = m_world.interactions().source_entity(context);
         if (board != nullptr && context.object != nullptr) {
             (void)m_missions.opened(character, context.object->key, *board);
@@ -129,6 +184,8 @@ private:
 Missions::Missions(World& world, state::Store& store, const gamedata::MissionData* data)
     : m_world(world), m_store(store), m_data(data), m_handler(std::make_unique<BoardHandler>(world, *this)) {
     m_world.interactions().register_handler(gamedata::InteractionKind::missionBoard, gamedata::interaction_option_id(kBoardOption), *m_handler);
+    // Stage QG6b: the faction board of a representative (a person with an ObjectiveProvider of its faction).
+    m_world.interactions().register_handler(gamedata::InteractionKind::npc, gamedata::interaction_option_id(kBoardOption), *m_handler);
     m_world.interactions().register_spawn_observer(*m_handler);
 }
 
@@ -145,16 +202,36 @@ std::uint16_t Missions::territory_of(const Entity& board) const {
 
 void Missions::entered(Entity& entity) {
     MissionBoardState state;
+    DailyBonuses bonuses;
     if (data() != nullptr) {
         for (const state::MissionOfferRow& row : m_store.list_mission_offers(entity.characterId)) {
             state.towns[row.territory] = MissionTownEntry{row.seed, row.unavailable, row.previousProjects};
         }
+        // Stage QG6b: the faction board entries and the daily bonuses of the character.
+        for (const state::FactionOfferRow& row : m_store.list_faction_offers(entity.characterId)) {
+            state.factionBoards[row.territory] = FactionBoardEntry{row.window, row.unavailable};
+        }
+        for (const state::DailyBonusRow& row : m_store.list_daily_bonuses(entity.characterId)) {
+            bonuses.uses[row.modifier] = DailyBonusUse{static_cast<std::uint8_t>(std::min<std::uint32_t>(row.used, 255)), row.resetNs};
+        }
         state.loaded = true;
+        bonuses.loaded = true;
     }
     entity.missionBoard = std::move(state);
+    entity.dailyBonuses = std::move(bonuses);
+    if (!entity.dailyBonuses.uses.empty()) {
+        m_world.touch(entity.id, ComponentKey::gameEvent);
+    }
     // The destinations of the missions of the character: the live boards of their providers (a value of the world).
     for (QuestInstance& quest : entity.quests.active) {
         if (quest.mission == 0 || quest.provider.empty()) {
+            continue;
+        }
+        if (!quest.communityGoal) {
+            // Stage QG6b: a faction mission: its destination is the claim of its origin territory (a value of the data).
+            const gamedata::InteractionData* interactions = m_world.interactions().data();
+            const auto claim = interactions != nullptr ? interactions->claim(quest.originTerritory) : std::nullopt;
+            quest.destination = claim.value_or(std::array<std::uint8_t, 16>{});
             continue;
         }
         m_byProvider[quest.provider].insert(entity.id);
@@ -269,7 +346,9 @@ TownOffers Missions::offers_of(const Entity& character, std::uint16_t territory)
     inputs.territory = territory;
     inputs.serverNs = m_world.clock().server_time_ns();
     inputs.projects = town_projects(territory);
-    inputs.level = character.progression.level == 0 ? 0 : character.progression.level - 1;
+    // Code review of stage QG6a, finding QG6AR-R1: the level of the screen. The request of the client (0x4955CAF, 0x4955EA6) takes the getter
+    // 0x3CEC5C0: the raw level plus the bonus level (0x3CEC3D0), plus 1 (0x3CEC5CA); the backend sends the screen level minus 1 as the raw level.
+    inputs.level = character.progression.level;
     const auto entry = character.missionBoard.towns.find(territory);
     return town_offers(inputs, entry != character.missionBoard.towns.end() ? &entry->second : nullptr, &character);
 }
@@ -284,6 +363,11 @@ bool Missions::opened(Entity& character, const std::string& boardKey, const Enti
     const TownOffers offers = offers_of(character, territory);
     MissionBoardState& state = character.missionBoard;
     state.opened = true;
+    // Stage QG6b: a town board has no explicit offer (field 2 is empty).
+    state.faction = false;
+    state.providerFaction = 0;
+    state.offerWindow = 0;
+    state.offers.clear();
     // The provider identity: the Claim landmark of the territory of the board (the provider component keeps it at +0x108, 0x3A47881;
     // CanCompleteMission 0x4954180 compares it with the destination of the return task) [client: DESTINATION.md].
     state.provider = board.object.providerIdentity;
@@ -317,24 +401,18 @@ bool Missions::opened(Entity& character, const std::string& boardKey, const Enti
     return true;
 }
 
-void Missions::complete_return(Entity& character, const QuestInstance& quest) {
+std::size_t Missions::pending_returns(const QuestInstance& quest) const {
     const gamedata::QuestData* quests = m_world.quests().data();
     const gamedata::QuestObjective* objective = quests != nullptr ? quests->objective_by_crc(quest.objectiveCrc, quest.mission) : nullptr;
-    QuestEvent event;
-    event.kind = QuestEventKind::interact;
-    event.keys = {kReturnTag};
-    event.restricted = true;
-    for (std::size_t index = 0; objective != nullptr && index < quest.tasks.size(); ++index) {
+    std::size_t count = 0;
+    for (std::size_t index = 0; objective != nullptr && index < quest.tasks.size() && index < objective->nodes.size(); ++index) {
         const gamedata::QuestNode& node = objective->nodes[index];
-        if (node.task != gamedata::kNoTask && quests->task(node.task).type == gamedata::task_type::kInteract
-            && quests->task(node.task).interactTag == kReturnTag && quest.tasks[index].state == quest_state::kActive) {
-            event.matched.emplace_back(quest.instance, static_cast<std::uint8_t>(index));
-        }
+        count += node.task != gamedata::kNoTask && quests->task(node.task).type == gamedata::task_type::kInteract
+                         && quests->task(node.task).interactTag == kReturnTag && quest.tasks[index].state == quest_state::kActive
+                     ? 1
+                     : 0;
     }
-    if (!event.matched.empty()) {
-        const QuestEventOutcome outcome = m_world.quests().event(character, event);
-        m_counts.returns += outcome.result == QuestEventResult::credited ? event.matched.size() : 0;
-    }
+    return count;
 }
 
 MissionResult Missions::accept(Entity& character, std::uint32_t mission, std::uint32_t destination) {
@@ -430,6 +508,11 @@ MissionResult Missions::complete(Entity& character, std::uint64_t instance) {
     if (quest == character.quests.active.end() || quest->mission == 0) {
         return refuse(MissionError::unknownInstance, "no active mission of this instance (a second hand-in, or a forged instance)");
     }
+    if (!quest->communityGoal) {
+        // Stage QG6b: a mission of a faction board.
+        const QuestInstance copy = *quest;
+        return complete_faction(character, copy, result);
+    }
     // The board of the service is the provider of the instance: the same key and the live child of the grant.
     const MissionBoardState& state = character.missionBoard;
     const Entity* board = board_of(quest->provider);
@@ -443,8 +526,9 @@ MissionResult Missions::complete(Entity& character, std::uint64_t instance) {
     // The return task (CM_ReturnToGiver: TaskInteract with the tag ReturnToGiver) stays pending until this request: the client offers the
     // completion only while the progress of the container is its child count minus one, with the return as the last child (the ready
     // check 0x3A3CC50, 0x3A3CDC2 to 0x3A3CDEC; DESTINATION.md section 3) [client; live: after a return at the open the card showed "Start
-    // Mission"]. The request at the provider board is the return: then the hand-in [agent].
-    complete_return(character, *quest);
+    // Mission"]. The request at the provider board is the return: then the hand-in [agent]. Stage QG6b: the return completes in the plan
+    // of the hand-in (Quests::hand_in with the tag), so that a refused hand-in leaves it pending (open problem 3 of QG6a).
+    const std::size_t pendingReturns = pending_returns(*quest);
     // The town entry: the mission is unavailable for the current seed (0x495DEB0 keeps the exclusions of a seed and clears them at a new
     // seed). Its row goes into the transaction of the hand-in (MP-7).
     const std::uint32_t mission = quest->mission;
@@ -471,15 +555,352 @@ MissionResult Missions::complete(Entity& character, std::uint64_t instance) {
         character.missionBoard.towns[territory] = entry;
         m_world.touch(character.id, ComponentKey::objectiveInteractor);
     };
-    result.handIn = m_world.quests().hand_in(character, instance, &hook);
+    result.handIn = m_world.quests().hand_in(character, instance, &hook, kReturnTag);
     if (!result.handIn.ok()) {
         return refuse(result.handIn.error == QuestError::storeFailed ? MissionError::storeFailed : MissionError::questRefused,
                       std::string(quest_error_text(result.handIn.error)) + (result.handIn.detail.empty() ? "" : ": " + result.handIn.detail));
     }
+    m_counts.returns += pendingReturns;
     ++m_counts.handIns;
     log::write("missions: character %s handed in the mission %08x at the board %s: %llu experience, %llu coin units, standing %llu",
                character.characterId.c_str(), mission, state.providerKey.c_str(), static_cast<unsigned long long>(result.handIn.experience),
                static_cast<unsigned long long>(result.handIn.coin), static_cast<unsigned long long>(result.handIn.standing));
+    return result;
+}
+
+bool Missions::faction_candidate(const gamedata::MissionRow& row, const Entity& character, std::uint16_t territory, std::uint8_t faction) const {
+    // [agent] (docs/systems/mission-boards.md, the faction boards): a world row of the faction of the board, enabled, not PvP, not an
+    // outpost destination, whose territory rule passes the territory of the board (0x39D3EC0), whose level bounds pass the level of the
+    // screen, whose trade skill rank and achievement conditional pass (the filter 0x3A09900 of the town offers), and that the backend can
+    // run (the client screen does not filter the offers: 0x3A43320, owmissionboard 0.19).
+    if (row.table != gamedata::MissionTable::world || !row.enabled || row.pvp || row.outpostDestination
+        || (gamedata::faction_mask(row.requiredFaction) & (1U << faction)) == 0) {
+        return false;
+    }
+    if (!row.territories.empty()) {
+        const bool listed = std::find(row.territories.begin(), row.territories.end(), territory) != row.territories.end();
+        if (listed == row.excludeTerritories) {
+            return false;
+        }
+    }
+    const std::uint32_t level = character.progression.level;
+    if ((row.minLevel != 0 && row.minLevel > level) || (row.maxLevel != 0 && row.maxLevel < level)) {
+        return false;
+    }
+    if (!row.tradeskill.empty() && character.skills.rank(gamedata::progression_id(row.tradeskill)) < row.tradeskillLevel) {
+        return false;
+    }
+    if (!row.achievementConditional.empty() && !m_world.quests().conditional(character, row.achievementConditional)) {
+        return false;
+    }
+    const gamedata::QuestData* quests = m_world.quests().data();
+    const gamedata::MissionBinding* binding = quests != nullptr ? quests->mission(row.crc) : nullptr;
+    if (binding == nullptr || binding->objective == nullptr || !binding->refusals.empty()) {
+        return false;
+    }
+    // [agent] the rewards of the success event of the row can be paid at the board (the reward join of the hand-in): an offer whose hand-in
+    // the backend refuses (a CurrencyReward with a fraction, the standing of a territory with no standing row) is no offer.
+    RewardJoin join;
+    std::string detail;
+    return m_world.quests().reward_join(character, *binding->objective, territory, join, detail, row.crc) == QuestError::none;
+}
+
+std::vector<MissionOffer> Missions::faction_offers(const Entity& character, std::uint16_t territory, std::uint8_t faction,
+                                                   std::uint64_t window) const {
+    std::vector<MissionOffer> offers;
+    const gamedata::MissionData* missions = data();
+    if (missions == nullptr || faction == 0) {
+        return offers;
+    }
+    ++m_counts.factionOfferRuns;
+    // The rows of the faction (an index of the data, made one time: the cost of an open is the rows of one faction, MP-8).
+    if (m_factionRows.empty()) {
+        m_factionRows.resize(4);
+        for (const gamedata::MissionRow& row : missions->missions()) {
+            for (std::uint8_t value = 1; value <= 3 && row.table == gamedata::MissionTable::world; ++value) {
+                if ((gamedata::faction_mask(row.requiredFaction) & (1U << value)) != 0) {
+                    m_factionRows[value].push_back(&row);
+                }
+            }
+        }
+    }
+    std::map<std::string, std::vector<std::uint32_t>> byGoal;
+    for (const gamedata::MissionRow* row : m_factionRows[faction]) {
+        ++m_counts.factionCandidateVisits;
+        if (faction_candidate(*row, character, territory, faction)) {
+            byGoal[row->goalType].push_back(row->crc);
+        }
+    }
+    // [agent] the original generator is not in the client (FACTION.md section 7): three slots of the weights (MissionWeightsData,
+    // FactionPvE, slots 1 to 3, the screen shows three PvE cards), each a goal by its weight among the goals with a candidate that no earlier
+    // slot took, then one candidate of that goal; the LCG of java.util.Random from FNV-1a 64 of the characterId plus the territory, the
+    // faction, and the window: the same offers for one character in one window, and a new set in the next window.
+    std::uint64_t seed = 0xCBF29CE484222325ULL;
+    for (const char letter : character.characterId) {
+        seed = (seed ^ static_cast<std::uint8_t>(letter)) * 0x100000001B3ULL;
+    }
+    OfferRandom random(seed + territory + (static_cast<std::uint64_t>(faction) << 16) + window / kMinuteNs);
+    std::set<std::uint32_t> taken;
+    for (std::uint8_t slot = 1; slot <= faction_rule::kSlots; ++slot) {
+        std::vector<std::pair<const gamedata::MissionWeight*, std::vector<std::uint32_t>>> goals;
+        std::uint64_t total = 0;
+        for (const gamedata::MissionWeight& weight : missions->weights()) {
+            if (weight.bucket != faction_rule::kWeightBucket || weight.slot != slot || weight.weight == 0) {
+                continue;
+            }
+            const auto found = byGoal.find(weight.goal);
+            std::vector<std::uint32_t> left;
+            for (std::size_t index = 0; found != byGoal.end() && index < found->second.size(); ++index) {
+                if (taken.count(found->second[index]) == 0) {
+                    left.push_back(found->second[index]);
+                }
+            }
+            if (!left.empty()) {
+                total += weight.weight;
+                goals.emplace_back(&weight, std::move(left));
+            }
+        }
+        if (goals.empty()) {
+            continue;
+        }
+        std::uint64_t pick = random.next() % total;
+        std::size_t chosen = 0;
+        while (pick >= goals[chosen].first->weight) {
+            pick -= goals[chosen].first->weight;
+            ++chosen;
+        }
+        const std::vector<std::uint32_t>& candidates = goals[chosen].second;
+        MissionOffer offer;
+        offer.mission = candidates[random.next() % candidates.size()];
+        offer.origin = territory;
+        offer.slot = slot;
+        offer.goal = goals[chosen].first->goal;
+        taken.insert(offer.mission);
+        offers.push_back(std::move(offer));
+    }
+    return offers;
+}
+
+bool Missions::faction_opened(Entity& character, const gamedata::InteractionObject& object) {
+    if (data() == nullptr || !character.missionBoard.loaded || !faction_provider(object)) {
+        return false;
+    }
+    ++m_counts.factionOpens;
+    const std::uint8_t faction = faction_of(object.provider->missionTypes);
+    const std::uint64_t now = m_world.clock().server_time_ns();
+    const gamedata::PoiData* pois = m_world.options().poiData;
+    const std::uint16_t territory = pois != nullptr && pois->loaded() ? pois->territory_at(object.position.x, object.position.y) : 0;
+    // The provider identity: the Claim landmark of the territory of the representative (m_useTerritoryId 1: the open 0x49592C0 takes the
+    // landmark of type 4 of the detected territory, 0x495941E to 0x4959435) [client: FACTION.md section 2]. No claim: the actor of the person.
+    const gamedata::InteractionData* interactions = m_world.interactions().data();
+    const auto claim = interactions != nullptr ? interactions->claim(territory) : std::nullopt;
+    // [agent] the offer window: the 30-minute grid of the town seed (the faction interval is not in the data or the client).
+    const std::uint64_t window = next_seed_ns(now, town_rule::kIntervalMinutes);
+    MissionBoardState& state = character.missionBoard;
+    state.opened = true;
+    state.faction = true;
+    state.providerFaction = faction;
+    state.provider = claim.value_or(object.actor);
+    state.providerKey = object.key;
+    state.territory = territory;
+    state.expirationNs = window;
+    state.offerWindow = window;
+    state.offers = faction_offers(character, territory, faction, window);
+    const auto entry = state.factionBoards.find(territory);
+    for (MissionOffer& offer : state.offers) {
+        offer.destination = state.provider;
+        // An offer that a hand-in of this window made unavailable, or whose mission is active (an accept: 0x495A166 keeps the offer with
+        // available 0) [agent: the same rule after a new open].
+        const bool handedIn = entry != state.factionBoards.end() && entry->second.window == window
+                              && std::find(entry->second.unavailable.begin(), entry->second.unavailable.end(), offer.mission)
+                                     != entry->second.unavailable.end();
+        const auto active = std::find_if(character.quests.active.begin(), character.quests.active.end(),
+                                         [&](const QuestInstance& quest) { return quest.mission == offer.mission; });
+        offer.available = !handedIn && active == character.quests.active.end();
+        offer.instance = active != character.quests.active.end() ? active->instance : 0;
+    }
+    m_world.touch(character.id, ComponentKey::objectiveInteractor);
+    std::vector<std::uint32_t> ids;
+    for (const MissionOffer& offer : state.offers) {
+        ids.push_back(offer.mission);
+    }
+    std::sort(ids.begin(), ids.end());
+    if (ids.empty()) {
+        ids.push_back(0);
+    }
+    (void)m_world.interactions().grant_service(character, kFactionService, ids, window);
+    std::string list;
+    for (const MissionOffer& offer : state.offers) {
+        const gamedata::MissionRow* row = m_data->mission(offer.mission);
+        list += (list.empty() ? "" : ", ") + std::to_string(offer.slot) + " " + offer.goal + " "
+                + (row != nullptr ? row->id : std::to_string(offer.mission)) + (offer.available ? "" : " (unavailable)");
+    }
+    log::write("missions: character %s opened the faction board %s (faction %u, territory %u): window %llu, offers [%s], daily bonuses %u",
+               character.characterId.c_str(), object.key.c_str(), static_cast<unsigned>(faction), static_cast<unsigned>(territory),
+               static_cast<unsigned long long>(window), list.c_str(), static_cast<unsigned>(daily_bonuses_left(character)));
+    return true;
+}
+
+MissionResult Missions::select(Entity& character, std::uint8_t index) {
+    MissionResult result;
+    const auto refuse = [&](MissionError error, std::string detail) {
+        result.error = error;
+        result.detail = std::move(detail);
+        ++m_counts.acceptRefusals;
+        log::write("missions: the accept of the faction offer %u by character %s is refused: %s (%s)", static_cast<unsigned>(index),
+                   character.characterId.c_str(), mission_error_text(error), result.detail.c_str());
+        return result;
+    };
+    const gamedata::QuestData* quests = m_world.quests().data();
+    if (data() == nullptr || quests == nullptr || !character.missionBoard.loaded) {
+        return refuse(MissionError::noData, "no data");
+    }
+    MissionBoardState& state = character.missionBoard;
+    if (!state.opened || !state.faction || !character.serviceGrant || character.serviceGrant->kind != kFactionService) {
+        return refuse(MissionError::noProvider, "no open faction board");
+    }
+    if (character.faction.faction != state.providerFaction) {
+        return refuse(MissionError::wrongFaction, "the faction of the character is not the faction of the board");
+    }
+    // [agent] the offers of a window: an accept after the end of the window of the open needs a new open (the client gets the new list).
+    if (next_seed_ns(m_world.clock().server_time_ns(), town_rule::kIntervalMinutes) != state.offerWindow) {
+        return refuse(MissionError::notOffered, "the offer window of the open ended");
+    }
+    if (index >= state.offers.size()) {
+        return refuse(MissionError::badIndex, "the board has " + std::to_string(state.offers.size()) + " offers");
+    }
+    MissionOffer& offer = state.offers[index];
+    if (const ServiceError error = m_world.interactions().require_service(character.characterId, kFactionService, offer.mission);
+        error != ServiceError::none) {
+        return refuse(MissionError::noProvider, service_error_text(error));
+    }
+    if (!offer.available) {
+        return refuse(MissionError::unavailable, "the offer is not available (an accept or a hand-in of this window)");
+    }
+    const gamedata::MissionBinding* binding = quests->mission(offer.mission);
+    if (binding == nullptr || binding->objective == nullptr || !binding->refusals.empty()) {
+        return refuse(MissionError::unsupported, binding == nullptr ? "no binding" : binding->refusals.empty() ? "no template" : binding->refusals.front());
+    }
+    MissionGrant grant;
+    grant.mission = offer.mission;
+    grant.communityGoal = false;
+    grant.provider = state.providerKey;
+    // The destination: the claim of the territory, the provider identity of the board (CanCompleteMission compares all 16 bytes,
+    // 0x49544C5 to 0x49544E2) [client; agent for the producer: FACTION.md section 2].
+    grant.destination = offer.destination;
+    const QuestResult granted = m_world.quests().grant_mission(character, *binding, offer.origin, grant);
+    if (granted.error == QuestError::alreadyActive) {
+        return refuse(MissionError::alreadyActive, "instance " + std::to_string(granted.instance));
+    }
+    if (!granted.ok()) {
+        return refuse(granted.error == QuestError::storeFailed ? MissionError::storeFailed : MissionError::questRefused,
+                      quest_error_text(granted.error));
+    }
+    // The accept keeps the offer in its place with available 0 (0x495A166, 0x3A69120): the order of the vector stays for the next index.
+    offer.available = false;
+    offer.instance = granted.instance;
+    m_world.touch(character.id, ComponentKey::objectiveInteractor);
+    ++m_counts.accepts;
+    ++m_counts.factionAccepts;
+    result.instance = granted.instance;
+    log::write("missions: character %s accepted the faction offer %u (%s) at %s (instance %016llx)", character.characterId.c_str(),
+               static_cast<unsigned>(index), binding->row->id.c_str(), state.providerKey.c_str(), static_cast<unsigned long long>(granted.instance));
+    return result;
+}
+
+std::uint8_t Missions::daily_bonuses_left(const Entity& character) const {
+    const gamedata::MissionData* missions = data();
+    if (missions == nullptr || missions->modifier(faction_rule::kDailyModifier) == nullptr) {
+        return 0;
+    }
+    const auto found = character.dailyBonuses.uses.find(gamedata::quest_crc(faction_rule::kDailyModifier));
+    const std::uint64_t now = m_world.clock().wall_time_ns(m_world.clock().now());
+    const std::uint8_t used = found != character.dailyBonuses.uses.end() && now < found->second.resetNs ? found->second.used : 0;
+    return used >= faction_rule::kDailyBonuses ? 0 : static_cast<std::uint8_t>(faction_rule::kDailyBonuses - used);
+}
+
+MissionResult Missions::complete_faction(Entity& character, const QuestInstance& quest, MissionResult result) {
+    const auto refuse = [&](MissionError error, std::string detail) {
+        result.error = error;
+        result.detail = std::move(detail);
+        ++m_counts.handInRefusals;
+        log::write("missions: the hand-in of the faction mission %016llx by character %s is refused: %s (%s)",
+                   static_cast<unsigned long long>(quest.instance), character.characterId.c_str(), mission_error_text(error), result.detail.c_str());
+        return result;
+    };
+    // [agent] the hand-in at the representative of the instance: its faction board open, its service, its source in range.
+    const MissionBoardState& state = character.missionBoard;
+    if (!state.opened || !state.faction || state.providerKey != quest.provider || !character.serviceGrant
+        || character.serviceGrant->kind != kFactionService) {
+        return refuse(MissionError::noProvider, "the provider of the instance is " + quest.provider);
+    }
+    if (const ServiceError error = m_world.interactions().require_source(character.characterId, kFactionService); error != ServiceError::none) {
+        return refuse(MissionError::noProvider, service_error_text(error));
+    }
+    const std::size_t pendingReturns = pending_returns(quest);
+    // The daily bonus (FactionMissionBonus): one use of the day while the character has one (the preview 0x31F4630 tests the available
+    // uses, 0x31F47E5 to 0x31F4806); the uses reset at 00:00 UTC [data: the daily reset hour 0 of playerbaseattributes; research
+    // factions.md V14].
+    const std::uint32_t modifierCrc = gamedata::quest_crc(faction_rule::kDailyModifier);
+    const gamedata::MissionModifier* modifier = data()->modifier(faction_rule::kDailyModifier);
+    const bool daily = modifier != nullptr && daily_bonuses_left(character) > 0;
+    RewardBonus bonus;
+    if (daily) {
+        bonus = RewardBonus{modifier->experience, modifier->currency, modifier->reputation, modifier->tokens};
+    }
+    const std::uint64_t wall = m_world.clock().wall_time_ns(m_world.clock().now());
+    DailyBonusUse use;
+    if (const auto found = character.dailyBonuses.uses.find(modifierCrc); found != character.dailyBonuses.uses.end() && wall < found->second.resetNs) {
+        use = found->second;
+    }
+    if (daily) {
+        ++use.used;
+        if (use.resetNs <= wall) {
+            use.resetNs = (wall / kDayNs + 1) * kDayNs;
+        }
+    }
+    // The faction board entry: the mission is unavailable for the window of the open (one row of the transaction of the hand-in).
+    const std::uint16_t territory = state.territory;
+    FactionBoardEntry entry;
+    if (const auto found = state.factionBoards.find(territory); found != state.factionBoards.end() && found->second.window == state.offerWindow) {
+        entry = found->second;
+    }
+    entry.window = state.offerWindow;
+    if (std::find(entry.unavailable.begin(), entry.unavailable.end(), quest.mission) == entry.unavailable.end()) {
+        entry.unavailable.push_back(quest.mission);
+    }
+    const std::uint32_t mission = quest.mission;
+    QuestCommitHook hook;
+    hook.write = [&]() {
+        return m_store.write_faction_offer(character.characterId, state::FactionOfferRow{territory, entry.window, entry.unavailable})
+               && (!daily || m_store.write_daily_bonus(character.characterId, state::DailyBonusRow{modifierCrc, use.used, use.resetNs}));
+    };
+    hook.apply = [&]() {
+        character.missionBoard.factionBoards[territory] = entry;
+        for (MissionOffer& offer : character.missionBoard.offers) {
+            if (offer.mission == mission) {
+                offer.available = false;
+            }
+        }
+        m_world.touch(character.id, ComponentKey::objectiveInteractor);
+        if (daily) {
+            character.dailyBonuses.uses[modifierCrc] = use;
+            m_world.touch(character.id, ComponentKey::gameEvent);
+        }
+    };
+    result.handIn = m_world.quests().hand_in(character, quest.instance, &hook, kReturnTag, daily ? &bonus : nullptr);
+    if (!result.handIn.ok()) {
+        return refuse(result.handIn.error == QuestError::storeFailed ? MissionError::storeFailed : MissionError::questRefused,
+                      std::string(quest_error_text(result.handIn.error)) + (result.handIn.detail.empty() ? "" : ": " + result.handIn.detail));
+    }
+    m_counts.returns += pendingReturns;
+    ++m_counts.handIns;
+    m_counts.dailyBonuses += daily ? 1 : 0;
+    log::write("missions: character %s handed in the faction mission %08x at %s: %llu experience, %llu coin units, reputation %llu, tokens "
+               "%llu%s",
+               character.characterId.c_str(), mission, state.providerKey.c_str(), static_cast<unsigned long long>(result.handIn.experience),
+               static_cast<unsigned long long>(result.handIn.coin), static_cast<unsigned long long>(result.handIn.reputation),
+               static_cast<unsigned long long>(result.handIn.tokens), daily ? " (with the daily bonus)" : "");
     return result;
 }
 

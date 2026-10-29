@@ -367,6 +367,20 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         }
         return reader.ok() ? static_cast<int>(reader.position()) : -1;
     }
+    case 497: { // GameEvent (stage QG6b): group 0 field 1 dailyBonusesUsed, a full vector of {modifier:u32 used:u8} (5-byte elements).
+        if (group != 0 || field != 1) {
+            return -1;
+        }
+        server::hub::Reader reader(rest);
+        if (reader.size() != 0) {
+            return -1;
+        }
+        if (reader.u8() == 1) {
+            reader.size64();
+        }
+        const std::uint32_t count = reader.size();
+        return reader.ok() ? static_cast<int>(reader.position() + 5U * count) : -1;
+    }
     case 1746: { // TerritoryInterface (stage QG6a): group 1 field 0, the progression data: the active map (17-byte entries), the completed
                  // projects (12), the default project (16), the status effects (12).
         if (group != 1 || field != 0) {
@@ -572,6 +586,7 @@ inline unsigned group_count(std::uint32_t type) {
     case 14:
     case 3829:
     case 3086:
+    case 497:
         return 1;
     case 3752:
     case 81:

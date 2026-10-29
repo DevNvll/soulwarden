@@ -71,6 +71,18 @@ struct MissionGrant {
 };
 
 /**
+ * Stage QG6b (docs/systems/mission-boards.md, the daily bonus): the additions of a reward modifier to the multipliers of a hand-in (the
+ * preview 0x31F4630 adds the row of FactionMissionBonus with the helper 0x5BF6120: experience x (1 + experience), coin x (1 + currency),
+ * tokens x (1 + reputation + tokens), reputation x (1 + reputation); the standing has no daily part). Each other part of the reward stays.
+ */
+struct RewardBonus {
+    double experience{0.0};
+    double currency{0.0};
+    double reputation{0.0};
+    double tokens{0.0};
+};
+
+/**
  * Stage QG6a (MP-7): the rows of another system that go into the one transaction of a quest change, and the change of that system after the
  * commit: the town entry of a mission hand-in (world/missions.h); the faction and its cost of a faction change (code review of stage QG7,
  * finding QG7R-R1). `write` runs in the batch (false: nothing commits); `apply` runs only after the commit.
@@ -244,6 +256,8 @@ struct HandInResult {
     /** The cause of a refusal for the log (the reward that cannot be paid, the item that does not fit). */
     std::string detail;
     std::uint64_t instance{0};
+    /** Stage QG6b: true when the daily bonus of a faction mission was part of the rewards (RewardBonus). */
+    bool bonus{false};
     std::uint64_t experience{0};
     /** The coin in the units of the wallet (150 is 1.50 coin). */
     std::uint64_t coin{0};
@@ -600,6 +614,8 @@ public:
     void items_touched(const Entity& entity);
     /** The accepted position of a character changed (World::place): its tasks of a place look again at the next tick. */
     void moved(const Entity& entity);
+    /** Stage QG6b: the look of the place tasks of a character one second after a patrol sample inside (a timer of the world clock). */
+    void patrol_due(EntityId id, const std::string& characterId);
     /**
      * Stage QG4: the inventory committed an equip of an item into the paperdoll of a character (Inventory::finish: a slot with the action
      * ItemEquipped). An item with OnEquipObjectiveId (the artifactObjectives of the item catalog) grants its objective at the next tick
@@ -698,8 +714,11 @@ public:
      * (with the undo of its temporary unlocks, the return of its items, the pin), writes the completion achievements, the experience, the
      * coin, and the reward items; then the entity, the bits, the items, the level, and the completed notice of the Objectives state. A
      * reward that the backend cannot pay, a full bag (decision D5 option A), or a refused write changes nothing: the quest stays ready.
+     * Stage QG6b: `returnTag` (lower case; empty: none) is the tag of the pending return tasks of a mission (TaskInteract ReturnToGiver):
+     * the plan of the hand-in completes them first, so that a refused hand-in also leaves the return pending (open problem 3 of QG6a).
      */
-    [[nodiscard]] HandInResult hand_in(Entity& entity, std::uint64_t instance, const QuestCommitHook* hook = nullptr);
+    [[nodiscard]] HandInResult hand_in(Entity& entity, std::uint64_t instance, const QuestCommitHook* hook = nullptr,
+                                       std::string_view returnTag = {}, const RewardBonus* bonus = nullptr);
     /**
      * Stage 1.8d: the one reward join of an objective for a character and an origin territory (the hand-in and the command `quest rewards`).
      * Stage QG1: the standing goes to the territory at the position of the character (World::territory_of; the fallback of the grant of the
@@ -831,6 +850,18 @@ private:
     std::unordered_map<EntityId, std::unique_ptr<Subscriptions>> m_subscriptions;
     std::set<EntityId> m_itemsDirty;
     std::set<EntityId> m_placesDirty;
+    /**
+     * Stage QG6b: the dwell time of each active patrol task (the character entity, the instance, the index): the time in a POI of its tags
+     * (nanoseconds of the world clock) and the time of the last sample inside (0: the last sample was outside). A value of the world entry:
+     * the progress (whole seconds) stays in the row of the task.
+     */
+    struct Dwell {
+        std::uint64_t dwellNs{0};
+        std::uint64_t sampleNs{0};
+    };
+    std::map<std::tuple<EntityId, std::uint64_t, std::uint8_t>, Dwell> m_dwell;
+    std::set<EntityId> m_patrolLooks;
+    void schedule_patrol(const Entity& entity);
     /** Stage QG2a: the characters whose level changed, and the characters whose bits changed (the push looks at the next tick). */
     std::set<EntityId> m_levelsDirty;
     std::set<EntityId> m_pushDirty;

@@ -90,10 +90,39 @@ struct MissionRow {
     bool outpostDestination{false};
     /** TaskTimerOverride (seconds) and UseGlobalStorageOverride: they change only a TaskTimer leaf and an item task. No value: blank. */
     std::optional<double> timerSeconds;
+    std::optional<bool> useGlobalStorage;
+    // Stage QG6b (docs/systems/mission-boards.md, the overrides): the cells that the task factory 0x4461150 gives the tasks of the template
+    // (the loader 0x39C4870; the static read evidence/quests/qg6b/implement/static/factory/FACTORY.md). A blank cell has no value.
+    /** POITagOverride (row +0x98, a list of tags in lower case) and TerritoryIDOverride (row +0x28). */
+    std::vector<std::string> poiTags;
+    std::uint16_t territoryOverride{0};
+    /** OverrideLocation (three numbers: the place of the pin). */
+    std::string location;
+    /** LootTagOverride (no row of the supported build has it). */
+    std::string lootTag;
+    /** TaskHaveAndReturnItemsOverride (row +0x38) and its quantity (row +0x3C). */
+    std::string item;
+    std::optional<std::uint32_t> itemQuantity;
+    /** The drop chances of the item (row +0x40: a creature or a gatherable; row +0x44: a chest), percent, and the drop sources (row +0x118). */
+    std::optional<double> itemDropChance;
+    std::optional<double> chestDropChance;
+    std::vector<std::string> dropSources;
+    /** TaskGiveAndTakeItemOverride (row +0x34): the item of a give, a give-and-take, and a remove. */
+    std::string giveItem;
     /**
-     * The override cells whose rule the backend does not have in stage QG6a (the POI and territory overrides, the item overrides, the loot
-     * tags, the patrols, the fort status): "COLUMN VALUE". QuestData::bind_missions refuses a row only when its template has a task that the
-     * cell changes (a cell with no task to change has no effect in the client either).
+     * PauseAndClearLootOnTaskCompleteOverride (row +0x141, +0x142; the loader 0x39C5933 reads only this spelling). The town table has the
+     * column PauseAndClearLootTagOnTaskCompleteOverride: the client loader does not read it (`pauseLootAlias`: the cell is there, no effect).
+     */
+    std::optional<bool> pauseLoot;
+    bool pauseLootAlias{false};
+    /** PatrolDuration (row +0x80, seconds) and PatrolPoi1 to PatrolPoi4 (row +0xF8, the tags in lower case, the blank cells skipped). */
+    std::optional<double> patrolSeconds;
+    std::vector<std::string> patrolPois;
+    /** RequiredFortControlStatus (blank in each row of the supported build). */
+    std::string fortStatus;
+    /**
+     * The other override cells (a column that the backend does not know): "COLUMN VALUE". QuestData::bind_missions refuses a row with one
+     * (a cell with no rule).
      */
     std::vector<std::pair<std::string, std::string>> overrides;
 };
@@ -117,6 +146,27 @@ struct MissionProject {
 struct TownBucket {
     std::uint8_t key{0};
     std::vector<std::uint32_t> missions;
+};
+
+/** Stage QG6b: one row of MissionWeightsData (the member weights): the bucket (FactionPvE, FactionPvP, Affinity), the slot, the goal, the weight. */
+struct MissionWeight {
+    std::string bucket;
+    std::uint32_t slot{0};
+    std::string goal;
+    std::uint32_t weight{0};
+};
+
+/**
+ * Stage QG6b: one row of RewardModifierData of the missions (the member rewardModifiers): the additions of a bonus to the multipliers of the
+ * reward preview (0x31F4630 with the helper 0x5BF6120: the row adds its values; static read FACTION.md section 5). A blank cell is 0.
+ */
+struct MissionModifier {
+    std::string id;
+    double experience{0.0};
+    double currency{0.0};
+    double standing{0.0};
+    double reputation{0.0};
+    double tokens{0.0};
 };
 
 class MissionData {
@@ -157,6 +207,12 @@ public:
     [[nodiscard]] const std::vector<TownBucket>& town_buckets() const {
         return m_townBuckets;
     }
+    /** Stage QG6b: @return The weight rows (empty: a file with no member weights: a faction board has no offer). */
+    [[nodiscard]] const std::vector<MissionWeight>& weights() const {
+        return m_weights;
+    }
+    /** Stage QG6b: @return The reward modifier of an id (any case), or null (a file with no member rewardModifiers: no daily bonus). */
+    [[nodiscard]] const MissionModifier* modifier(std::string_view id) const;
 
 private:
     bool fail(std::string cause);
@@ -169,6 +225,8 @@ private:
     std::unordered_map<std::uint32_t, std::size_t> m_projectByCrc;
     std::unordered_map<std::string, QuestGameEvent> m_events;
     std::vector<TownBucket> m_townBuckets;
+    std::vector<MissionWeight> m_weights;
+    std::vector<MissionModifier> m_modifiers;
 };
 
 } // namespace soulwarden::backend::gamedata

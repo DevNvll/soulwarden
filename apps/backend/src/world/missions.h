@@ -37,6 +37,10 @@
 //
 // World thread only. A route gives the world a task (World::call).
 
+namespace soulwarden::backend::gamedata {
+struct InteractionObject;
+} // namespace soulwarden::backend::gamedata
+
 namespace soulwarden::backend::world {
 
 class World;
@@ -54,6 +58,21 @@ inline constexpr std::uint32_t kSeedAddition = 0;
 /** The key of the active-project map of the TerritoryInterface state for an AlwaysAvailable project (the type enum 6 of the report). */
 inline constexpr std::uint8_t kAlwaysAvailableKey = 6;
 } // namespace town_rule
+
+/**
+ * Stage QG6b: the faction boards (docs/systems/mission-boards.md, the faction boards; static read
+ * evidence/quests/qg6b/implement/static/faction-board/FACTION.md).
+ */
+namespace faction_rule {
+/** The reward modifier of the daily bonus (the constant CRC-32 0x85D30F59 of the preview 0x31F4630) [client]. */
+inline constexpr const char* kDailyModifier = "FactionMissionBonus";
+/** The daily bonuses of a day: the registered default of javelin.daily-bonus-mission-count (0x616E608 to 0x616E62B) [client]. */
+inline constexpr std::uint8_t kDailyBonuses = 3;
+/** The PvE cards of the screen (owmissionboard NUM_MISSIONS_SHOWN) and the FactionPvE slots of the weights [client; data]. */
+inline constexpr std::uint8_t kSlots = 3;
+/** The bucket of the weights of a faction board (MissionWeightsData) [data]. */
+inline constexpr const char* kWeightBucket = "FactionPvE";
+} // namespace faction_rule
 
 /** The LCG of the town selection (0x3A36539, 0x3A36809 to 0x3A3683D): the multiplier and the 48-bit mask of java.util.Random. */
 inline constexpr std::uint64_t kTownLcgMultiplier = 0x5DEECE66DULL;
@@ -92,8 +111,8 @@ struct TownInputs {
     /** The active projects of the town (the CRC-32 of each lower-case ProjectId). */
     std::vector<std::uint32_t> projects;
     /**
-     * The level of the filter 0x3A09900: the value of the level request of the client (0x4955CAF, no added 1), the level index (the level
-     * of the screen minus 1; the objective eligibility 0x3A4C13E adds 1 to the same request) [client; inferred: docs/systems/mission-boards.md].
+     * The level of the filter 0x3A09900: the value of the level request of the client (0x4955CAF): the level of the screen (the getter
+     * 0x3CEC5C0 adds 1 to the raw level plus the bonus level; code review of stage QG6a, finding QG6AR-R1) [client].
      */
     std::uint32_t level{0};
 };
@@ -124,6 +143,10 @@ enum class MissionError : std::uint8_t {
     /** The quest system refused (not ready, the bag, a reward with no owner, the store). */
     questRefused,
     storeFailed,
+    /** Stage QG6b: the index of 3816 is not an offer of the faction board, or the offer is not available. */
+    badIndex,
+    /** Stage QG6b: the character has no faction, or another faction than the representative. */
+    wrongFaction,
 };
 
 [[nodiscard]] const char* mission_error_text(MissionError error);
@@ -151,6 +174,13 @@ struct MissionCounts {
     std::uint64_t offerRuns{0};
     std::uint64_t candidateVisits{0};
     std::uint64_t destinationUpdates{0};
+    /** Stage QG6b: the opens of a faction board, the offer computations, the candidates that they visited, the accepts of 3816, the daily
+     *  bonuses that a hand-in paid. */
+    std::uint64_t factionOpens{0};
+    std::uint64_t factionOfferRuns{0};
+    std::uint64_t factionCandidateVisits{0};
+    std::uint64_t factionAccepts{0};
+    std::uint64_t dailyBonuses{0};
 };
 
 /** The view of a character at a board (a command). */
@@ -196,6 +226,20 @@ public:
      */
     [[nodiscard]] MissionResult complete(Entity& character, std::uint64_t instance);
 
+    /**
+     * Stage QG6b: the accept of a faction offer (3816 OnObjectiveSelectionRequest: index:u8 into the PvE offers of field 2; 0x495CE70,
+     * 0x4959F10). The character from the session; the service of its faction board; an available offer of that index of the current window;
+     * no active instance of the mission; a mission that the backend can run. Then the instance; the offer stays with available 0 (0x495A166).
+     */
+    [[nodiscard]] MissionResult select(Entity& character, std::uint8_t index);
+    /**
+     * Stage QG6b: @return The faction offers of a character at a faction board of a territory and a faction in an offer window (the rule of
+     * the project: docs/systems/mission-boards.md; the original generator is not in the client). No change.
+     */
+    [[nodiscard]] std::vector<MissionOffer> faction_offers(const Entity& character, std::uint16_t territory, std::uint8_t faction,
+                                                           std::uint64_t window) const;
+    /** Stage QG6b: @return The daily bonuses of the modifier that a character has now (the maximum minus the uses of the day). */
+    [[nodiscard]] std::uint8_t daily_bonuses_left(const Entity& character) const;
     /** @return The town offers of a character for its board state now (no change). */
     [[nodiscard]] TownOffers offers_of(const Entity& character, std::uint16_t territory) const;
     /** @return The offers of the inputs and the town entry (the rule of the client; tests). */
@@ -220,10 +264,20 @@ private:
     [[nodiscard]] std::uint16_t territory_of(const Entity& board) const;
     /** Sets the destination of each mission of a character with the provider `key` to `actor` (the Objectives state when one changed). */
     void set_destinations(Entity& character, const std::string& key, const std::array<std::uint8_t, 16>& actor);
-    /** The return task of a mission at its provider board (the request 2461): the restricted interact event of the tag ReturnToGiver. */
-    void complete_return(Entity& character, const QuestInstance& quest);
+    /**
+     * @return The number of the Active return tasks of a mission (TaskInteract ReturnToGiver). Stage QG6b: the hand-in completes them in its
+     *         own plan (Quests::hand_in with the tag).
+     */
+    [[nodiscard]] std::size_t pending_returns(const QuestInstance& quest) const;
     [[nodiscard]] bool candidate(const gamedata::MissionRow& row, const TownInputs& inputs, const std::set<std::uint32_t>& allowed,
                                  const Entity* character) const;
+    /** Stage QG6b: the open of a faction board (a faction representative: a person with an ObjectiveProvider). */
+    bool faction_opened(Entity& character, const gamedata::InteractionObject& object);
+    /** Stage QG6b: @return True when a world mission row is a candidate of a faction board (the gates of the row, a binding that runs). */
+    [[nodiscard]] bool faction_candidate(const gamedata::MissionRow& row, const Entity& character, std::uint16_t territory,
+                                         std::uint8_t faction) const;
+    /** Stage QG6b: the hand-in of a faction mission (2461 at its representative), with the daily bonus. */
+    [[nodiscard]] MissionResult complete_faction(Entity& character, const QuestInstance& quest, MissionResult result);
 
     World& m_world;
     state::Store& m_store;
@@ -231,6 +285,8 @@ private:
     std::unique_ptr<BoardHandler> m_handler;
     /** The characters with a mission of each board (its key): a spawn of the board visits only them (MP-8). */
     std::map<std::string, std::set<EntityId>> m_byProvider;
+    /** Stage QG6b: the world rows of each faction (1 to 3), made at the first faction offer (an index of the data). */
+    mutable std::vector<std::vector<const gamedata::MissionRow*>> m_factionRows;
     mutable MissionCounts m_counts;
 };
 

@@ -495,8 +495,18 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         handle_objective_request(body, type);
         break;
     case kTypeCommunityGoalSelection:
+    case kTypeObjectiveSelection:
     case kTypeObjectiveCompletion:
         check_route(route, type, body, firstOfType);
+        // Code review of stage QG6a, finding QG6AR-R5 (the rule of QG7R-R7): the route of a board request is the actor of the character of
+        // the session (its ObjectiveInteractor facet); a request on another actor changes nothing, and the owner gets its states again.
+        if (const world::Entity* own = m_world.find(m_observer.own());
+            own != nullptr && (route.size() != own->actor.bytes.size() || !std::equal(route.begin(), route.end(), own->actor.bytes.begin()))) {
+            log::write("rep: board request (type %u) on a route that is not the actor of the character of the session: no change", type);
+            m_world.touch(own->id, world::ComponentKey::objectiveInteractor);
+            m_world.touch(own->id, world::ComponentKey::objectives);
+            break;
+        }
         handle_board_request(body, type);
         break;
     default:
@@ -2802,6 +2812,25 @@ void RepSession::handle_board_request(std::span<const std::uint8_t> body, std::u
         }
         const world::MissionResult result = m_world.missions().accept(*own, message->mission, message->destination);
         log::write("rep: the client accepts the mission %08x (destination %u, message %u): %s%s", message->mission, message->destination, type,
+                   world::mission_error_text(result.error), result.ok() ? (", instance " + std::to_string(result.instance)).c_str() : "");
+        if (!result.ok()) {
+            m_world.touch(own->id, world::ComponentKey::objectiveInteractor);
+        }
+        return;
+    }
+    if (type == kTypeObjectiveSelection) {
+        // Stage QG6b: the accept of a faction offer by its index in the mission vector of the provider state.
+        const std::optional<ObjectiveSelection> message = read_objective_selection(body);
+        if (!message) {
+            log::write("rep: faction mission accept (type %u, %zu bytes) does not have the form of the message: no change", type, body.size());
+            m_world.touch(own->id, world::ComponentKey::objectiveInteractor);
+            return;
+        }
+        if (!own_facet(*own, message->target, message->entity, kObjectiveInteractorComponentName, type, "faction mission accept")) {
+            return;
+        }
+        const world::MissionResult result = m_world.missions().select(*own, message->index);
+        log::write("rep: the client accepts the faction offer %u (message %u): %s%s", static_cast<unsigned>(message->index), type,
                    world::mission_error_text(result.error), result.ok() ? (", instance " + std::to_string(result.instance)).c_str() : "");
         if (!result.ok()) {
             m_world.touch(own->id, world::ComponentKey::objectiveInteractor);

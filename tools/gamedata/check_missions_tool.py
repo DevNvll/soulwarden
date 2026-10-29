@@ -89,7 +89,11 @@ def tables(town=None, world=None, projects=None, extra_missions=None) -> tool.Ta
                                                                           "Bucket": "FactionPvE", "MissionGoalType": "Raid",
                                                                           "Weight": "9000"}]))],
         tool.BOARD_TYPE: [("boards.datasheet", FakeSheet("Boards", [{"FlexibleMissionBoardId": "TestBoard", "MaxDisplayableMissionsCount": "6"}]))],
-        tool.OBJECTIVE_TYPE: [("objectives.datasheet", FakeSheet("Objectives", [{"ObjectiveID": "Test_Kill_Template", "Type": "CommunityGoal"}]))]})
+        tool.OBJECTIVE_TYPE: [("objectives.datasheet", FakeSheet("Objectives", [{"ObjectiveID": "Test_Kill_Template", "Type": "CommunityGoal"}]))],
+        # Stage QG6b: the reward modifiers (only the rows of the missions go into the file).
+        tool.MODIFIER_TYPE: [("modifiers.datasheet", FakeSheet("Modifiers", [{"Modifiers": "TestMissionBonus", "Experience": "2", "Currency": "9",
+                                                                              "FactionTokenModifier": "4"},
+                                                                             {"Modifiers": "Dungeon", "Experience": "1"}]))]})
 
 
 def case_rows() -> None:
@@ -127,6 +131,8 @@ def case_joins() -> None:
            f"joins: only the events of the missions, with their cells ({sorted(document['events'])})")
     report(len(document["weights"]) == 1 and document["weights"][0]["cells"]["Weight"] == "9000" and len(document["flexibleBoards"]) == 1,
            "joins: the weights and the flexible boards")
+    report(document["rewardModifiers"] == [{"id": "TestMissionBonus", "cells": {"Experience": "2", "Currency": "9", "FactionTokenModifier": "4"}}],
+           f"joins: the reward modifiers of the missions only, with their cells (stage QG6b; {document['rewardModifiers']})")
     diagnostics = document["diagnostics"]
     report(diagnostics["objectivesWithNoRow"] == ["Test_No_Row"] and diagnostics["projectsWithNoRow"] == ["NoProject"]
            and diagnostics["eventsWithNoRow"] == ["test_no_event"] and diagnostics["aliasColumnRows"] == 1,

@@ -599,6 +599,11 @@ backend. The tool of each system is also in the document of that system.
   about 10 s; needs an Oodle source. The tool stops with no file for a missing source, a missing column, two rows with one id or one
   CRC-32, or a territory cell of a wrong form; a reference that does not resolve is a counted diagnostic. Without the file the backend
   starts: the open of a board is refused (3743 result 2) and each accept is refused (test case QG6AK). `check_missions_tool.py` is the check (case QG6A-TOOL).
+  Stage QG6b adds the member `rewardModifiers`: the rows of RewardModifierData whose id has "Mission" (8 rows; the faction boards use
+  `FactionMissionBonus`, the bonus of a daily bonus mission), each with its cells as source text. The backend now also reads `weights`
+  (the goal weights of the slots of a faction board, bucket `FactionPvE`). A file of stage QG6a has no `rewardModifiers`: the backend
+  starts, and a faction mission gives no daily bonus. The loader refuses a town bucket member that is not a town row, has no goal of its
+  bucket, or comes two times (code review of stage QG6a, finding R4).
 - `interaction-data.json` format 5 (stage QG6a, [Mission boards](../systems/mission-boards.md)): the mission boards. The kind table has
   `OpenMissionBoardOption` (kind `missionBoard`, action 51). The board of a settlement is a child that the client makes (the spawner
   `Town_Project_Board`: m_spawnOnInitialize true), so it is an object of `objects` with the client id of its place (the rule of a
@@ -612,6 +617,11 @@ backend. The tool of each system is also in the document of that system.
   an object of the kind `missionBoard` with no member `board`, and a board slot at the slot of a bound. A backend of format 4 refuses
   the file. The check is `check_interactions_tool.py` (the board object and the cases board-not-community and board-client).
   `tools/release.sh` takes both files with the game data folder.
+  Stage QG6b keeps format 5 and adds two members. A person object with an ObjectiveProvider component has the member `provider` (the
+  same form as the provider of a board; the build: 63 persons, `counts.personProviders`; 57 of them have a faction type, the
+  representatives of the faction boards). The top-level member `claims` maps each territory id (text) to the ActorId of its Claim
+  landmark (hex, 16 bytes; the build: 13 territories): the provider identity of a faction board of that territory. A backend of stage
+  QG6a reads the file and does not use the two members.
 ## Commands
 
 ```sh
@@ -647,6 +657,11 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage QG6b changes `mission-data.json` (the member `rewardModifiers`) and `interaction-data.json` (still format 5: the member `claims`
+  and the member `provider` of 63 persons; the other objects keep their values). Write both from one game copy
+  (`tools/gamedata/missions.sh`, `interactions.sh`). A backend of stage QG6a reads the two new files and gives the same support manifest
+  as with the files of before (2,147 rows, 574 supported, 290 board missions; check of stage QG6b). The backend of stage QG6b with files
+  of stage QG6a has no faction board (no claim, no provider) and no daily bonus. `tools/release.sh` takes both files.
 - Stage QG6a adds `mission-data.json` and changes `interaction-data.json` (format 5: 13 board objects; the other objects, the server
   children, and the encounter objects keep their values).
   Write both from one game copy (`tools/gamedata/missions.sh`, `interactions.sh`). A backend of before stage QG6a refuses an

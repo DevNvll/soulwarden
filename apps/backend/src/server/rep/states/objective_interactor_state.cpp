@@ -9,7 +9,7 @@
 //                                 0x4958040, the domain of the clock correction 335): the start of the next seed of the town [agent]
 //   field 2  missionParams        a full replicated vector of ObjectiveCreationParams (reader 0x3A68000): `00 01 sequence:size64 count:size`;
 //                                 a town board has no explicit offer (the client generates the town offers: GetCurrentCommunityGoals
-//                                 0x4955A90), so the count is 0
+//                                 0x4955A90), so the count is 0; a faction board (stage QG6b) has its offers (the PvE list of 0x3A43320)
 //   field 3  m_communityGoals     a direct map (reader 0x3A68C60 -> 0x495DDA0 -> 0x494F320): count:size, then for each territory
 //                                 territory:u16 missionSeed:u32 unavailable:size u32* previousProjects:size u32* (no container header)
 // The town entry of a territory is the stored seed of the character and the missions that its hand-ins made unavailable for that seed; the
@@ -38,7 +38,28 @@ hub::Bytes encode_objective_interactor_state(const world::Entity& entity, View v
     params.size(0);
     params.u8(1);
     params.size64(sequence);
-    params.size(0);
+    // Stage QG6b: the explicit offers of a faction board, in the order that 3816 names by index (0x495CE70); a town board has none. An
+    // ObjectiveCreationParams element (reader 0x5CE92B0, 52 bytes with no ingredient): instanceId (0 before the accept, the accepted
+    // instance after it), missionId, destinationOverride (the claim), acceptTime 0, originTerritory, available, isCommunityGoal 0, the
+    // other flags 0, parent 0, no ingredient [client: FACTION.md section 3].
+    params.size(static_cast<std::uint32_t>(board.faction ? board.offers.size() : 0));
+    for (std::size_t index = 0; board.faction && index < board.offers.size(); ++index) {
+        const world::MissionOffer& offer = board.offers[index];
+        params.u64(offer.instance);
+        params.u32(offer.mission);
+        for (const std::uint8_t part : offer.destination) {
+            params.u8(part);
+        }
+        params.u64(0);
+        params.u16(offer.origin);
+        params.boolean(offer.available);
+        params.boolean(false); // isCommunityGoal
+        params.boolean(false); // isPoiObjective
+        params.boolean(false); // isDynamicPoiObjective
+        params.u64(0);         // parentObjectiveId
+        params.boolean(false); // isResetObjective
+        params.size(0);        // selectedIngredientVector
+    }
     hub::Writer& goals = state.field(0, 3);
     goals.size(static_cast<std::uint32_t>(board.towns.size()));
     for (const auto& [territory, town] : board.towns) {

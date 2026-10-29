@@ -88,8 +88,12 @@ QuestGameEvent read_game_event(const std::string& key, const EventCells& cells) 
     if (const std::string text = trimmed(cell(cells, "CurrencyReward")); !text.empty()) {
         const std::optional<double> value = whole_number(text);
         // Code review of stage QG2a, finding QG2R-R4: a fraction (2500.75) is not a whole number of the units of the wallet: unpaid.
-        if (value && *value >= 0.0 && std::floor(*value) == *value) {
-            event.coin = static_cast<std::uint64_t>(std::min(*value, 1e12));
+        // Stage QG6b: the cell of the data sheet is a float32 (the rule of AzothReward above): the source text 113.99999999999999 of
+        // CMission_Success_Crafting_ProvisionT1_Small is the cell 114 [live: the town screen and its popup show 1.14 coin]. A fraction of the
+        // float32 cell stays unpaid.
+        const float cellValue = value ? static_cast<float>(*value) : -1.0F;
+        if (value && cellValue >= 0.0F && std::floor(cellValue) == cellValue) {
+            event.coin = static_cast<std::uint64_t>(std::min(static_cast<double>(cellValue), 1e12));
         } else {
             event.unpaid.push_back("CurrencyReward " + text);
         }

@@ -21,7 +21,8 @@ The sources (the data tables in the pak files of the game copy; research mission
      The quest data has only the events of the objectives and of the tasks (tools/gamedata/quests.py), and a mission event is often only in
      a mission row (research mission-boards.md 2.3). The form of quest-data.json: the source text of each column of quests.EVENT_COLUMNS.
   5. The mission weights (MissionWeightsData) and the flexible boards (FlexibleMissionBoardData): the slots of the faction boards and of the
-     affinity boards (stage QG6b). Only their cells.
+     affinity boards (stage QG6b). Only their cells. Stage QG6b: the reward modifiers of the missions (RewardModifierData rows whose
+     Modifiers id has "Mission": FactionMissionBonus, the daily bonus of the faction boards; member "rewardModifiers").
   6. The goal buckets of the town missions in the order of the client (member "townBuckets"; static read
      evidence/quests/qg6a/implement/static/offers/OFFERS.md section 6). The client builds a map of the rows of the town table: the key is
      the missionId, the hash of 0x14A0FA0 (the 128-bit product with 0xDE5FB9D2630458E9, the sum of its two halves), 16,384 buckets for
@@ -45,7 +46,7 @@ Output (one line of JSON):
                  "territories": {"ids": [N, ...], "exclude": BOOL}, "cells": {COLUMN: TEXT, ...}}, ...],
    "projects": [{"id", "crc", "type", "level", "cells": {COLUMN: TEXT, ...}}, ...],
    "events": {EVENT: {"id", COLUMN: TEXT, ...}, ...},
-   "weights": [{"table", "cells"}, ...], "flexibleBoards": [{"cells"}, ...],
+   "weights": [{"table", "cells"}, ...], "flexibleBoards": [{"cells"}, ...], "rewardModifiers": [{"id", "cells"}, ...],
    "townBuckets": [{"key", "goal", "missions": [CRC, ...]}, ...],
    "diagnostics": {...}, "counts": {...}}
   The missions are in the order of the tables (the path order of the game copy) and of their rows. "crc" is the CRC-32 of the lower-case
@@ -81,7 +82,8 @@ PROJECT_TYPE = "TerritoryProgressionData"
 EVENT_TYPE = "GameEventData"
 WEIGHT_TYPE = "MissionWeightsData"
 BOARD_TYPE = "FlexibleMissionBoardData"
-KINDS = (MISSION_TYPE, PROJECT_TYPE, EVENT_TYPE, WEIGHT_TYPE, BOARD_TYPE, OBJECTIVE_TYPE)
+MODIFIER_TYPE = "RewardModifierData"
+KINDS = (MISSION_TYPE, PROJECT_TYPE, EVENT_TYPE, WEIGHT_TYPE, BOARD_TYPE, OBJECTIVE_TYPE, MODIFIER_TYPE)
 NEEDED = (MISSION_TYPE, PROJECT_TYPE)
 # The table of a mission by the end of its path (the supported build; another MissionData table is "other").
 TABLE_NAMES = {"javelindata_territoryprogression_missions.datasheet": "town", "javelindata_owg_mission.datasheet": "world",
@@ -277,6 +279,11 @@ def build(tables: Tables) -> dict:
     weights = [{"table": path.rsplit("/", 1)[-1], "cells": cells(sheet, row, set())}
                for path, sheet in tables.tables[WEIGHT_TYPE] for row in range(sheet.row_count)]
     boards = [{"cells": cells(sheet, row, set())} for _, sheet in tables.tables[BOARD_TYPE] for row in range(sheet.row_count)]
+    # Stage QG6b: the reward modifiers of the missions (RewardModifierData rows whose id has "Mission": the daily bonus FactionMissionBonus
+    # of the faction boards, AffinityMissionBonus of the flexible boards, and the rows Mission, Mission-, Mission+ of the quest flags).
+    modifiers = [{"id": sheet.source(row, "Modifiers").strip(), "cells": cells(sheet, row, {"Modifiers"})}
+                 for _, sheet in tables.tables[MODIFIER_TYPE] if "Modifiers" in sheet.columns for row in range(sheet.row_count)
+                 if "mission" in sheet.source(row, "Modifiers").strip().lower()]
     no_objective = sorted({mission["objective"] or f"(blank: {mission['id']})" for mission in missions
                            if not mission["objective"] or mission["objective"].lower() not in objective_ids}, key=str.lower)
     no_project = sorted({mission["cells"]["TerritoryProjectId"] for mission in missions
@@ -288,11 +295,11 @@ def build(tables: Tables) -> dict:
     for mission in missions:
         by_table[mission["table"]] = by_table.get(mission["table"], 0) + 1
     counts = {"missions": len(missions), "byTable": dict(sorted(by_table.items())), "projects": len(projects), "events": len(events),
-              "weights": len(weights), "flexibleBoards": len(boards),
+              "weights": len(weights), "flexibleBoards": len(boards), "rewardModifiers": len(modifiers),
               "killOverrides": sum(1 for mission in missions if mission["cells"].get("TaskKillContributionOverride")),
               "townBuckets": [[bucket["goal"], len(bucket["missions"])] for bucket in buckets]}
     return {"format": FORMAT, "missions": missions, "projects": projects, "events": events, "weights": weights, "flexibleBoards": boards,
-            "townBuckets": buckets, "diagnostics": diagnostics, "counts": counts}
+            "rewardModifiers": modifiers, "townBuckets": buckets, "diagnostics": diagnostics, "counts": counts}
 
 
 def write(target: Path, document: dict) -> None:

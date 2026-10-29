@@ -203,6 +203,13 @@ python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/
   a settings file; since the code review of stage 3.3b-S6), RK11 `check_projectile_tool.py`, RK12 `check_spell_tool.py`, and
   DL9 `tools/gamedata/check_progression_tool.py` (stage 1.1b): with no Python 3 these cases fail. `check_dev_sound.py TREE`
   checks a different tree (the proof of finding S6-R1 on the tree of stage 3.3b-S6: status 1).
+- Stage QG6b adds the cases QG6BA to QG6BF (`tests/mission_qg6b_tests.cpp`: the override cells, the delivery, the faction board and the
+  daily bonus, the patrol, the support manifest of the faction boards, the gather drop of a skinned body; [Mission
+  boards](../systems/mission-boards.md)) and QG6AR1 to QG6AR6 and QG6AR3B (`tests/review_qg6a_tests.cpp`: the corrections of the code
+  review of stage QG6a, findings QG6AR-R1 to R6; each case fails on the tree of stage QG6a). The mission fixture of the cases QG6A, QG6B,
+  and QG6AR is `tests/support/mission_fixture.h` (the made-up mission data, the board, the town of the test, and the accept). The state
+  decoder knows the state 497 (GameEvent). B11 checks the schema version 20 (the tables `character_faction_offers` and
+  `character_daily_bonuses`); V1 checks 34 state codecs.
 - Stage QG6a adds the cases QG6A-TOOL and QG6AA to QG6AL (`tests/mission_board_tests.cpp`: the mission boards; [Mission
   boards](../systems/mission-boards.md)) and QGR7A to QGR7I (`tests/review_qg7_tests.cpp`: the corrections of the code review of stage
   QG7, findings QG7R-R1 to R7, and one control case, QGR7G; each correction case fails on the tree of stage QG7). QG6A-TOOL runs

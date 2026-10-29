@@ -204,6 +204,12 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   `grant_source` give the entity of the source of a use and of a grant (a server child, or the entity of a level object). `require_source`
   is the check of a request with no offer id (the hand-in 2461): the same rules as `require_service`, but no id of an offer [agent]. The
   spawn observer (`register_spawn_observer`, `SpawnObserver::child_spawned`) gets each board entity at its start.
+- A faction board (stage QG6b, [Mission boards](mission-boards.md)): the mission system is also the handler of the kind `npc` with the
+  action `OpenMissionBoardOption` (51; the option 8 "Open Faction Board" of the conversation service `Faction_Board`). The open needs a
+  person with the member `provider` of a faction type (Marauder, Syndicate, Covenant) and a character of that faction, else the request
+  is refused and nothing changes [data; live: the Marauder representative of Everfall]. The open grants the service `factionBoard`; the
+  hand-in at a person (2461) needs that service from a representative of the territory of the mission (the provider identity is the
+  claim of the territory; `require_source`).
 - The TerritoryInterface state (type 1746) goes only to a board. The stations and the camps of a settlement have the component too (the
   interaction data names its slot), but the backend sends them no state: they got none before stage QG6a, and the live checks of their
   stages had none [agent].

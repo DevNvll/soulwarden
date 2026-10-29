@@ -7910,8 +7910,63 @@ the board), and isCommunityGoal 1 [static: `static/destination/DESTINATION.md`].
 row. The client joins the mission row by missionId and builds the effective tree with its override cells (the factory 0x4461150; case
 13 the kill override, case 23 the destination of TaskInteract `ReturnToGiver`) [static].
 
-**What is not proved**: the positions of the claims (field 14) and the map data; the explicit offers of field 2 of state 3829 (the
-faction boards, stage QG6b); the TerritoryInterface groups 0 and 2; the other project types of a town.
+**What is not proved**: the positions of the claims (field 14) and the map data; the TerritoryInterface groups 0 and 2; the other
+project types of a town. The explicit offers of field 2 are section 4.65 (stage QG6b).
+
+### 4.65 The faction mission board: the open at a representative, the offers of field 2, the accept 3816, the hand-in 2461, the GameEvent state (live proof of stage QG6b; static proof for the client code; the selection of the offers and the window are project rules)
+
+The static read is `~/Games/soulwarden/work/evidence/quests/qg6b/implement/static/faction-board/FACTION.md`; the live runs are in the
+result of stage QG6b (`RESULT.md` of the same folder).
+
+**The open**: a faction representative is a person with an ObjectiveProvider (m_editorProvidedMissionTypes Marauder, Syndicate, or
+Covenant; m_isCommunityGoalBoard 0; m_useTerritoryId 1) and the options OpenConversation and OpenMissionBoardOption of its Interact
+component [data: `coatgen/7b53567b/npc_1607_commander_*`]. The conversation offers the service Faction_Board as the option 8
+("Open Faction Board", 0x37AD685) when the state passes for the player; its selection closes the conversation and sends the ordinary
+interaction request 1589 with action 51 at the same person (0x376E845 -> 0x374EF70) [static; live: `option d183d760`, action 51, the
+answer 3743 result 1].
+
+**The provider state** (slot 10, type 3829, section 4.64) of a faction board:
+
+| Field | Value |
+| ---: | --- |
+| 0 | the actor id of the Claim landmark of the territory of the representative (0x495941E to 0x4959435: the same rule as a town board) [static; live: Everfall `1b939fd32e1c1a3c0000000000000000`] |
+| 1 | the end of the offer window (server clock nanoseconds) [agent] |
+| 2 | `00 01 sequence:size64 count:size`, then the offers: ObjectiveCreationParams of 52 bytes each (`instance:u64 missionId:u32 destination:16 acceptTime:u64 originTerritory:u16 available:u8 isCommunityGoal:u8 isPoi:u8 isDynamicPoi:u8 parent:u64 isReset:u8 ingredients:size`); instance 0 before the accept and the accepted instance after it, destination the claim, available 0 after the accept (0x495A166) [static: 0x5CE92B0, 0x3A43320; live: three cards] |
+| 3 | the town entries of the character (section 4.64) |
+
+The state apply 0x3A43320 splits field 2 into the PvE list and the PvP list by the row of each missionId; the screen
+(`owmissionboard.luac`) shows three PvE cards and the countdown of field 1 [static; live: "MARAUDERS MISSIONS", three cards, "Missions
+refresh in 20:12"].
+
+**The requests** (the component ObjectiveInteractor, slot 10):
+
+| Type | Name | Body | Answer |
+| ---: | --- | --- | --- |
+| 3816 | `ObjectiveInteractorComponentServerFacet_OnObjectiveSelectionRequest` (UUID 40B9177C-06DE-4725-9166-236BD7D4A7E8) | `target:u64 entity:u64 index:u8` (0 to 99) | no message: the Objectives state and the provider state |
+| 2461 | `OnObjectiveCompletionRequest` (section 4.64) | `target:u64 entity:u64 instance:u64` | no message |
+
+- 3816: RequestMissionSelectionById 0x495CE70 finds the missionId in the PvE list of the provider and sends its zero-based index (the
+  sender 0x494EB10, the reader 0x49493C0, the constraint 0x495D880) [static; live: a click on the second card sends the index 1].
+- The accepted element of the Objectives state (section 4.53) has isCommunityGoal 0, destinationOverride the claim, and
+  originTerritory the territory of the representative; the card shows "COMPLETED" when CanCompleteMission 0x4954180 passes (the same
+  claim) [live].
+
+**The GameEvent state** (slot 68 of the player slice, type 497, the constructor 0x31E5850) [static: FACTION.md section 5; live: "Daily
+Bonuses Available 3/3", then "2/3" after a hand-in with the bonus]:
+
+| Group | Field | Name | Value |
+| ---: | ---: | --- | --- |
+| 0 | 1 | dailyBonusesUsed | `00 01 sequence:size64 count:size`, then `{modifierCrc:u32 bonusesUsed:u8}` for each modifier (5 at most; reader 0x3205890, element reader 0x31DFDF0) |
+
+- The backend sends only field 1 (the field mask `02`), and only for a character with a use. GetAvailableDailyBonuses 0x31F1140 is the
+  maximum (the CVar default 3 of `javelin.daily-bonus-mission-count`, 0x616E608) minus the uses of the key of FactionMissionBonus
+  (0x85D30F59).
+- The reward preview (0x31F4630) adds the row FactionMissionBonus of RewardModifierData to the multipliers while a use is left:
+  experience × 3, coin × 10, tokens × 5, reputation and standing with no daily part [static; live: the card tooltip "400 Reputation,
+  2475 Tokens, 70.50 Coins, 250 Territory Standing, 2520 XP, Daily Bonus", and the backend paid these values].
+
+**What is not proved**: the original selection of the faction offers, the refresh interval, and the duplicate rules (the backend rule
+is in [Mission boards](systems/mission-boards.md)); the PvP accept 3818; the field 0 gameEvents of the GameEvent state.
 
 ## 5. Open items
 

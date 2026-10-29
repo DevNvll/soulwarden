@@ -338,7 +338,7 @@ void encoder_views(const Options&) {
         return fields_text(decode_state(codec.type, codec.encode(entity, view, clock)));
     };
     const std::span<const StateCodec> codecs = player_codecs();
-    check(codecs.size() == 33 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
+    check(codecs.size() == 34 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
               && codecs[2].slot == 16 && codecs[2].type == 11 && codecs[3].slot == 41 && codecs[3].type == 15
               && codecs[4].slot == 47 && codecs[4].type == 1652 && codecs[5].slot == 12 && codecs[5].type == 1195
               && codecs[6].slot == 19 && codecs[6].type == 3133 && codecs[7].slot == 66 && codecs[7].type == 3210
@@ -364,7 +364,8 @@ void encoder_views(const Options&) {
               && !codecs[30].afterObjectivesEnable && codecs[31].slot == 55 && codecs[31].type == 4176
               && codecs[31].key == world::ComponentKey::social && codecs[31].ownerOnly && codecs[31].afterObjectivesEnable
               && codecs[32].slot == 10 && codecs[32].type == 3829 && codecs[32].key == world::ComponentKey::objectiveInteractor
-              && codecs[32].ownerOnly && !codecs[32].afterObjectivesEnable
+              && codecs[32].ownerOnly && !codecs[32].afterObjectivesEnable && codecs[33].slot == 68 && codecs[33].type == 497
+              && codecs[33].key == world::ComponentKey::gameEvent && codecs[33].ownerOnly && !codecs[33].afterObjectivesEnable
               && std::count_if(codecs.begin(), codecs.end(), [](const StateCodec& codec) { return codec.afterObjectivesEnable; }) == 3,
           "one encoder for each component state: metadata (0, 10), player (9, 3935), movement (16, 11), vitals (41, 15), "
           "mana (47, 1652, user test 1), appearance (12, 1195), from stage 1.1b the entitlements (19, 3133) and the "
@@ -379,7 +380,8 @@ void encoder_views(const Options&) {
           "1755) and the GlobalStorage map (77, 2938), owner only, and from stage 3.7b the Crafting state (63, 205), owner only, and from "
           "stage 1.8a the seasons readiness (73, 5606) and the Objectives state (22, 3857), owner only, after the first 2709, and from "
           "stage QG7 the Faction state (49, 3152, owner and observers) and the empty Social state (55, 4176, owner only, after the first "
-          "2709), and from stage QG6a the ObjectiveInteractor state (10, 3829, owner only)");
+          "2709), and from stage QG6a the ObjectiveInteractor state (10, 3829, owner only), and from stage QG6b the GameEvent state (68, 497, "
+          "owner only)");
     check(!codecs[0].ownerOnly && !codecs[1].ownerOnly && !codecs[2].ownerOnly && !codecs[3].ownerOnly
               && codecs[4].ownerOnly && !codecs[5].ownerOnly && codecs[6].ownerOnly && codecs[7].ownerOnly && !codecs[8].ownerOnly
               && codecs[9].ownerOnly && !codecs[10].ownerOnly && codecs[11].ownerOnly && codecs[12].ownerOnly && codecs[13].ownerOnly

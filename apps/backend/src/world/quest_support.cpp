@@ -339,6 +339,8 @@ struct QuestSupport::Index {
      */
     std::unordered_map<std::uint32_t, std::vector<BoardMission>> boardMissions;
     std::size_t boardCount{0};
+    /** Stage QG6b: the faction boards of the data (the representatives with an ObjectiveProvider of a faction). */
+    std::size_t factionBoardCount{0};
     /**
      * Stage QG7: the rank-up rows of the validation lists of the base attributes (entry K + 1 of RankupObjectiveIds; lower case): the
      * faction system grants each one after the trial achievement K (Quests::next_rank_up).
@@ -364,6 +366,8 @@ struct QuestSupport::Index {
     std::unordered_set<std::string> killEvents;
     /** Stage QG2a: the categories of the quest drops of a kill (the rule of the kill with no id of the base row). */
     std::unordered_set<std::string> dropCategories;
+    /** Stage QG6b: the drop categories of the placed creatures whose body can be skinned (a gather drop of a body matches them). */
+    std::unordered_set<std::string> skinCategories;
     /**
      * The producers of the game events of a gather or of an encounter (lower case event id): each with its kind, the rank gate of a trade
      * skill that only a hand-in gives (stage QG5b: AzothStaff; empty: none), and the item of its restriction ItemRequired (empty: none).
@@ -560,6 +564,44 @@ void QuestSupport::build() {
                 }
             }
         }
+        // Stage QG6b: the faction boards of the data (the persons with an ObjectiveProvider of a faction: the representatives). A board gives
+        // each world row of its faction that is enabled, not PvP, not an outpost destination, and whose territory rule passes its territory
+        // (the offer rule of Missions::faction_candidate; the level, the trade skill, the achievement conditional, and the window of the offer
+        // are the gates of a history).
+        for (std::size_t at = 0; at < options.interactionData->objects().size(); ++at) {
+            const gamedata::InteractionObject& person = options.interactionData->objects()[at];
+            if (person.kind == gamedata::InteractionKind::missionBoard || !person.provider || person.provider->communityGoal) {
+                continue;
+            }
+            std::uint8_t faction = 0;
+            for (const std::string& type : person.provider->missionTypes) {
+                const std::uint8_t mask = gamedata::faction_mask(type);
+                faction = mask == 0x2 ? 1 : mask == 0x4 ? 2 : mask == 0x8 ? 3 : faction;
+            }
+            if (faction == 0) {
+                continue;
+            }
+            ++index.factionBoardCount;
+            const std::uint16_t territory = options.poiData != nullptr && options.poiData->loaded()
+                                                ? options.poiData->territory_at(person.position.x, person.position.y)
+                                                : 0;
+            for (const gamedata::MissionRow& row : missions->missions()) {
+                if (row.table != gamedata::MissionTable::world || !row.enabled || row.pvp || row.outpostDestination || seen.count(row.crc) != 0
+                    || (gamedata::faction_mask(row.requiredFaction) & (1U << faction)) == 0) {
+                    continue;
+                }
+                if (!row.territories.empty()
+                    && (std::find(row.territories.begin(), row.territories.end(), territory) != row.territories.end()) == row.excludeTerritories) {
+                    continue;
+                }
+                const gamedata::MissionBinding* binding = data.mission(row.crc);
+                if (binding == nullptr || binding->templateObjective == nullptr) {
+                    continue;
+                }
+                seen.insert(row.crc);
+                index.boardMissions[binding->templateObjective->crc].push_back(BoardMission{binding, person.key, territory});
+            }
+        }
     }
     for (std::uint32_t at = 0; at < objectives.size(); ++at) {
         const QuestObjective& objective = objectives[at];
@@ -687,6 +729,15 @@ void QuestSupport::build() {
                                                        : std::vector<std::string>{lower_text(kind.vitals), lower_text(kind.category)};
             index.killCategories.insert(categories.begin(), categories.end());
             index.dropCategories.insert(drops.begin(), drops.end());
+            // Stage QG6b (GATHERDROP.md): the gather of a skinned body matches a category of its creature too (Gathering::complete).
+            const bool skinnable = options.gatheringData != nullptr
+                                   && std::any_of(kind.bodies.begin(), kind.bodies.end(), [&](const gamedata::CreatureBody& body) {
+                                          const gamedata::CreatureSlice& slice = creatures->slices()[body.slice];
+                                          return options.gatheringData->creature(slice.asset, slice.subId).has_value();
+                                      });
+            if (skinnable) {
+                index.skinCategories.insert(drops.begin(), drops.end());
+            }
             index.killEvents.insert(vitals != nullptr && !vitals->event.empty() ? vitals->event : std::string(gamedata::kKillEvent));
             if (vitals != nullptr && vitals->canDropLoot && vitals->table && *vitals->table < options.lootTables->data().tables.size()) {
                 roots.emplace_back(options.lootTables->data().tables[*vitals->table].id, "the loot of the creature " + kind.vitals);
@@ -880,7 +931,7 @@ void QuestSupport::build() {
             }
             const bool gather = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
             for (const std::string& source : task.dropSources) {
-                if (gather ? index.gatherRows.count(source) != 0 : index.dropCategories.count(source) != 0) {
+                if (gather ? index.gatherRows.count(source) != 0 || index.skinCategories.count(source) != 0 : index.dropCategories.count(source) != 0) {
                     index.gives[at].push_back(lower_text(task.itemName));
                     index.questItems.emplace(lower_text(task.itemName), "the quest drop of " + source);
                     break;
@@ -1213,7 +1264,8 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
             break;
         case task_type::kGoToPoi:
         case task_type::kGoToPoiOnTerritory:
-        case task_type::kExitPoi: {
+        case task_type::kExitPoi:
+        case task_type::kPatrol: { // Stage QG6b: the patrol is the time in a POI of its tags (Quests: the dwell of the task).
             std::string tags;
             for (const std::string& tag : task.poiTags) {
                 places.push_back(tag);
@@ -1397,9 +1449,10 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
         }
         case task_type::kInteract:
             objects.push_back(task.interactTag);
-            if (mission != nullptr && mission->binding->row->returnToGiver && task.interactTag == "returntogiver") {
+            if (mission != nullptr && task.interactTag == "returntogiver") {
                 // Stage QG6a: the return task of a mission template goes to its provider (factory 0x4461150, case 23): the open of the board.
-                fact.supplier = "the provider board of the mission (ReturnToGiverOverride)";
+                // Stage QG6b: by the tag only (0x4462726: the factory does not read ReturnToGiverOverride, row +0x14B; FACTORY.md section 3).
+                fact.supplier = "the provider board of the mission (the return tag)";
             } else if (index.objectTags.count(task.interactTag) == 0) {
                 block("no object of the data has the interact tag " + task.interactTag);
             } else {
@@ -1419,7 +1472,7 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
             if (drop) {
                 const bool gather = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
                 for (const std::string& source : task.dropSources) {
-                    if (gather ? index.gatherRows.count(source) != 0 : index.dropCategories.count(source) != 0) {
+                    if (gather ? index.gatherRows.count(source) != 0 || index.skinCategories.count(source) != 0 : index.dropCategories.count(source) != 0) {
                         dropSource = source;
                         break;
                     }
@@ -1609,8 +1662,12 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
         }
         destination = mission->territory;
     }
-    const QuestError reward = m_world.quests().reward_join(
-        SkillSet{}, payer, m_world.quests().standing_territory(destination, objective.exclusiveTerritory.value_or(kNewStartTerritory)), join, detail);
+    // Stage QG6b: the standing of a board mission goes to the territory of its board (the hand-in at the board, and the origin of the
+    // instance for GrantRewardsToOriginTerritory: Quests::reward_join), with no fallback (a territory with no standing row refuses).
+    const std::uint16_t standingAt = mission != nullptr ? mission->territory
+                                                        : m_world.quests().standing_territory(destination,
+                                                                                              objective.exclusiveTerritory.value_or(kNewStartTerritory));
+    const QuestError reward = m_world.quests().reward_join(SkillSet{}, payer, standingAt, join, detail);
     row.rewards = reward == QuestError::none;
     row.rewardDetail = detail;
     json items = json::array();
@@ -2307,6 +2364,17 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
         document["counts"] = json{{"rows", 0}};
         return document;
     }
+    // Stage QG6b: the items with a source of the world and the items that only a quest gives (the indexes of the possession facts): the
+    // second computation decides each board mission with its effective items from them.
+    std::set<std::string> worldItems;
+    std::set<std::string> questItems;
+    for (const auto& [item, source] : m_index->items) {
+        worldItems.insert(item);
+    }
+    for (const auto& [item, source] : m_index->questItems) {
+        questItems.insert(item);
+    }
+    document["itemSources"] = json{{"world", worldItems}, {"quest", questItems}};
     const gamedata::QuestData& data = *m_index->quests;
     const auto& objectives = data.objectives();
     std::vector<Row> rows;
@@ -2317,6 +2385,7 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
     std::map<std::string, std::uint64_t> supportedKinds;
     // Stage QG6a: the board mission of each template row whose evaluation the row keeps (the first supported one, else the first one).
     std::vector<const BoardMission*> missionOf(objectives.size(), nullptr);
+    std::vector<json> missionResults(objectives.size(), json::array());
     std::uint64_t boardMissions = 0;
     std::uint64_t boardMissionsRun = 0;
     for (std::uint32_t at = 0; at < objectives.size(); ++at) {
@@ -2327,6 +2396,9 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
                 ++boardMissions;
                 Row board = evaluate(at, &found->second[candidate]);
                 boardMissionsRun += board.supported ? 1 : 0;
+                // Stage QG6b: the result of each board mission of the row (the second computation compares each one).
+                missionResults[at].push_back(json{{"id", found->second[candidate].binding->row->id}, {"supported", board.supported},
+                                                  {"cause", board.blocked.empty() ? std::string() : board.blocked.front()}});
                 if (missionOf[at] == nullptr || (board.supported && !rows.back().supported)) {
                     missionOf[at] = &found->second[candidate];
                     rows.back() = std::move(board);
@@ -2405,6 +2477,7 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
         if (missionOf[at] != nullptr) {
             // Stage QG6a: the board mission of the evaluation of a template row.
             entry["mission"] = json{{"id", missionOf[at]->binding->row->id}, {"board", missionOf[at]->board}, {"territory", missionOf[at]->territory}};
+            entry["boardMissions"] = missionResults[at];
         }
         if (primary != nullptr) {
             entry["primary"] = primary->played[at] ? json{{"played", true}, {"round", primary->round[at]}}
@@ -2426,6 +2499,7 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
                               {"supportedByKind", supportedKinds},
                               {"firstReasonOfTheOthers", reasons},
                               {"boards", m_index->boardCount},
+                              {"factionBoards", m_index->factionBoardCount},
                               {"boardMissions", boardMissions},
                               {"boardMissionsRunnable", boardMissionsRun},
                               {"levelCap", m_index->levelCap},

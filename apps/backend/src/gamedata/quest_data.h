@@ -69,6 +69,12 @@ inline constexpr std::uint8_t kObjective = 52;
 inline constexpr std::uint8_t kOpenUiScreen = 62;
 inline constexpr std::uint8_t kTimer = 64;
 inline constexpr std::uint8_t kDie = 65;
+/**
+ * Stage QG6b: PatrolTask (factory 0x4461150, case 66): the client makes a TaskGoToDuration (constructor 0x3B00D70) with the id and the index
+ * of the row: the time in a POI of its tags sums across the visits and pauses outside (update 0x3B094A0); its target is the whole seconds of
+ * its duration.
+ */
+inline constexpr std::uint8_t kPatrol = 66;
 inline constexpr std::uint8_t kCraftMultipleRecipes = 86;
 } // namespace task_type
 
@@ -358,6 +364,13 @@ struct MissionBinding {
     std::vector<std::string> refusals;
 };
 
+/** Stage QG6b: the effective objective of one mission row (QuestData::apply_overrides). */
+struct MissionOverrides {
+    /** The template with the changed leaves (no value: no cell of the row changes a task of the template). */
+    std::optional<QuestObjective> variant;
+    std::vector<std::string> refusals;
+};
+
 class QuestData {
 public:
     /**
@@ -403,6 +416,8 @@ public:
     void bind_missions(const MissionData& missions);
     /** Stage QG6a: @return The binding of a missionId, or null (no mission data, or no such mission). */
     [[nodiscard]] const MissionBinding* mission(std::uint32_t missionCrc) const;
+    /** Stage QG6b: @return The target of a patrol leaf (TaskGoToDuration 0x3B00DB1): the whole seconds of its duration; 0 seconds: 1. */
+    [[nodiscard]] static std::uint32_t patrol_target(const QuestTask& task);
     /** Stage QG6a: @return The number of the bound missions and of the variants (a log line). */
     [[nodiscard]] std::size_t mission_count() const {
         return m_missions.size();
@@ -438,6 +453,10 @@ public:
 
 private:
     bool fail(std::string cause);
+    /** Stage QG6b: the effective objective of a mission row (the rules of the task factory 0x4461150; FACTORY.md). */
+    [[nodiscard]] MissionOverrides apply_overrides(const MissionRow& row, const QuestObjective& base);
+    /** @return True when two tasks have the same values of each cell that a mission override changes. */
+    [[nodiscard]] static bool same_effect(const QuestTask& left, const QuestTask& right);
 
     bool m_loaded{false};
     std::string m_error;

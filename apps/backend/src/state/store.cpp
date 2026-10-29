@@ -15,7 +15,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 19;
+constexpr int kSchemaVersion = 20;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -436,13 +436,36 @@ CREATE TABLE IF NOT EXISTS character_mission_offers(
 );
 )sql";
 
+/**
+ * Version 20 (stage QG6b: the faction boards, docs/systems/mission-boards.md). The faction board entries of a character
+ * (`character_faction_offers`: the territory, the offer window, the unavailable missions as a list of hexadecimal CRC-32 values) and the uses
+ * of its daily bonuses (`character_daily_bonuses`: the CRC-32 of the reward modifier, the uses, the next reset in Unix nanoseconds).
+ */
+constexpr const char* kMigration20FactionBoards = R"sql(
+CREATE TABLE IF NOT EXISTS character_faction_offers(
+    character_id TEXT NOT NULL,
+    territory INTEGER NOT NULL,
+    offer_window INTEGER NOT NULL,
+    unavailable TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(character_id, territory)
+);
+CREATE TABLE IF NOT EXISTS character_daily_bonuses(
+    character_id TEXT NOT NULL,
+    modifier INTEGER NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    reset_ns INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(character_id, modifier)
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
                                             "loot_claims",   "loot_claim_items",    "loot_bags",          "loot_bag_items",
                                             "craft_cooldowns", "character_quests",  "character_quest_tasks", "character_quest_pins",
                                             "character_quest_grants", "character_quest_undo", "character_quest_awards",
-                                            "character_quest_repeats", "character_factions", "character_mission_offers"};
+                                            "character_quest_repeats", "character_factions", "character_mission_offers",
+                                            "character_faction_offers", "character_daily_bonuses"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -757,6 +780,13 @@ bool Store::migrate() {
             ok = present || execute(sql);
         }
         if (!ok || !execute(kMigration19Missions) || !execute("PRAGMA user_version=19") || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 20) {
+        // Stage QG6b: the faction boards and the daily bonuses.
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration20FactionBoards) || !execute("PRAGMA user_version=20") || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
         }
@@ -2143,6 +2173,77 @@ bool Store::write_mission_offer(const std::string& characterId, const MissionOff
     const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
     if (!ok) {
         log::write("store: no write of the mission offers of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::vector<FactionOfferRow> Store::list_faction_offers(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<FactionOfferRow> rows;
+    Statement statement(m_database, "SELECT territory, offer_window, unavailable FROM character_faction_offers WHERE character_id=?1 ORDER BY territory");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        const sqlite3_int64 territory = sqlite3_column_int64(statement.handle, 0);
+        if (territory <= 0 || territory > 0xFFFF) {
+            continue;
+        }
+        FactionOfferRow row;
+        row.territory = static_cast<std::uint16_t>(territory);
+        row.window = static_cast<std::uint64_t>(sqlite3_column_int64(statement.handle, 1));
+        row.unavailable = crc_list_of(column_text(statement.handle, 2));
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+bool Store::write_faction_offer(const std::string& characterId, const FactionOfferRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "INSERT INTO character_faction_offers(character_id, territory, offer_window, unavailable) VALUES(?1, ?2, ?3, ?4) "
+                                    "ON CONFLICT(character_id, territory) DO UPDATE SET offer_window=excluded.offer_window, "
+                                    "unavailable=excluded.unavailable");
+    statement.bind(1, characterId);
+    sqlite3_bind_int64(statement.handle, 2, static_cast<sqlite3_int64>(row.territory));
+    sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(row.window));
+    statement.bind(4, crc_list_text(row.unavailable));
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of the faction board entry of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::vector<DailyBonusRow> Store::list_daily_bonuses(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<DailyBonusRow> rows;
+    Statement statement(m_database, "SELECT modifier, used, reset_ns FROM character_daily_bonuses WHERE character_id=?1 ORDER BY modifier");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        DailyBonusRow row;
+        row.modifier = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 0));
+        row.used = static_cast<std::uint32_t>(std::max<sqlite3_int64>(sqlite3_column_int64(statement.handle, 1), 0));
+        row.resetNs = static_cast<std::uint64_t>(sqlite3_column_int64(statement.handle, 2));
+        rows.push_back(row);
+    }
+    return rows;
+}
+
+bool Store::write_daily_bonus(const std::string& characterId, const DailyBonusRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "INSERT INTO character_daily_bonuses(character_id, modifier, used, reset_ns) VALUES(?1, ?2, ?3, ?4) "
+                                    "ON CONFLICT(character_id, modifier) DO UPDATE SET used=excluded.used, reset_ns=excluded.reset_ns");
+    statement.bind(1, characterId);
+    sqlite3_bind_int64(statement.handle, 2, static_cast<sqlite3_int64>(row.modifier));
+    sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(row.used));
+    sqlite3_bind_int64(statement.handle, 4, static_cast<sqlite3_int64>(row.resetNs));
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of the daily bonus of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
     }
     return end_write(ok);
 }

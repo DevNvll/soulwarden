@@ -51,9 +51,31 @@ json offers_json(const world::World& world, const world::TownOffers& offers) {
     return list;
 }
 
+/** Stage QG6b: the explicit offers of a faction board (field 2 of the provider state) in the order of the vector that 3816 names. */
+json faction_offers_json(const world::World& world, const world::MissionBoardState& board) {
+    json list = json::array();
+    for (std::size_t index = 0; board.faction && index < board.offers.size(); ++index) {
+        const world::MissionOffer& offer = board.offers[index];
+        list.push_back({{"index", index},
+                        {"mission", mission_name(world, offer.mission)},
+                        {"missionId", hex32(offer.mission)},
+                        {"slot", offer.slot},
+                        {"goal", offer.goal},
+                        {"available", offer.available},
+                        {"instance", offer.instance}});
+    }
+    return list;
+}
+
 } // namespace
 
 WorldCommand mission_board(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    // Code review of stage QG6a, finding QG6AR-R6: the board state and the search of the future offers are a diagnostic: the process gate
+    // of the harness (AGENTS.md), also on the admin path.
+    if (!harness_gate()) {
+        refusal = message(403, "the mission board diagnostic is a harness command: the backend needs SOULWARDEN_HARNESS=1");
+        return {};
+    }
     const auto mission = arguments.text("mission");
     const auto windows = arguments.integer("windows", 1, 400);
     const auto territory = arguments.integer("territory", 1, 65535);
@@ -105,7 +127,11 @@ WorldCommand mission_board(const std::string& character, const Arguments& argume
                                  {"provider", board.providerKey},
                                  {"providerActor", actor_hex(board.provider)},
                                  {"territory", board.territory},
-                                 {"expirationNs", board.expirationNs}}},
+                                 {"expirationNs", board.expirationNs},
+                                 {"faction", board.faction},
+                                 {"providerFaction", board.providerFaction},
+                                 {"factionOffers", faction_offers_json(target, board)}}},
+                      {"dailyBonusesLeft", target.missions().daily_bonuses_left(*entity)},
                       {"towns", towns},
                       {"missions", missions},
                       {"counts", {{"opens", target.missions().counts().opens},
@@ -126,7 +152,7 @@ WorldCommand mission_board(const std::string& character, const Arguments& argume
             inputs.seedText = entity->characterId;
             inputs.territory = town;
             inputs.projects = target.missions().town_projects(town);
-            inputs.level = entity->progression.level == 0 ? 0 : entity->progression.level - 1;
+            inputs.level = entity->progression.level; // Finding QG6AR-R1: the level of the screen (0x3CEC5C0 adds 1 to the raw level).
             std::uint64_t at = target.clock().server_time_ns();
             const std::uint64_t count = windows.value_or(100);
             for (std::uint64_t window = 0; window < count; ++window) {

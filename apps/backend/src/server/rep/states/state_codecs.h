@@ -75,6 +75,7 @@ inline constexpr std::uint32_t kTypeVariationState = 14;          // MB::Variati
 inline constexpr std::uint32_t kTypeFactionState = 3152;          // MB::FactionComponentReplicatedState (stage QG7; constructor 0x30A7910)
 inline constexpr std::uint32_t kTypeSocialState = 4176;           // MB::SocialReplicatedState (stage QG7; constructor 0x3ED7110)
 inline constexpr std::uint32_t kTypeObjectiveInteractorState = 3829; // MB::ObjectiveInteractorReplicatedState (stage QG6a; constructor 0x3A1B9E0)
+inline constexpr std::uint32_t kTypeGameEventState = 497; // the GameEvent state (stage QG6b; constructor 0x31E5850)
 inline constexpr std::uint32_t kTypeTerritoryInterfaceState = 1746;  // MB::TerritoryInterfaceReplicatedState (stage QG6a; constructor 0x29E3F00)
 inline constexpr std::uint32_t kTypeLandClaimManagerState = 3086;    // MB::LandClaimManagerComponentReplicatedState (stage QG6a; constructor 0x2F75790)
 /** Slot of the LandClaimManager component in slices/globalgde.dynamicslice (the world entity; research map.md 2.5). */
@@ -143,6 +144,8 @@ inline constexpr std::uint32_t kFactionSlot = 49;
 inline constexpr std::uint32_t kSocialSlot = 55;
 /** Stage QG6a: the ObjectiveInteractor component of the player slice (research mission-boards.md 1.1: slot 10, type 3829). */
 inline constexpr std::uint32_t kObjectiveInteractorSlot = 10;
+/** Stage QG6b: the GameEvent component of the player slice (research factions.md 4.4: slot 68, type 497). */
+inline constexpr std::uint32_t kGameEventSlot = 68;
 
 enum class View {
     owner,
@@ -262,6 +265,8 @@ struct StateCodec {
 [[nodiscard]] hub::Bytes encode_social_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** Stage QG6a: @return The provider state of a character (states/objective_interactor_state.cpp, type 3829, slot 10), owner only. */
 [[nodiscard]] hub::Bytes encode_objective_interactor_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/** Stage QG6b: @return The GameEvent state of a character (states/game_event_state.cpp, type 497, slot 68): its daily bonus uses, owner only. */
+[[nodiscard]] hub::Bytes encode_game_event_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** Stage QG6a: @return The TerritoryInterface state of a mission board (states/territory_interface_state.cpp, type 1746). */
 [[nodiscard]] hub::Bytes encode_territory_interface_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** Stage QG6a: @return The LandClaimManager state of the world entity (states/land_claim_state.cpp, type 3086, slot 2): its claims. */

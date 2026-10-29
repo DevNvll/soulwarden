@@ -198,7 +198,9 @@ the stage (with the cause), [review] a finding of the code review of stage 2.5c 
   no number is a log line. The grant stays after the close (the purchase of stage 5.1 comes after the 2473) and ends with the rules of
   stage 2.5b (a new source, the range, the death, a travel, the leave) and at the loss of the presence. Stage 2.5c has no operation of a
   service. Live L4: the Inn option of an innkeeper shows; its selection sends 2473 and a new request of the action 70 OpenInnScreen
-  (option `6cb6b4f9`), which the backend refuses (no handler: a later stage).
+  (option `6cb6b4f9`), which the backend refuses (no handler: a later stage). Stage QG6b: the service Faction_Board is the option 8
+  "Open Faction Board" (0x37AD685); its selection sends 2473 and a new request of the action 51 OpenMissionBoardOption (option
+  `d183d760`) at the same person, which the mission system handles (the faction board: [Mission boards](mission-boards.md)) [live].
 - The end of a person conversation: the close (2473, the end of the block, a cancel) marks it closed (its 5397 can come after it); a new
   use, the loss of the presence, a travel, the death, and the leave end it. It is a value of the entity, not of the database: a restart
   and a new world entry have none [the rule of a use of stage 2.5a].

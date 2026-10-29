@@ -194,7 +194,11 @@ The source of each rule is in brackets: game data, client code, live check (the 
   QR8C-R8, R12, R13; cases QRW8, QRW12, QRW13).
 - Stage 1.8c (the quest drops): `Quests::plan_drops` gives the quest drops of the tasks of the character whose ItemDropVC names the gatherable
   row (a skinning of a Boar: the row Boar); they are a part of the result (one transaction with the award rows of AwardOnlyOnce; a full bag
-  refuses the whole gather) and not a part of a kept roll.
+  refuses the whole gather) and not a part of a kept roll. Stage QG6b: the gather of a skinned body also matches the categories of its
+  creature (the separate category, the categories of the base row, one direct parent of each; not the id of the vitals row): the hunt
+  missions name spawn categories such as `Wolf_Black_02BW06` [client: the direct key 0x3B03A21 to 0x3B03A4E, then the category helper
+  0x5C75830; static read `~/Games/soulwarden/work/evidence/quests/qg6b/implement/static/gather-drop/GATHERDROP.md`; case QG6BF]. One drop
+  for each task (the planner visits each task one time).
 
 - Stage QG5a (the quest objects, [Quests](quests.md)):
   - the quest tables are Gatherable_Quest, Gatherables_NPCRescue_01 (the rescues; its column GatherableEntryId has a lower-case d), and

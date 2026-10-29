@@ -118,4 +118,16 @@ std::optional<CommunityGoalSelection> read_community_goal_selection(std::span<co
     return message;
 }
 
+std::optional<ObjectiveSelection> read_objective_selection(std::span<const std::uint8_t> body) {
+    hub::Reader reader(body);
+    ObjectiveSelection message;
+    message.target = reader.u64();
+    message.entity = reader.u64();
+    message.index = reader.u8();
+    if (!reader.ok() || reader.left() != 0 || message.index > 99) {
+        return std::nullopt;
+    }
+    return message;
+}
+
 } // namespace soulwarden::backend::server::rep

@@ -262,6 +262,26 @@ struct MissionOfferRow {
 };
 
 /**
+ * Stage QG6b (table `character_faction_offers`, schema 20; docs/systems/mission-boards.md, the faction boards): the faction board entry of a
+ * character for a territory: the offer window and the missions that a hand-in in that window made unavailable.
+ */
+struct FactionOfferRow {
+    std::uint16_t territory{0};
+    std::uint64_t window{0};
+    std::vector<std::uint32_t> unavailable;
+};
+
+/**
+ * Stage QG6b (table `character_daily_bonuses`, schema 20): the uses of a daily bonus of a character (the reward modifier CRC-32, the uses, and
+ * the next reset in Unix nanoseconds; the GameEvent state, field 1 dailyBonusesUsed).
+ */
+struct DailyBonusRow {
+    std::uint32_t modifier{0};
+    std::uint32_t used{0};
+    std::uint64_t resetNs{0};
+};
+
+/**
  * One grant of a quest of a source that comes one time (stage 1.8a, table `character_quest_grants`): the start objective of a territory
  * (source "territory", key the territory id) or of a backstory template (source "backstory", key the template id). `state` is "pending"
  * (the next world entry gives it) or "granted" (with the instance).
@@ -609,6 +629,14 @@ public:
     [[nodiscard]] std::vector<MissionOfferRow> list_mission_offers(const std::string& characterId);
     /** Stage QG6a: writes (inserts or replaces) the town entry of a character for its territory. In a batch: a savepoint of its transaction. */
     [[nodiscard]] bool write_mission_offer(const std::string& characterId, const MissionOfferRow& row);
+    /** Stage QG6b: @return The faction board entries of a character, in the order of their territories. */
+    [[nodiscard]] std::vector<FactionOfferRow> list_faction_offers(const std::string& characterId);
+    /** Stage QG6b: writes (inserts or replaces) the faction board entry of a character for its territory. In a batch: a savepoint. */
+    [[nodiscard]] bool write_faction_offer(const std::string& characterId, const FactionOfferRow& row);
+    /** Stage QG6b: @return The daily bonus rows of a character, in the order of their modifiers. */
+    [[nodiscard]] std::vector<DailyBonusRow> list_daily_bonuses(const std::string& characterId);
+    /** Stage QG6b: writes (inserts or replaces) the daily bonus row of a character for its modifier. In a batch: a savepoint. */
+    [[nodiscard]] bool write_daily_bonus(const std::string& characterId, const DailyBonusRow& row);
     /** Stage QG7: @return The faction row of a character (a character with no row: faction 0, no change). */
     [[nodiscard]] CharacterFactionRow faction(const std::string& characterId);
     /** Stage QG7: writes (inserts or replaces) the faction row of a character. In a batch: a savepoint of its transaction. */

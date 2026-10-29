@@ -832,7 +832,19 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
     // Stage 1.8c: the quest drops of the character (TaskGatherItems, TaskGatherAndReturnItems: ItemDropVC names the gatherable row). They
     // are a part of the result (one transaction; a full bag refuses the whole gather) and not a part of a kept roll (a later gather rolls
     // them again).
-    const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, true, {row.id});
+    // Stage QG6b (static read evidence/quests/qg6b/implement/static/gather-drop/GATHERDROP.md): the gather of a body also matches a vitals
+    // category of its creature (the direct key 0x3B03A21 to 0x3B03A4E, then the category helper 0x5C75830: the separate category, the
+    // categories of the base row, one direct parent of each; not the id of the vitals row). The hunt missions name the spawn categories
+    // (FM_huntx_location: Wolf_Black_02BW06). One drop for each task: the planner visits each task one time.
+    std::vector<std::string> sources{row.id};
+    if (body != nullptr && body->kind == EntityKind::creature && body->creature.kind != nullptr && m_world.rewards().tables() != nullptr) {
+        const gamedata::LootTables& tables = *m_world.rewards().tables();
+        const gamedata::CreatureKind& kind = *body->creature.kind;
+        for (std::string& category : tables.kill_categories(tables.vitals_of(kind.vitals), kind.vitals, kind.category, false)) {
+            sources.push_back(std::move(category));
+        }
+    }
+    const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, true, sources);
     std::vector<GrantItem> given = items;
     for (const QuestDrop& drop : drops) {
         given.push_back(GrantItem{drop.itemId, drop.quantity, std::nullopt, {}});

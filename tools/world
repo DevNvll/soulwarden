@@ -1361,7 +1361,8 @@ def show_faction(document: dict) -> None:
 
 
 def show_missions(document: dict) -> None:
-    """Stage QG6a: the board state, the town offers of now, the missions, and the next windows of a mission of a character."""
+    """Stage QG6a: the board state, the town offers of now, the missions, and the next windows of a mission of a character. Stage QG6b:
+    the offers of an open faction board and the daily bonuses that are left."""
     seconds = document["secondsToNextSeed"]
     print(f"territory {document['territory']}: seed {document['seed']:08x}, the next seed in {seconds // 60} min {seconds % 60} s")
     for offer in document["offers"]:
@@ -1374,6 +1375,14 @@ def show_missions(document: dict) -> None:
               f"{board['expirationNs']} ns")
     else:
         print("no open of a board in this world entry")
+    # Stage QG6b: the offers of an open faction board (field 2, the order of the index of 3816) and the daily bonuses that are left.
+    if board.get("faction"):
+        print(f"  faction board of the faction {board['providerFaction']}:")
+        for offer in board.get("factionOffers", []):
+            print(f"    offer {offer['index']}: {offer['mission']} ({offer['missionId']}), slot {offer['slot']} {offer['goal']}, "
+                  f"{'available' if offer['available'] else 'not available (accepted or handed in)'}")
+    if "dailyBonusesLeft" in document:
+        print(f"daily bonuses left: {document['dailyBonusesLeft']}")
     for town in document["towns"]:
         print(f"  town {town['territory']}: stored seed {town['seed']:08x}, unavailable {', '.join(town['unavailable']) or 'none'}")
     for mission in document["missions"]:

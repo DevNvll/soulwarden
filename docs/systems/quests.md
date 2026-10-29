@@ -1063,6 +1063,35 @@ The rules of the boards, the offers, the accept, and the hand-in are in [Mission
   transaction of a quest change: the town entry of the hand-in of a mission, and the faction row and the cost of a faction change
   (finding QG7R-R1). A refused row of the hook changes nothing (MP-7).
 
+### The missions of the boards (stage QG6b)
+
+The override rules, the faction boards, the daily bonus, and the patrols are in [Mission boards](mission-boards.md). The rules of the
+quest system:
+
+- The effective objective of a mission row has each override cell of the task factory (`QuestData::apply_overrides`; the static read
+  `~/Games/soulwarden/work/evidence/quests/qg6b/implement/static/factory/FACTORY.md`): the common cells (TerritoryID, POITag,
+  OverrideLocation), the item cells of the possession tasks, the give item, the timer, the patrol of one POI. The task rows of a variant
+  are copies; the template keeps its values [client; case QG6BA].
+- The location rule of a possession or an equip task (EnforceLocationRequirement with a POITag; finding QR8C-R6) gates the gain only:
+  outside its place the value does not rise, and it falls only with the items (the minimum of the count and the progress before). An item
+  that the character has before it comes into the place does not complete the task outside (case QRW6) [data: the mission templates
+  collect at a place and return to the giver elsewhere; live stage QG6b: the loot mission of the farm of Everfall; case QG6BC].
+- PatrolTask (66): the dwell task of a patrol (the rules in [Mission boards](mission-boards.md)): a place task of the index "place",
+  StayActive, its target the whole seconds of its Duration; its value is the time in a POI of its tags, summed across the visits [client
+  0x3B094A0; case QG6BD].
+- The hand-in of a mission completes its pending return tasks (the tag `returntogiver`) in its own plan (`Quests::hand_in` with the
+  tag): a refused hand-in leaves them pending (code review of stage QG6a, finding QG6AR-R2).
+- `RewardBonus`: the hand-in of a faction mission can have the additions of a reward modifier (the daily bonus): experience × (1 +
+  experience), coin × (1 + currency), reputation × (1 + reputation), tokens × (1 + reputation + tokens), with the truncation and the floor
+  of the preview 0x31F4630 [client].
+- A reset (5600, and a TaskDie with ResetOnCondition) keeps the mission values of the instance (finding QG6AR-R3).
+- CurrencyReward is the float32 cell of the data sheet (the rule of AzothReward): the source text 113.99999999999999 of
+  CMission_Success_Crafting_ProvisionT1_Small is 114 [live: the town screen and its popup show 1.14 coin; the hand-in paid 114]. A
+  fraction of the float32 cell (2500.75) stays unpaid (finding QG2R-R4; case QG6BA).
+- The quest drop of a gather of a skinned body matches the gatherable row and the categories of its creature (the separate category, the
+  categories of the base row, one direct parent of each; not the id of the vitals row) [client: the direct key 0x3B03A21 to 0x3B03A4E,
+  the helper 0x5C75830; static read `static/gather-drop/GATHERDROP.md`; case QG6BF; gathering.md].
+
 ### The corrections of the code review of stage QG7 (in stage QG6a)
 
 The findings QG7R-R1 to QG7R-R7 (`~/Games/soulwarden/work/evidence/quests/qg7/code-review/FINDINGS.md`) are corrected in stage QG6a;
@@ -1197,7 +1226,8 @@ the correction. The source of each rule is the finding and the client rule that 
 - QR8C-R5 (case QRW5): an abandon settles the achievement waits of the other quests of the character after its undo rows (a StayActive
   TaskAchievement whose bit the undo removed is Active again).
 - QR8C-R6 (case QRW6): EnforceLocationRequirement applies to the possession and equip predicates too (the index has the key "place" for
-  them, and a move evaluates them again).
+  them, and a move evaluates them again). Stage QG6b: it gates the gain only; outside the place a satisfied task keeps its value (the
+  section of stage QG6b).
 - QR8C-R7 (case QRW7): an exit task is satisfied only when the POI data has a shape of its tag and the character is outside each shape
   (`PoiData::knows`): a tag with no shape is no proof of an exit, and the task waits.
 - QR8C-R8, R12, R13 (cases QRW8, QRW12, QRW13): see the rule of TaskInteract above.

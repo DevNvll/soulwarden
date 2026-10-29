@@ -216,7 +216,8 @@ commands too; stage QG6a ([Mission boards](systems/mission-boards.md)): `mission
 character: the board of its last open, the expiration, the town entries with their seed and their unavailable missions; the town offers
 of now with the seed and the seconds to the next seed; the missions of the character with their tasks; with MISSION, a MissionID: the
 next seed windows, of WINDOWS, default 100, in which the mission is an offer of the character; route `GET /v1/dev/missions`, admin
-command `mission_board`; it changes nothing). A
+command `mission_board`; it changes nothing; from stage QG6b also the faction of the open board, the faction offers with their slots and
+goals, and the daily bonuses that are left; the admin command needs the harness gate, as the route). A
 command for a character that is not in the world changes its rows in the database. For the objects of the world (stage 2.5a):
 `interactions CHARACTER [METERS]`, `object CHARACTER KEY on|off`, and `interaction cancel
 CHARACTER`; stage 2.5b: `fixture CHARACTER NAME [DX DY DZ] [--yaw D] [--permission N]` (a
@@ -515,13 +516,17 @@ button on "Confirm").
   component and the row index of its variant (42 have one; [Encounters](systems/encounters.md)). A backend of before does not read it.
   From stage QG6a the file has format 5: the mission boards of the settlements (13 objects of the kind `missionBoard` that the client
   makes, with the client id of their place, their provider component, and the slot of their TerritoryInterface component; [Mission
-  boards](systems/mission-boards.md)). A backend of before stage QG6a refuses a file of format 5.
+  boards](systems/mission-boards.md)). A backend of before stage QG6a refuses a file of format 5. From stage QG6b (still format 5) the
+  file has the member `provider` of the faction representatives (63 persons with an ObjectiveProvider component) and the member
+  `claims` (the Claim landmark of each of the 13 territories: the provider identity of a faction board). A backend of stage QG6a does
+  not read them.
 - `tools/gamedata/missions.sh` makes the mission data (stage QG6a; `~/.local/share/soulwarden/gamedata/mission-data.json`, format 1,
   18 MB): the mission rows of the boards (13,248 town missions, 3,046 open world missions) with their template objective, their
   territory rule, and their cells; the 50 projects of the towns; the 203 game events of the missions; the mission weights and the
   flexible boards; and the goal buckets of the town missions in the order of the client. `--mission ID` prints missions and writes no
   file. Without the file the backend starts: the open of a board is refused (3743 result 2), and each accept is refused
-  ([Mission boards](systems/mission-boards.md)).
+  ([Mission boards](systems/mission-boards.md)). From stage QG6b the file has the member `rewardModifiers` (the 8 mission rows of
+  RewardModifierData; `FactionMissionBonus` is the daily bonus of a faction mission).
 - `tools/gamedata/gathering.sh` makes the gathering data (stage 3.6a; `~/.local/share/soulwarden/gamedata/gathering-data.json` and
   the folder `gathering/` with one file for each region): the gatherable rows, the trade skill ranks, the events, the tools, the
   gathering slices, the capital nodes, the skinning of the creature slices (from `creatures.json`), and the natural nodes of each
@@ -1027,7 +1032,8 @@ button on "Confirm").
   requirements pass: the level, the achievements, the faction, the active quest task, the completed objective, the progression) and
   checks the topics of the client (3158 during the talk, 5397 at its close): a topic of the state counts one time in a talk; from stage
   1.8b a finished topic (5397) gives its AchievementUnlock and counts for the conversation tasks of the quests. The services of the state (the inn, a shop, the faction board) go to the service grant of
-  the character; no service opens yet. In a development run `tools/world persons NAME [METERS]` (route `GET /v1/dev/persons`) lists the
+  the character; from stage QG6b the faction board opens (the option "Open Faction Board" of a faction representative, only for a
+  character of its faction: [Mission boards](systems/mission-boards.md)); the other services do not open yet. In a development run `tools/world persons NAME [METERS]` (route `GET /v1/dev/persons`) lists the
   conversation of a character and the persons near it with their presence and their state for the character.
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
   abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar

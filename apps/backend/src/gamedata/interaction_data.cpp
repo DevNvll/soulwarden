@@ -357,7 +357,7 @@ public:
                 return fail("a bound of the object " + object.key + " is not correct");
             }
         }
-        return assembly(entry, object.assembly) && person(entry, object) && board(entry, object);
+        return assembly(entry, object.assembly) && person(entry, object) && board(entry, object) && person_provider(entry, object);
     }
 
     /** The ObjectiveProvider of a mission board (stage QG6a): {communityGoal, useTerritoryId, missionTypes, pvpDisabled}. */
@@ -406,6 +406,20 @@ public:
             object.claim = claim;
         }
         return true;
+    }
+
+    /**
+     * The member provider of a person (stage QG6b): the ObjectiveProvider of a faction representative (the faction board). A mission board
+     * has its provider in the member board; a person with both is not a valid object.
+     */
+    bool person_provider(const json& entry, InteractionObject& object) {
+        if (!entry.contains("provider")) {
+            return true;
+        }
+        if (object.provider || !object.person) {
+            return fail("the object " + object.key + " has a member provider and no person, or two providers");
+        }
+        return provider(entry["provider"], "the person " + object.key, object.provider);
     }
 
     /** The member person of an object (stage 2.5c): the NPC row and the presence rule. */
@@ -756,6 +770,39 @@ bool InteractionData::load(const std::string& path) {
         }
     }
     set_persons_apart(std::move(apart));
+    // Stage QG6b: the claim of each territory (the member claims: the ActorId of the Claim landmark; a file of before has none).
+    std::map<std::uint16_t, std::array<std::uint8_t, 16>> claims;
+    if (document.contains("claims")) {
+        if (!document["claims"].is_object()) {
+            *this = InteractionData{};
+            m_error = "the member claims is not an object";
+            return false;
+        }
+        for (const auto& [key, value] : document["claims"].items()) {
+            std::array<std::uint8_t, 16> actor{};
+            std::size_t used = 0;
+            unsigned long territory = 0;
+            try {
+                territory = std::stoul(key, &used);
+            } catch (const std::exception&) {
+                used = 0;
+            }
+            bool digits = value.is_string() && value.get<std::string>().size() == 32;
+            for (std::size_t index = 0; digits && index < 32; ++index) {
+                const char letter = value.get<std::string>()[index];
+                const int nibble = letter >= '0' && letter <= '9' ? letter - '0' : letter >= 'a' && letter <= 'f' ? letter - 'a' + 10 : -1;
+                digits = nibble >= 0;
+                actor[index / 2] = static_cast<std::uint8_t>((actor[index / 2] << 4) | (nibble >= 0 ? nibble : 0));
+            }
+            if (used != key.size() || territory == 0 || territory > 0xFFFF || !digits) {
+                *this = InteractionData{};
+                m_error = "the claim of the territory " + key + " is not 32 hexadecimal digits of a territory from 1 to 65535";
+                return false;
+            }
+            claims.emplace(static_cast<std::uint16_t>(territory), actor);
+        }
+    }
+    m_claims = std::move(claims);
     // Stage QG5c2: the start objects of the encounter recipes (a slice path to the template and the variation; a file of before has none).
     std::map<std::string, EncounterObject, std::less<>> encounterObjects;
     if (document.contains("encounterObjects")) {

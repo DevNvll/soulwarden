@@ -384,7 +384,9 @@ bool QuestData::load_text(const std::string& text) {
             const QuestTask& task = m_tasks[node.task];
             // Stage 1.8c: TaskDie is a condition that stays active (its death fails or resets the objective: client 0x825E5F0, 0x825E628;
             // a decision of an agent: a satisfied TaskDie with no StayActive would stop watching the death).
-            node.stayActive = task.stayActive || (task.type == task_type::kTimer && task.failOnCondition) || task.type == task_type::kDie;
+            // Stage QG6b: the dwell task of a PatrolTask is StayActive (the constructor of TaskGoToDuration sets +0x2FD: 0x3B0101C).
+            node.stayActive = task.stayActive || (task.type == task_type::kTimer && task.failOnCondition) || task.type == task_type::kDie
+                              || task.type == task_type::kPatrol;
             for (const std::uint8_t child : node.children) {
                 node.stayActive = node.stayActive || objective.nodes[child].stayActive;
             }
@@ -394,6 +396,9 @@ bool QuestData::load_text(const std::string& text) {
                 node.target = 1;
             } else if (is_container(task.type)) {
                 node.target = static_cast<std::uint32_t>(node.children.size());
+            } else if (task.type == task_type::kPatrol) {
+                // Stage QG6b: the target of the dwell task is the whole seconds of its Duration (0x3B00DB1; 0 seconds: 1).
+                node.target = patrol_target(task);
             } else {
                 node.target = task.targetQty ? static_cast<std::uint32_t>(*task.targetQty) : 1U;
             }
@@ -639,13 +644,6 @@ void QuestData::bind_missions(const MissionData& missions) {
             m_missionEvents.push_back(key);
         }
     }
-    // The override columns whose rule the backend does not have (stage QG6a), by the tasks that they change (research mission-boards.md
-    // 4.2): the common task values change any task; the item values the item tasks; the pause of the loot the possession tasks; the patrol
-    // the PatrolTask leaves. Each other override column has no rule.
-    const auto item_task = [](std::uint8_t type) {
-        return is_possession(type) || type == task_type::kRequireGatherItems || type == task_type::kGiveItem || type == task_type::kGiveAndTakeItem
-               || type == task_type::kRemoveItem || type == 27 || type == 28 || type == 35;
-    };
     for (const MissionRow& row : missions.missions()) {
         MissionBinding binding;
         binding.row = &row;
@@ -657,72 +655,147 @@ void QuestData::bind_missions(const MissionData& missions) {
             continue;
         }
         const QuestObjective& base = *binding.templateObjective;
-        bool hasItem = false;
-        bool hasPossession = false;
-        bool hasPatrol = false;
-        bool hasTimer = false;
-        bool hasKill = false;
-        for (const QuestNode& node : base.nodes) {
-            if (node.task == kNoTask) {
-                continue;
-            }
-            const std::uint8_t type = m_tasks[node.task].type;
-            hasItem = hasItem || item_task(type);
-            hasPossession = hasPossession || is_possession(type);
-            hasPatrol = hasPatrol || type == 66;
-            hasTimer = hasTimer || type == task_type::kTimer;
-            hasKill = hasKill || type == task_type::kKillContribution;
-        }
         if (!row.enabled) {
             binding.refusals.push_back("Enabled is 0");
         }
         if (row.pvp) {
-            binding.refusals.push_back("a PvP mission (IsPvpMission 1): stage QG6b");
+            binding.refusals.push_back("a PvP mission (IsPvpMission 1): the PvP missions (3818) are a later stage");
         }
         if (row.outpostDestination) {
-            binding.refusals.push_back("IsOutpostValidDestination 1: the destination of an outpost has no rule (stage QG6b)");
+            binding.refusals.push_back("IsOutpostValidDestination 1: the destination of an outpost has no rule (a later stage)");
         }
-        // A custom objective keeps its own tasks (the factory takes the override path only with IsCustomObjective false, row +0x144).
-        if (!row.custom) {
-            for (const auto& [column, value] : row.overrides) {
-                const bool common = column == "POITagOverride" || column == "TerritoryIDOverride" || column == "LootTagOverride"
-                                    || column == "OverrideLocation";
-                const bool items = column.rfind("TaskGiveAndTakeItem", 0) == 0 || column.rfind("TaskHaveAndReturn", 0) == 0;
-                const bool pause = column == "PauseAndClearLootOnTaskCompleteOverride" || column == "PauseAndClearLootTagOnTaskCompleteOverride";
-                const bool patrol = column.rfind("Patrol", 0) == 0;
-                if (common || (items && hasItem) || (pause && hasPossession) || (patrol && hasPatrol) || (!items && !pause && !patrol)) {
-                    binding.refusals.push_back(column + " " + value + ": the backend has no rule of this override yet (stage QG6b)");
-                }
-            }
-            if (row.timerSeconds && hasTimer) {
-                binding.refusals.push_back("TaskTimerOverride on a TaskTimer leaf: no rule yet (stage QG6b)");
-            }
+        const MissionOverrides result = apply_overrides(row, base);
+        for (const std::string& refusal : result.refusals) {
+            binding.refusals.push_back(refusal);
         }
-        if (!row.custom && hasKill && (!row.killCategory.empty() || row.killQuantity)) {
-            // The variant: the template with copies of its TaskKillContribution leaves (case 13 of the factory 0x4461150).
-            QuestObjective variant = base;
-            for (QuestNode& node : variant.nodes) {
-                if (node.task == kNoTask || m_tasks[node.task].type != task_type::kKillContribution) {
-                    continue;
-                }
-                QuestTask task = m_tasks[node.task];
-                if (!row.killCategory.empty()) {
-                    task.targets = {lower_text(row.killCategory)};
-                }
-                if (row.killQuantity) {
-                    task.targetQty = static_cast<std::int64_t>(*row.killQuantity);
-                    node.target = *row.killQuantity;
-                }
-                node.task = static_cast<std::uint32_t>(m_tasks.size());
-                m_tasks.push_back(std::move(task));
-            }
-            m_variants.push_back(std::move(variant));
+        if (result.variant) {
+            m_variants.push_back(std::move(*result.variant));
             binding.objective = &m_variants.back();
         } else {
             binding.objective = &base;
         }
         m_missions.emplace(row.crc, std::move(binding));
     }
+}
+
+MissionOverrides QuestData::apply_overrides(const MissionRow& row, const QuestObjective& base) {
+    // Stage QG6b (docs/systems/mission-boards.md, the overrides; static read evidence/quests/qg6b/implement/static/factory/FACTORY.md): the
+    // task factory 0x4461150 builds each leaf of the template with the cells of the row, only for a valid row with IsCustomObjective false
+    // (0x44611A5, 0x44611AE). A custom row keeps the tasks of its template. The authored containers keep their values (the tree builder
+    // 0x4466350 builds them apart).
+    MissionOverrides result;
+    if (row.custom) {
+        return result;
+    }
+    for (const auto& [column, value] : row.overrides) {
+        result.refusals.push_back(column + " " + value + ": the backend has no rule of this column");
+    }
+    if (!row.fortStatus.empty()) {
+        result.refusals.push_back("RequiredFortControlStatus " + row.fortStatus + ": no rule (no row of the supported build has it)");
+    }
+    QuestObjective variant = base;
+    bool changed = false;
+    for (QuestNode& node : variant.nodes) {
+        if (node.task == kNoTask || is_container(m_tasks[node.task].type)) {
+            continue;
+        }
+        const QuestTask& original = m_tasks[node.task];
+        QuestTask task = original;
+        std::uint32_t target = node.target;
+        // The common parameters of each leaf (0x44611D5 to 0x4461219): a TerritoryIDOverride that is not 0 replaces TerritoryID; a POI tag
+        // list that is not empty replaces POITag (no append: 0x2D13A0); an OverrideLocation list replaces the location list, but the return
+        // task (the tag ReturnToGiver) gets its template list again and the destination of the instance (0x446272B to 0x446273F).
+        if (row.territoryOverride != 0) {
+            task.territory = row.territoryOverride;
+        }
+        if (!row.poiTags.empty()) {
+            task.poiTags = row.poiTags;
+        }
+        if (!row.location.empty() && !(task.type == task_type::kInteract && task.interactTag == "returntogiver")) {
+            task.pin = true;
+        }
+        switch (task.type) {
+        case task_type::kKillContribution:
+            // Case 13 (0x446229F to 0x4462364): the category and the quantity of the row, always (a blank cell is the CRC 0 and 0).
+            task.targets = row.killCategory.empty() ? std::vector<std::string>{} : std::vector<std::string>{lower_text(row.killCategory)};
+            task.targetQty = static_cast<std::int64_t>(row.killQuantity.value_or(0));
+            target = row.killQuantity.value_or(0);
+            break;
+        case task_type::kHaveItems:
+        case task_type::kHaveAndReturnItems:
+        case task_type::kGatherItems:
+        case task_type::kGatherAndReturnItems:
+            // The item branch 0x4463798 to 0x446395C: the item, the quantity, the two drop chances, and the drop sources of the row, always
+            // (a blank cell is 0 or empty); the pause of the loot and the global storage only when the row has the cell (+0x141, +0x147).
+            task.itemName = row.item;
+            task.targetQty = static_cast<std::int64_t>(row.itemQuantity.value_or(0));
+            target = row.itemQuantity.value_or(0);
+            task.dropChance = row.itemDropChance.value_or(0.0);
+            task.chestChance = row.chestDropChance.value_or(0.0);
+            task.dropSources = row.dropSources;
+            if (row.pauseLoot) {
+                task.pauseLoot = *row.pauseLoot;
+            }
+            if (row.useGlobalStorage) {
+                task.useGlobalStorage = *row.useGlobalStorage;
+            }
+            if (!row.lootTag.empty()) {
+                result.refusals.push_back("LootTagOverride " + row.lootTag + " on " + task.id + ": the backend has no rule of a loot tag");
+            }
+            break;
+        case task_type::kGiveItem:
+        case task_type::kGiveAndTakeItem:
+        case task_type::kRemoveItem:
+            // Cases 33, 34, 36: the item of TaskGiveAndTakeItemOverride, always; the quantity of the template.
+            task.itemName = row.giveItem;
+            break;
+        case task_type::kTimer:
+            // Case 64 (0x44628E0): the duration of TaskTimerOverride, always (a blank cell is 0).
+            task.duration = row.timerSeconds.value_or(0.0);
+            break;
+        case task_type::kPatrol: {
+            // Case 66 (0x4461465 to 0x446195A): the duration of PatrolDuration and the POIs of PatrolPoi1 to PatrolPoi4. One POI makes one
+            // TaskGoToDuration with the id, the CRC, and the index of the template task. No POI makes no task, and more POIs make a child for
+            // each POI and a container: both change the tree of the template (no row of the supported build has them).
+            if (row.patrolPois.size() != 1) {
+                result.refusals.push_back("PatrolPoi with " + std::to_string(row.patrolPois.size()) + " POIs on " + task.id
+                                          + ": the patrol tree of the client is not the tree of the template (no row of the build)");
+            }
+            task.duration = row.patrolSeconds.value_or(0.0);
+            task.poiTags = row.patrolPois;
+            target = patrol_target(task);
+            break;
+        }
+        default:
+            break;
+        }
+        if (!same_effect(task, original) || target != node.target) {
+            node.target = target;
+            node.task = static_cast<std::uint32_t>(m_tasks.size());
+            m_tasks.push_back(std::move(task));
+            changed = true;
+        }
+    }
+    if (changed) {
+        result.variant = std::move(variant);
+    }
+    return result;
+}
+
+bool QuestData::same_effect(const QuestTask& left, const QuestTask& right) {
+    return left.territory == right.territory && left.poiTags == right.poiTags && left.pin == right.pin && left.targets == right.targets
+           && left.targetQty == right.targetQty && left.itemName == right.itemName && left.dropChance == right.dropChance
+           && left.chestChance == right.chestChance && left.dropSources == right.dropSources && left.pauseLoot == right.pauseLoot
+           && left.useGlobalStorage == right.useGlobalStorage && left.duration == right.duration;
+}
+
+std::uint32_t QuestData::patrol_target(const QuestTask& task) {
+    // The constructor of TaskGoToDuration (0x3B00DB1, 0x3B00F29): the whole seconds of the duration; a duration of exactly 0 has the target 1.
+    const double seconds = task.duration.value_or(0.0);
+    if (seconds <= 0.0) {
+        return 1;
+    }
+    return static_cast<std::uint32_t>(std::min(std::floor(seconds), 4294967295.0));
 }
 
 std::optional<std::uint32_t> QuestData::achievement_index(std::string_view id) const {

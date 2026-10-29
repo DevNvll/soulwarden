@@ -76,8 +76,13 @@ bool is_counter(std::uint8_t type) {
 
 /** Stage 1.8c: the tasks of a place; stage 1.8b: TaskTriggerArea (a volume of the trigger data and the accepted position). */
 bool is_place(std::uint8_t type) {
-    return type == task_type::kGoToPoi || type == task_type::kGoToPoiOnTerritory || type == task_type::kExitPoi || type == task_type::kTriggerArea;
+    return type == task_type::kGoToPoi || type == task_type::kGoToPoiOnTerritory || type == task_type::kExitPoi || type == task_type::kTriggerArea
+           || type == task_type::kPatrol;
 }
+
+/** Stage QG6b: the sample of an active patrol task while its character is inside (the update 0x3B094A0 samples at one whole second). */
+constexpr std::chrono::milliseconds kPatrolSample{1000};
+constexpr std::uint64_t kSecondNs = 1'000'000'000ULL;
 
 /** The completed notice keeps the newest instances (field 2 of the Objectives state; a decision of an agent: a bounded list). */
 constexpr std::size_t kCompletedNotices = 16;
@@ -671,15 +676,25 @@ struct Quests::Plan {
     bool location_ok(const QuestTask& task) const {
         return !task.enforceLocation || task.poiTags.empty() || in_place(task);
     }
-    /** @return The value of a predicate task now (its progress), or no value for a task that is not a predicate. */
-    std::optional<std::uint32_t> predicate(const QuestTask& task, const gamedata::QuestNode& node, const QuestObjective* objective) const {
+    /**
+     * @return The value of a predicate task now (its progress), or no value for a task that is not a predicate. `before` is the progress of
+     *         the task before this look (0 at an activation).
+     */
+    std::optional<std::uint32_t> predicate(const QuestTask& task, const gamedata::QuestNode& node, const QuestObjective* objective,
+                                           std::uint32_t before = 0) const {
         // EnforceLocationRequirement (0x825DAD0, 0x825E860): a possession or an equip task counts only in its place (code review of stage
-        // 1.8c, finding QR8C-R6; the index has these tasks under "place" too).
+        // 1.8c, finding QR8C-R6; the index has these tasks under "place" too). Stage QG6b [data]: the rule gates the gain only: outside its
+        // place the value of the task does not rise, and it falls only with the items (the minimum of the count and the progress before).
+        // The mission templates collect at a place and return to the giver elsewhere (CM_explorer_acquire_X_items_POITag, FM_loot_location,
+        // FM_huntx_location: an acquire task with the location rule, then the return); with a value 0 outside the place no such mission
+        // could be handed in.
         if (gamedata::is_possession(task.type)) {
-            return location_ok(task) ? static_cast<std::uint32_t>(std::min<std::uint64_t>(item_count(task.itemName), node.target)) : 0U;
+            const auto count = static_cast<std::uint32_t>(std::min<std::uint64_t>(item_count(task.itemName), node.target));
+            return location_ok(task) ? count : std::min(count, before);
         }
         if (task.type == task_type::kEquipItem) {
-            return location_ok(task) && Inventory::equipped(entity, task.itemName, task.minGearScore) ? node.target : 0U;
+            const std::uint32_t value = Inventory::equipped(entity, task.itemName, task.minGearScore) ? node.target : 0U;
+            return location_ok(task) ? value : std::min(value, before);
         }
         if (task.type == task_type::kGoToPoi || task.type == task_type::kGoToPoiOnTerritory) {
             return in_place(task) ? node.target : 0U;
@@ -1420,6 +1435,9 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
             if (is_place(task.type)
                 || ((gamedata::is_possession(task.type) || task.type == task_type::kEquipItem) && task.enforceLocation && !task.poiTags.empty())) {
                 subscriptions.add("place", entry); // Finding QR8C-R6: a possession or an equip with the location rule looks at each move too.
+                if (task.type == task_type::kPatrol && open) {
+                    m_placesDirty.insert(entity.id); // Stage QG6b: the first sample of a patrol task at the next tick (no move needed).
+                }
             }
             if (task.type == task_type::kAchievement) {
                 subscriptions.add("ach", entry);
@@ -2004,6 +2022,10 @@ void Quests::entered(Entity& entity) {
 
 void Quests::left(const Entity& entity) {
     m_subscriptions.erase(entity.id);
+    // Stage QG6b: the dwell samples of the patrol tasks are values of the world entry (the progress of a task stays in its row).
+    m_dwell.erase(m_dwell.lower_bound(std::make_tuple(entity.id, std::uint64_t{0}, std::uint8_t{0})),
+                  m_dwell.upper_bound(std::make_tuple(entity.id, ~std::uint64_t{0}, std::uint8_t{255})));
+    m_patrolLooks.erase(entity.id);
     m_itemsDirty.erase(entity.id);
     m_placesDirty.erase(entity.id);
     m_levelsDirty.erase(entity.id);
@@ -2186,6 +2208,31 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
                 }
                 continue;
             }
+            if (task->type == task_type::kPatrol) {
+                // Stage QG6b (docs/systems/mission-boards.md, the patrols; client update 0x3B094A0): the time in a POI of the tags sums
+                // across the visits and pauses outside. Each look adds the time since the last sample when that sample was inside; the
+                // progress is the whole seconds (0x3B095C7 to 0x3B095DD); outside, the time and the progress stay (0x3B095E8). The
+                // accepted position only (a camera estimate is no sample).
+                const QuestObjective* objective = plan.objective_of(*seen);
+                const std::uint32_t target = objective->nodes[entry.index].target;
+                const QuestTaskState& stateNow = seen->tasks[entry.index];
+                Dwell& dwell = m_dwell[std::make_tuple(entity.id, entry.instance, entry.index)];
+                dwell.dwellNs = std::max<std::uint64_t>(dwell.dwellNs, static_cast<std::uint64_t>(stateNow.progress) * kSecondNs);
+                const std::uint64_t now = m_world.clock().server_time_ns();
+                if (dwell.sampleNs != 0 && now > dwell.sampleNs) {
+                    dwell.dwellNs += now - dwell.sampleNs;
+                }
+                const bool inside = !entity.positionEstimated && pois() != nullptr && plan.in_place(*task);
+                dwell.sampleNs = inside ? now : 0;
+                const auto value = static_cast<std::uint32_t>(std::min<std::uint64_t>(dwell.dwellNs / kSecondNs, target));
+                if (stateNow.state == quest_state::kActive && value != stateNow.progress) {
+                    plan.set_progress(*plan.edit(entry.instance), entry.index, value);
+                }
+                if (inside && value < target) {
+                    schedule_patrol(entity);
+                }
+                continue;
+            }
             if (task->type == task_type::kTriggerGameEvent) {
                 // A game event whose item waited for a place in the bag (code review of stage 1.8b, finding QR8B-R11): the activation
                 // again, with all its effects in this plan, when the item fits now.
@@ -2199,7 +2246,7 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
                 continue;
             }
             const QuestObjective* objective = plan.objective_of(*seen);
-            const std::optional<std::uint32_t> value = plan.predicate(*task, objective->nodes[entry.index], objective);
+            const std::optional<std::uint32_t> value = plan.predicate(*task, objective->nodes[entry.index], objective, seen->tasks[entry.index].progress);
             if (!value) {
                 continue;
             }
@@ -2893,6 +2940,25 @@ void Quests::items_touched(const Entity& entity) {
     }
 }
 
+void Quests::schedule_patrol(const Entity& entity) {
+    // Stage QG6b: one look of the place tasks one second later while a patrol task of the character is inside and not done (a character
+    // that stands still reports no move).
+    if (!m_patrolLooks.insert(entity.id).second) {
+        return;
+    }
+    m_world.after(kPatrolSample, [id = entity.id, characterId = entity.characterId](World& world) {
+        world.quests().patrol_due(id, characterId);
+    });
+}
+
+void Quests::patrol_due(EntityId id, const std::string& characterId) {
+    m_patrolLooks.erase(id);
+    const Entity* entity = m_world.find_character(characterId);
+    if (entity != nullptr && entity->id == id) {
+        m_placesDirty.insert(id);
+    }
+}
+
 void Quests::moved(const Entity& entity) {
     const auto found = m_subscriptions.find(entity.id);
     if (found != m_subscriptions.end() && found->second && found->second->find("place") != nullptr) {
@@ -3229,11 +3295,14 @@ void Quests::died(Entity& entity) {
         }
         const std::uint16_t territory = quest->originTerritory;
         const std::uint64_t parent = quest->parent;
+        // Code review of stage QG6a, finding QG6AR-R3: the new instance keeps the mission of the old one (the missionId, the provider, the
+        // destination, the community flag), so that its tree, its rewards, and its hand-in stay the rules of the mission.
+        const MissionGrant mission{quest->mission, quest->communityGoal, quest->provider, quest->destination};
         const auto position = std::find(plan.tracked.begin(), plan.tracked.end(), instance);
         const bool pinned = position != plan.tracked.end();
         end_instance(plan, instance, true, "its character died (TaskDie with ResetOnCondition)");
         const std::uint64_t next = next_instance();
-        plan.add(*objective, next, "reset", territory, parent);
+        plan.add(*objective, next, "reset", territory, parent, mission.mission != 0 ? &mission : nullptr);
         if (pinned && plan.tracked.size() < kMaxTracked) {
             plan.tracked.push_back(next);
             plan.trackedChanged = true;
@@ -3472,6 +3541,8 @@ QuestResult Quests::reset(Entity& entity, std::uint64_t instance) {
     const std::uint16_t territory = quest->originTerritory;
     const std::string source = quest->source;
     const std::uint64_t parent = quest->parent;
+    // Code review of stage QG6a, finding QG6AR-R3: the new instance keeps the mission of the old one.
+    const MissionGrant mission{quest->mission, quest->communityGoal, quest->provider, quest->destination};
     const auto pin = std::find(plan.tracked.begin(), plan.tracked.end(), instance);
     const std::ptrdiff_t position = pin != plan.tracked.end() ? pin - plan.tracked.begin() : -1;
     end_instance(plan, instance, true, "reset");
@@ -3479,7 +3550,7 @@ QuestResult Quests::reset(Entity& entity, std::uint64_t instance) {
     // old one and the parent of the old one (code review of stage 1.8c, finding QR8C-R3: the completion of a reset child completes the task
     // of its parent). The award rows stay (AwardOnlyOnce: no item again after a reset, 0x825EEF0).
     const std::uint64_t next = next_instance();
-    plan.add(*objective, next, source.empty() ? "reset" : source, territory, parent);
+    plan.add(*objective, next, source.empty() ? "reset" : source, territory, parent, mission.mission != 0 ? &mission : nullptr);
     if (position >= 0 && plan.tracked.size() < kMaxTracked) {
         plan.tracked.insert(plan.tracked.begin() + std::min<std::ptrdiff_t>(position, static_cast<std::ptrdiff_t>(plan.tracked.size())), next);
         plan.trackedChanged = true;
@@ -3843,7 +3914,8 @@ QuestError Quests::reward_join_of(const std::string& characterId, const SkillSet
     return QuestError::none;
 }
 
-HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance, const QuestCommitHook* hook) {
+HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance, const QuestCommitHook* hook, std::string_view returnTag,
+                             const RewardBonus* bonus) {
     HandInResult result;
     result.instance = instance;
     const auto refuse = [&](QuestError error, std::string detail) {
@@ -3862,6 +3934,25 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance, const Quest
     const QuestObjective* objective = quest != nullptr ? plan.objective_of(*quest) : nullptr;
     if (objective == nullptr) {
         return refuse(QuestError::unknownInstance, "no active quest of this instance (a second hand-in)");
+    }
+    const auto subscriptions = m_subscriptions.find(entity.id);
+    if (!returnTag.empty()) {
+        // Stage QG6b (open problem 3 of QG6a): the return task of a mission completes in the plan of its hand-in, not in a commit before it.
+        // A refusal below (a full bag, a reward with no owner, the store) then leaves the return Active, and the client still offers the
+        // completion (the ready check 0x3A3CC50: the progress of the container is its child count minus one).
+        QuestInstance* copy = plan.edit(instance);
+        for (std::size_t index = 0; copy != nullptr && index < copy->tasks.size(); ++index) {
+            const QuestTask* task = plan.task_of(*copy, static_cast<std::uint8_t>(index));
+            if (task != nullptr && task->type == gamedata::task_type::kInteract && task->interactTag == returnTag
+                && copy->tasks[index].state == quest_state::kActive) {
+                plan.add_progress(*copy, static_cast<std::uint8_t>(index), 1);
+            }
+        }
+        plan.settle(subscriptions != m_subscriptions.end() ? subscriptions->second.get() : nullptr);
+        quest = plan.peek(instance);
+        if (quest == nullptr) {
+            return refuse(QuestError::unknownInstance, "the instance ended in the plan of the return");
+        }
     }
     if (!ready(*quest)) {
         return refuse(QuestError::notReady, "the root task of " + objective->id + " is not complete");
@@ -3898,6 +3989,16 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance, const Quest
     std::string detail;
     if (const QuestError error = reward_join(entity, *objective, quest->originTerritory, join, detail, quest->mission); error != QuestError::none) {
         return refuse(error, detail);
+    }
+    if (bonus != nullptr) {
+        // Stage QG6b: the daily bonus of a faction mission (0x31F4DF0 to 0x31F4E30, 0x31F518F to 0x31F53C9: the truncation of the experience
+        // and the coin, the floor of the reputation and the tokens).
+        join.eventExperience = static_cast<std::uint64_t>(static_cast<double>(join.eventExperience) * (1.0 + bonus->experience));
+        join.coin = static_cast<std::uint64_t>(static_cast<double>(join.coin) * (1.0 + bonus->currency));
+        join.reputationGain = static_cast<std::uint64_t>(std::floor(static_cast<double>(join.reputationGain) * (1.0 + bonus->reputation)));
+        join.factionTokens =
+            static_cast<std::uint64_t>(std::floor(static_cast<double>(join.factionTokens) * (1.0 + bonus->reputation + bonus->tokens)));
+        result.bonus = true;
     }
     const QuestObjective* next = join.next;
     std::vector<LootDrop> drops;

@@ -150,11 +150,15 @@ Output (one line of JSON):
                    "requires": {...}}, ...],
                 "person" (format 4, a person only): {"npc", "variant", "table", "row", "presence": {"mode", "condition"},
                             "clientChild", "spawner", "unresolved", "template"} or {"npc", "direct"},
-                "board" (format 5, a mission board only): {"territory", "provider", "spawner", "territoryId", "claim"}}, ...],
+                "board" (format 5, a mission board only): {"territory", "provider", "spawner", "territoryId", "claim"},
+                "provider" (stage QG6b, a person with an ObjectiveProvider only: a faction representative): {"communityGoal",
+                            "useTerritoryId", "missionTypes", "pvpDisabled"}}, ...],
    "personsApart" (stage QG4): [{"npc", "cause", "world", "slice", "via": [SLICE, ...], "placement", "unresolved"}, ...],
    "encounterObjects" (stage QG5c2): {SLICE PATH: {"template", "variationSlot", "variant"}, ...}: the start object of each encounter
    recipe of the quests (encounter_recipes.py), a server child of the encounter system, with the slot of its VariationData component and
-   the row index of its variant (variationSlot 0: no variation state). A backend of before does not read it.}
+   the row index of its variant (variationSlot 0: no variation state). A backend of before does not read it.
+   "claims" (stage QG6b): {TERRITORY: the ActorId of the Claim landmark of the territory (32 hexadecimal digits), ...}: the provider
+   identity of a faction board and the destination of its missions. A backend of before does not read it.}
   `key` is the placement UUID (the durable key of the object), `actor` the 32 hexadecimal digits of the actor id,
   `target` and `component` and an option entity 16 hexadecimal digits, `asset` the 32 hexadecimal digits of the slice
   asset id and `sub` its sub id (the metadata state of the record of the object). "options" of a bound are indexes into
@@ -1672,6 +1676,9 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                             "sub": spawner["asset"][1], "actor": (group.to_bytes(8, "little") + bytes(8)).hex(), "region": region,
                             "position": [round(value, 3) for value in place], "assembly": None, "bounds": bounds,
                             "person": dict(binding)})
+            if child.provider is not None:
+                # Stage QG6b: the ObjectiveProvider of a person (a faction representative: the faction board).
+                objects[-1]["provider"] = dict(child.provider)
 
     def quest_children(layer: str, region: str, identifier: str, matrix: tuple[float, ...], template: Template, spawner: dict,
                        child_path: str, child: Template) -> None:
@@ -1943,6 +1950,9 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                     entry["person"] = person_binding(slice_path, template, None)
                     counts["personsDirect"] += 1
                     counts["personsUnresolved"] += 1 if "unresolved" in entry["person"] else 0
+                    if template.provider is not None:
+                        # Stage QG6b: the ObjectiveProvider of a person (a faction representative: the faction board).
+                        entry["provider"] = dict(template.provider)
                 objects.append(entry)
     # Stage QG4: the persons of the placements of the other worlds (the instances, the introduction worlds): not objects of the file (the
     # backend has the open world only), in "personsApart" with their world. Only a whole run has them (no --region, no --radius).
@@ -2046,10 +2056,16 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
         label = assembly.get("key", "") + ("" if assembly.get("resolved") else " (no row)")
         counts["spawnedByKey"][label] = counts["spawnedByKey"].get(label, 0) + 1
     counts["spawnedByKey"] = dict(sorted(counts["spawnedByKey"].items()))
-    # Stage QG6a: the territory and the claim of each board (the landmarks of the region files).
+    # Stage QG6a: the territory and the claim of each board (the landmarks of the region files). Stage QG6b: the claim of each territory
+    # (member "claims"): the provider identity of a person with an ObjectiveProvider and m_useTerritoryId (a faction representative; the
+    # open 0x49592C0 takes the Claim landmark, type 4, of the detected territory: 0x495941E to 0x4959435, static read
+    # evidence/quests/qg6b/implement/static/faction-board/FACTION.md section 2).
     board_objects = [entry for entry in objects if "board" in entry]
-    if board_objects:
+    claim_map: dict[int, str] = {}
+    counts["personProviders"] = sum(1 for entry in objects if "provider" in entry)
+    if board_objects or counts["personProviders"]:
         claims, landmarks = read_claim_landmarks(sources)
+        claim_map = dict(sorted(claims.items()))
         for entry in board_objects:
             near = [(math.dist(place, entry["position"]), territory) for place, territory in landmarks]
             near = [item for item in near if item[0] <= BOARD_LANDMARK_RADIUS]
@@ -2066,7 +2082,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     return {"format": FORMAT, "world": WORLD, "counts": counts, "excluded": dict(sorted(excluded.items())),
             "unresolved": dict(sorted(unresolved.items())), "options": option_list, "achievements": achievement_list,
             "templates": template_list, "spawned": spawned, "fixtures": fixtures, "lootContainers": loot_containers, "objects": objects,
-            "personsApart": apart, "encounterObjects": encounter_objects}
+            "personsApart": apart, "encounterObjects": encounter_objects, "claims": {str(key): value for key, value in claim_map.items()}}
 
 
 def main() -> int:

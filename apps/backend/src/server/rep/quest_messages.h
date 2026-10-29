@@ -68,8 +68,13 @@ inline constexpr std::uint32_t kTypeResetObjective = 5600;
  *   2461 ObjectiveInteractorComponentServerFacet_OnObjectiveCompletionRequest (sender 0x494E910, caller 0x495CCE0, reader 0x39E8A10):
  *        instance:u64. The hand-in at a board (one for each ready mission; complete-all sends one each).
  * No answer: the Objectives state and the provider state give the result.
+ * Stage QG6b (docs/systems/mission-boards.md, the faction boards):
+ *   3816 ObjectiveInteractorComponentServerFacet_OnObjectiveSelectionRequest (UUID 40B9177C-06DE-4725-9166-236BD7D4A7E8, getter 0x495B6F0;
+ *        RequestMissionSelectionById 0x495CE70 -> sender 0x494EB10, reader 0x49493C0): index:u8, the zero-based position of the offer in the
+ *        mission vector of the provider state (field 2), 0 to 99 (0x495D880). The accept of a faction PvE offer.
  */
 inline constexpr std::uint32_t kTypeCommunityGoalSelection = 3819;
+inline constexpr std::uint32_t kTypeObjectiveSelection = 3816;
 inline constexpr std::uint32_t kTypeObjectiveCompletion = 2461;
 inline constexpr const char* kObjectiveInteractorComponentName = "RootPlayer/006554ad-a98d-48e4-a5d6-f8a0ab3e7933";
 /** The TerritoryDetector component of the player slice (entity RootPlayer), by its name in slice-ids.json (live log of stage 1.8c). */
@@ -142,5 +147,15 @@ struct CommunityGoalSelection {
 };
 
 [[nodiscard]] std::optional<CommunityGoalSelection> read_community_goal_selection(std::span<const std::uint8_t> body);
+
+/** Stage QG6b: the body of 3816: the facet, the entity, and the index of the offer in the mission vector of the provider state. */
+struct ObjectiveSelection {
+    std::uint64_t target{0};
+    std::uint64_t entity{0};
+    std::uint8_t index{0};
+};
+
+/** @return The body, or no value (also an index above 99: the reader 0x49493C0 and the constraint 0x495D880). */
+[[nodiscard]] std::optional<ObjectiveSelection> read_objective_selection(std::span<const std::uint8_t> body);
 
 } // namespace soulwarden::backend::server::rep

@@ -1,9 +1,12 @@
 # Mission boards
 
 Read this document before a change of a mission board: the board object of a settlement, its open, the town offers, the accept of a
-mission (3819), the mission instance, its return task, its hand-in (2461), the town entry of a character, or the mission data. The wire
-contracts are in the protocol notes (section 4.64). Stage QG6a made the town board of a settlement with the offers of the always available
-project (roadmap 4.5). The faction boards, the open world missions, and the projects of a town are stage QG6b.
+mission (3819), the mission instance, its return task, its hand-in (2461), the town entry of a character, the override cells of a
+mission row, the faction boards (3816, the daily bonus), the patrols, or the mission data. The wire contracts are in the protocol notes
+(sections 4.64 and 4.65). Stage QG6a made the town board of a settlement with the offers of the always available project (roadmap 4.5).
+Stage QG6b added the override rules of the task factory (the deliveries, the loot and hunt missions, the timers, the patrols), the
+faction boards of the representatives with the daily bonus, and the corrections of the review of QG6a. The projects of a town, the PvP
+missions, and the outposts are later stages (5.4).
 
 ## Start here
 
@@ -21,6 +24,12 @@ project (roadmap 4.5). The faction boards, the open world missions, and the proj
 | Two characters at the board (MP-10), no mission data | test cases QG6AI, QG6AK |
 | The support manifest of the mission templates | `world/quest_support.cpp` (`BoardMission`), test case QG6AL |
 | The static read of the offers and the live runs of the stage | `~/Games/soulwarden/work/evidence/quests/qg6a/implement/` (`static/offers/OFFERS.md`, `RESULT.md`); the research `~/Games/soulwarden/work/research/mission-boards.md` |
+| Stage QG6b: the override cells of a mission row (the task factory) | `QuestData::apply_overrides` (`gamedata/quest_data.cpp`), the typed cells of `MissionRow` (`gamedata/mission_data.h`), test case QG6BA; the static read `~/Games/soulwarden/work/evidence/quests/qg6b/implement/static/factory/FACTORY.md` |
+| Stage QG6b: the faction board (the open at a representative, the offers, 3816, the hand-in, the daily bonus) | `Missions::faction_opened`, `faction_offers`, `select`, `complete_faction` (`world/missions.cpp`), `server/rep/states/game_event_state.cpp`, test case QG6BC; the static read `static/faction-board/FACTION.md` |
+| Stage QG6b: the patrols | the place look of `Quests::refresh` (the dwell of a PatrolTask), test case QG6BD |
+| Stage QG6b: the delivery at a town board, a refused hand-in | `Quests::hand_in` (the return tag), test cases QG6BB, QG6AR2 |
+| Stage QG6b: the corrections of the review of QG6a (QG6AR-R1 to R7) | `tests/review_qg6a_tests.cpp` (QG6AR1 to QG6AR6); the fixture `tests/support/mission_fixture.h` |
+| Stage QG6b: the live runs and the result | `~/Games/soulwarden/work/evidence/quests/qg6b/implement/RESULT.md` |
 
 ## Rules
 
@@ -124,7 +133,8 @@ stage QG6a, [agent] a rule of the project that an agent chose.
 - The candidates of a bucket are its missions in the order of the client that pass the filter 0x3A09900 [client]:
   - the project of the mission is allowed: the same ProjectType as the active project, and a ProgressionLevel at most its level;
   - the territory rule of the mission (AvailableTerritoryID: a list, or `!N`) passes the territory of the board;
-  - MinLevel and MaxLevel pass the level index (the level of the screen minus 1) [client 0x4955CAF; inferred];
+  - MinLevel and MaxLevel pass the level of the screen [client: the request 0x4955CAF takes the getter 0x3CEC5C0, the raw level plus the
+    bonus level plus 1 (0x3CEC5CA); code review of stage QG6a, finding QG6AR-R1; case QG6AR1];
   - the trade skill rank of RequiredTradeskill is at least TradeskillLevel;
   - the achievement conditions of the row pass.
 - An offer is unavailable only when the stored seed of the town entry of the character is the current seed and the mission is in its
@@ -163,7 +173,8 @@ stage QG6a, [agent] a rule of the project that an agent chose.
   0x4461150). The backend binds each mission row to an effective objective (`QuestData::bind_missions`): a kill override
   (KillEnemyType, KillEnemyQuantity) changes the TaskKillContribution leaf of the template, with the target category and the quantity
   of the row. `CommunityProjectId_1_Wolf_5`: kill 5 of the category Wolf, then return to the board [data].
-- A mission row with an override that the backend has no rule for is refused at the accept, and the manifest names the cause [agent].
+- Stage QG6b: the other override cells have their rules (section "The override cells of a mission row"). A row with a cell that has
+  no rule is refused at the accept, and the manifest names the cause [agent].
 - The instance stores its mission, the community flag, and its provider (the key of the board placement) in `character_quests`
   (schema 19). The destination is not stored: the world gives it at the world entry (the claim of the board of the key).
 - The kill task counts a kill with the rules of the kill credit of the quests (quests.md): the vitals categories of the victim.
@@ -173,8 +184,11 @@ stage QG6a, [agent] a rule of the project that an agent chose.
 - The client sends 2461 (instance:u64) at the board, one for each ready mission [client: the sender 0x494E910, the reader 0x39E8A10;
   live: a click on the card "COMPLETED"].
   The checks: an active mission of the character with this instance (`unknownInstance`: a forged instance, a second hand-in), the
-  service of the board that is the provider of the instance (`noProvider`: another board), the source of the service; then the return
-  task completes (`Missions::complete_return`), then the checks of the quest hand-in (a ready root, the bag, the rewards).
+  service of the board that is the provider of the instance (`noProvider`: another board), the source of the service; then one plan of
+  the quest hand-in: the return task completes in it (`Quests::hand_in` with the tag ReturnToGiver), then its checks (a ready root, the
+  items of the return tasks, the bag, the rewards). A refusal changes nothing: the return task stays pending, and the client still
+  offers the completion [code review of stage QG6a, finding QG6AR-R2, the open problem 3 of QG6a; cases QG6AR2, QG6BB; live: a refused
+  hand-in kept the card "COMPLETED"].
 - The rewards are the success event of the mission row (SuccessGameEventIdOverride), not the event of the template [data;
   `CommunityProjectId_1_Wolf_5`: 110 experience, 135 coin units, 350 standing of Windsward; live: the notices "+350 Windsward Standing",
   "+235 XP" (110 and the 125 of the new standing rank), "+1.35 Coin"]. The standing goes to the territory of the board [client:
@@ -198,6 +212,121 @@ stage QG6a, [agent] a rule of the project that an agent chose.
   whose rules the backend runs (the effective objective, the grant `board`, the return task, the event of the mission). The counts
   `boards`, `boardMissions`, and `boardMissionsRunnable` are in the counts of the manifest. A history plays only rows of the kind
   objective.
+- Stage QG6b: the faction boards give the world rows of their faction (enabled, not PvP, not an outpost destination, the territory rule;
+  the count `factionBoards`). The return task of a mission goes to its provider by its tag (the factory does not read
+  ReturnToGiverOverride: 0x4462726). The standing of a board mission goes to the territory of its board (no fallback: a territory with
+  no standing row refuses, as the hand-in). Each row with board missions has the member `boardMissions` (each mission, supported, the
+  first cause), and the manifest has the member `itemSources` (the items with a source of the world, the items of a quest).
+
+### The override cells of a mission row (stage QG6b)
+
+The source is the static read `~/Games/soulwarden/work/evidence/quests/qg6b/implement/static/factory/FACTORY.md` of the task factory
+0x4461150 [client]. `QuestData::apply_overrides` builds the effective objective of each row with these rules; a row whose cells change no
+leaf of its template runs the template.
+
+- The override path runs only for a valid row with IsCustomObjective 0 (0x44611A5, 0x44611AE). A custom row keeps the tasks of its
+  template (FM_1601_objective: its three rows are custom) [client; data].
+- The common cells go to each leaf, also to the return task (TaskInteract ReturnToGiver), not to an authored container (the tree builder
+  0x4466350 builds them apart): a TerritoryIDOverride that is not 0 replaces TerritoryID; a POITagOverride that is not empty replaces
+  the POITag list (no append: 0x2D13A0); OverrideLocation replaces the location list (the pin), but the return task gets its template
+  list back and the destination of the instance (0x446272B to 0x446273F) [client].
+- TaskKillContribution (case 13): the category and the quantity of the row, always (a blank cell is the CRC 0 and 0) [client].
+- TaskHaveItems, TaskHaveAndReturnItems, TaskGatherItems, TaskGatherAndReturnItems (25, 26, 29, 30; the branch 0x4463798): the item of
+  TaskHaveAndReturnItemsOverride, its quantity (the target), ItemDropProbability (+0x40), ChestDropProbability (+0x44), and ItemDropVC
+  (+0x118), always (a blank cell is no item, 0, or empty); PauseAndClearLootOnTaskCompleteOverride and UseGlobalStorageOverride only when
+  the row has the cell (a present 0 replaces a template 1) [client]. TaskRequireGatherItems (31) keeps its item and quantity [client].
+- The town column PauseAndClearLootTagOnTaskCompleteOverride (5,839 rows) has no effect: the loader asks only for
+  PauseAndClearLootOnTaskCompleteOverride (0x39C5933; no string of the other spelling in the image) [client].
+- TaskGiveItem, TaskGiveAndTakeItem, TaskRemoveItem (33, 34, 36): the item of TaskGiveAndTakeItemOverride, always; the quantity of the
+  template [client].
+- TaskTimer (case 64): the duration of TaskTimerOverride, always (a blank cell is 0). No other reader of the mission timer was found:
+  the cell 3600 of each town row adds no timer to a template with no TaskTimer leaf, and no mission fails at its end [client: FACTORY.md
+  section 8; not found: a mission lifetime].
+- PatrolTask (case 66): the duration of PatrolDuration and the POIs of PatrolPoi1 to PatrolPoi4. One POI makes one TaskGoToDuration with
+  the id, the CRC, and the index of the template task, whose target is the whole seconds of the duration (0 seconds: 1). A row with no
+  POI or more than one POI changes the tree (no task, or a child for each POI and a container): refused (no row of the build has it)
+  [client; agent for the refusal].
+- LootTagOverride on an item leaf, RequiredFortControlStatus, and a column that the backend does not know are refused (no row of the
+  build has the first two) [agent].
+- The success event of the row pays the hand-in (stage QG6a). The failure event (FailureGameEventIdOverride) has no consumer: no mission
+  failure dispatches it in the client code that was read [client: FACTORY.md section 10; not found]. The backend applies no failure event.
+- UseGlobalStorage: the possession tasks count the bag and the paperdoll only (the global storage is stage 5.2) [project rule of stage
+  1.8c].
+- The location rule of a possession or equip task (EnforceLocationRequirement with a POITag) gates the gain only: outside its place the
+  value of the task does not rise, and it falls only with the items [data: the mission templates collect at a place and return to the
+  giver elsewhere: `CM_explorer_acquire_X_items_POITag` (5,839 rows), `FM_loot_location` (720), `FM_huntx_location` (342); live: with a
+  value 0 outside the farm the loot mission could not be handed in; quests.md].
+
+### The faction boards (stage QG6b)
+
+The static read is `~/Games/soulwarden/work/evidence/quests/qg6b/implement/static/faction-board/FACTION.md`.
+
+- A faction representative is a person of the interaction data with an ObjectiveProvider of a faction (the member `provider` of the
+  object: missionTypes Marauder, Syndicate, or Covenant; 57 in the build, 19 for each faction; the 5 `Wolf_Shop` providers and one with
+  no type are no faction board) [data].
+- The open: the conversation option "Open Faction Board" (the service Faction_Board, option 8) closes the conversation and sends action
+  51 OpenMissionBoardOption at the same person [client 0x37AD685, 0x376E845; live]. The mission system is the handler of the kind `npc`
+  with this option. It accepts only a character of the faction of the representative [agent: the eligibility 0x37A7940 of the service].
+- The provider identity: the Claim landmark of the territory of the representative (the member `claims` of the interaction data; the
+  same rule as a town board: 0x495941E) [client; live: Everfall `1b939fd32e1c1a3c0000000000000000`]. The territory is the territory at
+  its place (the POI data).
+- The offers [agent: the original generator is not in the client]: the offer window is the 30-minute grid of the town seed (its end is
+  the expiration of the provider state). The candidates are the world rows of the faction (RequiredFaction), enabled, not PvP, not an
+  outpost destination, whose territory rule passes the territory of the representative, whose MinLevel and MaxLevel pass the level of the
+  screen, whose trade skill rank and achievement conditional pass, whose binding the backend runs, and whose success event the
+  backend can pay at the board. Three slots (the FactionPvE weights of MissionWeightsData, slots 1 to 3; the screen shows three PvE
+  cards): each slot takes a goal by its weight among the goals with a candidate that no earlier slot took, then one candidate of that
+  goal; the LCG of java.util.Random from FNV-1a 64 of the characterId plus the territory, the faction, and the window [data: the
+  weights; agent: the selection]. One character gets the same offers in one window.
+- Field 2 of the provider state has the offers in this order (section 4.65 of the protocol notes). An offer whose mission is active, or
+  that a hand-in of this window made unavailable, has available 0.
+- The accept 3816 (the index of the offer): the faction board of the open, its service, the faction of the character, the current window,
+  an offer of the index that is available, a binding that the backend runs, no active instance. The instance has isCommunityGoal 0,
+  the destination the claim, and the origin territory of the representative. The offer stays in its place with available 0 and the
+  instance (0x495A166) [client; live].
+- The hand-in 2461 at the representative of the instance: the open faction board of that representative, its service and its source;
+  then the plan of the quest hand-in with the return task (the rule of a town board). The faction rewards of the success event go to
+  the faction of the character (stage QG7). The row `character_faction_offers` (schema 20) has the mission as unavailable for the window
+  of the open, in the transaction of the hand-in [agent].
+- After a world entry the destination of a faction mission is the claim of its origin territory (a value of the data).
+
+### The daily bonus (stage QG6b)
+
+- The faction missions pay the daily bonus while the character has a use left: the row FactionMissionBonus of RewardModifierData (the
+  member `rewardModifiers` of the mission data: experience 2, currency 9, tokens 4) adds to the multipliers: experience × 3, coin × 10,
+  tokens × 5; the reputation and the standing have no daily part (the preview 0x31F4630, the helper 0x5BF6120) [client; data; live:
+  2520 experience, 70.50 coin, 400 reputation, 2475 tokens, the values of the card tooltip].
+- Three uses a day: the registered default of `javelin.daily-bonus-mission-count` (0x616E608) [client]. The uses reset at 00:00 UTC [data:
+  the daily reset hour 0 of playerbaseattributes, research factions.md V14].
+- The uses are in the entity (`Entity::dailyBonuses`) and in the row `character_daily_bonuses` (schema 20, the transaction of the hand-in).
+  The GameEvent state (slot 68, type 497, field 1) gives them to the owner: a character with no use has no fragment [client 0x31E5850;
+  live: "Daily Bonuses Available 3/3", then "2/3"].
+- A town mission (isCommunityGoal 1) has no daily bonus (the preview path of the bonus is for the objectives of the type Mission).
+
+### The patrols (stage QG6b)
+
+- A PatrolTask (66) is the time in a POI of its tags: each look of the places adds the time since the last sample when that sample was
+  inside; outside, the time and the progress stay [client: the update 0x3B094A0]. The progress is the whole seconds (0x3B095C7); the
+  target is the whole seconds of the duration; the task is StayActive (CompleteActive when satisfied: 0x3B0101C) [client; case QG6BD].
+- The backend samples at each accepted position and one second after an inside sample while the task is not done (a character that
+  stands still) [agent]. The dwell time is a value of the world entry: the progress stays in the row of the task.
+- No patrol is reachable now: each of the 51 patrol rows is a PvP mission (3818, a later stage) [data].
+
+### The corrections of the code review of stage QG6a (in stage QG6b)
+
+Each finding of `~/Games/soulwarden/work/evidence/quests/qg6a/code-review/FINDINGS.md` has a case of `tests/review_qg6a_tests.cpp` that
+fails on the tree of stage QG6a and passes now.
+
+- QG6AR-R1 (QG6AR1): the offer filter takes the level of the screen.
+- QG6AR-R2 (QG6AR2): the return task completes in the plan of the hand-in; a refused hand-in changes nothing.
+- QG6AR-R3 (QG6AR3, QG6AR3B): a reset (5600, and a TaskDie with ResetOnCondition) keeps the mission, the provider, the destination, and the
+  community flag of the instance.
+- QG6AR-R4 (QG6AR4): the loader refuses a file with town missions and no town buckets, a bucket member of another table or goal, and a
+  member in two buckets.
+- QG6AR-R5 (QG6AR5): 3819, 3816, and 2461 on the actor route of another character change nothing (the rule of QG7R-R7).
+- QG6AR-R6 (QG6AR6): the mission board diagnostic needs the harness gate, also on the admin path.
+- QG6AR-R7: the second computation of the support manifest reads the boards of the interaction data of format 5 and fails at a
+  difference of the board counts (an evidence script, not a source file).
 
 ## The values of this build
 
@@ -209,6 +338,10 @@ stage QG6a, [agent] a rule of the project that an agent chose.
 | The kill overrides, the projects, the events of the missions | 2,925, 50, 203 | the same |
 | The town bucket sizes: Kill, Gather, Explore | 3,959, 3,418, 5,871 | the same |
 | The boards of the interaction data, the runnable board missions | 13, 36 of 290 | the manifest of stage QG6a |
+| The town boards, the faction boards, the board missions, the runnable board missions | 13, 57, 3,122, 1,835 | the manifest of stage QG6b |
+| The faction representatives of each faction; the PvP rows; the patrol rows (all PvP) | 19; 180; 51 | the interaction data, the mission data |
+| The daily bonuses of a day; the additions of FactionMissionBonus (experience, currency, tokens) | 3; 2, 9, 4 | the CVar default 0x616E608; RewardModifierData |
+| The PvE cards of a faction board | 3 | owmissionboard NUM_MISSIONS_SHOWN; the FactionPvE slots |
 
 ## Commands
 
@@ -219,7 +352,9 @@ tools/world missions NAME CommunityProjectId_1_Wolf_5 200   # the next windows (
 
 - The development route: `GET /v1/dev/missions?character=NAME[&mission=ID][&windows=N][&territory=N]`. The admin command:
   `mission_board`. Both use the common layer (`server/http/character_commands.h`, `server/http/mission_commands.cpp`).
-- The command reads only. It changes no offer, no seed, and no instance.
+- The command reads only. It changes no offer, no seed, and no instance. It is a diagnostic: it needs `SOULWARDEN_HARNESS=1` in the
+  backend process, also on the admin path (code review of stage QG6a, finding QG6AR-R6; case QG6AR6). Stage QG6b: the view has the
+  faction offers of the open board (`board.factionOffers`) and the daily bonuses that are left (`dailyBonusesLeft`).
 
 ## Traps
 
@@ -232,11 +367,11 @@ tools/world missions NAME CommunityProjectId_1_Wolf_5 200   # the next windows (
   must have one element for each key [live: two faults; client: OWNER.md].
 - A LandClaimManager state with a position (field 14) makes the manager "available" before the other vectors are copied; the client
   stopped at once [live]. Send no position until a later stage has the full data of the map.
-- The popup "Complete All Missions" of the town screen listed 0 missions and a reward of 0 for a ready mission, and its "Accept" sends
-  nothing. Complete a mission with a click on its card "COMPLETED" [live].
-- A hand-in that the quest system refuses after the return task completed (a full bag; not for the rewards of the wolf mission) leaves
-  the return complete: the client then shows no completion for that mission. A later stage must undo the return or check the hand-in
-  first.
+- The popup "Complete All Missions" asks the server for the global storage first (`ContractsDataHandler:RequestStorageData`); with no
+  answer its callback runs after 1 s and counts the missions for which CanCompleteMission is true then (`townprojects.luac` function
+  0.10). With the return task pending it lists the mission and its rewards, and "Accept" sends one 2461 for each [live stage QG6b: "You
+  have 1 completed mission(s)", the 5 rations, 50, 1.14, 350; the 0 of the live run of QG6a came before the return task stayed
+  pending].
 - The kill credit needs damage of 1 percent of the maximum health of the creature (`credit.healthShare` of the loot tables): for a live
   test with a creature of a command, set its health to 20, not 1, before the hit [live: a kill at health 1 gave no credit].
 - The prompt shows only at about 1 m from the bound of the board (the bound is 0.9 m in front of the board): at 3 m there is no
@@ -250,13 +385,26 @@ tools/world missions NAME CommunityProjectId_1_Wolf_5 200   # the next windows (
   memory form, not the wire form.
 - A backend of schema 18 refuses a database of schema 19. For a comparison with an earlier backend, use a copy of the data folder.
 
-## Input for stage QG6b
+- Stage QG6b: the creatures of a mission place attack a test character of a low level (the loot farm of Everfall: a death at the first
+  chest). Use `tools/world ignore NAME on` before a live test there.
+- Stage QG6b: the first open of a faction board in a session can show "Missions refresh in 00": the screen reads the countdown at its
+  transition, before the provider state comes. A second open shows the time of field 1 [live].
+- Stage QG6b: the offers of a faction board change at the end of the window (30 minutes). An accepted mission stays; at the next open
+  its offer is unavailable, and the card of the accepted mission shows in the first slot.
+- Stage QG6b: the work order missions of a town board (`Faction_*` items) need a craft of a temporary recipe, which the crafting system
+  refuses: they are offers that the character cannot complete now.
+- Stage QG6b: a faction board needs the faction of its representative: a character of another faction (or none) gets no board (3743
+  result 2) [agent].
 
-- The faction boards and the open world missions: the weights (MissionWeightsData), the flexible boards, the explicit offers of the
-  provider state (field 2, `ObjectiveCreationParams`), the faction mission bonus.
-- The projects of a town (Settlement, Fortress, Lifestyle): the project state of the town, the TerritoryInterface state with more than
-  the always available project, the previous projects of a seed.
-- The destination argument of 3819 that is not 0, and the override columns that have no rule now (`QuestData::bind_missions` refuses
-  them): POITagOverride, TerritoryIDOverride, LootTagOverride, OverrideLocation, the item overrides of an item task, the pause of the
-  loot of a possession task, the patrol overrides of a patrol task, and TaskTimerOverride of a timer leaf. A PvP mission and a mission
-  with IsOutpostValidDestination are refused too.
+## Input for the later stages
+
+- The projects of a town (Settlement, Fortress, Lifestyle; stage 5.4): the project state of the town, the TerritoryInterface state with
+  more than the always available project, the previous projects of a seed, CommunityGoalAmount.
+- The claim positions (field 14 of the LandClaimManager state) and the map data (stage 5.4).
+- The PvP missions (3818, `GetCurrentPvpMissions`, the 180 PvP rows, the patrols of the PvP control missions) and the outpost missions
+  (IsOutpostValidDestination, the outposts of `GetOutposts()`).
+- The work order missions (`CM_procurer_craft_workorder_items`): the give works, but the craft of a work order is a temporary recipe of
+  the crafting data, which the crafting system refuses (crafting.md).
+- The patrols of more than one POI (no row of the build) and LootTagOverride (no row of the build).
+- The CurrencyReward of an event: a fraction of the float32 cell stays unpaid (quests.md); the static rule of the coin range of the
+  client (0x31F3E00) is not read.

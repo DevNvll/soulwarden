@@ -445,6 +445,18 @@ public:
      * variation slot that is above 4095 or is a slot of an other state of the template.
      */
     bool set_encounter_objects(std::map<std::string, EncounterObject, std::less<>> objects);
+    /**
+     * Stage QG6b (docs/systems/mission-boards.md, the faction boards): @return The ActorId of the Claim landmark of a territory (the member
+     * claims of the tool), or no value. The provider identity of a faction board and the destination of its missions.
+     */
+    [[nodiscard]] std::optional<std::array<std::uint8_t, 16>> claim(std::uint16_t territory) const {
+        const auto found = m_claims.find(territory);
+        return found != m_claims.end() ? std::optional<std::array<std::uint8_t, 16>>(found->second) : std::nullopt;
+    }
+    /** Sets the claims of the territories (tests). */
+    void set_claims(std::map<std::uint16_t, std::array<std::uint8_t, 16>> claims) {
+        m_claims = std::move(claims);
+    }
     /** @return The loot container of a name ("personal"), or null (a file of format 1 or 2: no loot bag). */
     [[nodiscard]] const LootContainer* loot_container(std::string_view name) const;
     [[nodiscard]] const std::map<std::string, LootContainer>& loot_containers() const {
@@ -508,6 +520,8 @@ private:
     std::map<std::string, LootContainer> m_lootContainers;
     /** Stage QG5c2: the template of each start object of the encounter recipes (the lower-case slice path). */
     std::map<std::string, EncounterObject, std::less<>> m_encounterObjects;
+    /** Stage QG6b: the claim of each territory (the member claims). */
+    std::map<std::uint16_t, std::array<std::uint8_t, 16>> m_claims;
     /** Stage QG4: the persons apart, and the lower-case NPC id to their positions. */
     std::vector<PersonApart> m_personsApart;
     std::unordered_map<std::string, std::vector<std::size_t>> m_apartByNpc;

@@ -187,8 +187,9 @@ tools/world tokens NAME syndicate 0 100           # the rank and the points of t
   open it again. In the wait its tooltip is "Cannot change factions while on cooldown. 30d", and its panel greys out each other
   faction; the client sends no 3161 [live]. The panel also greys out a faction whose recruitment achievement the character does not
   have (the achievement check of CanSetFactionWithResults).
-- The Faction Board of a recruiter does not open (the faction boards are stage QG6b; the client log has errors of
-  `UpdateInfluenceWarInfo`). Stage QG6a made the town board of a settlement ([Mission boards](mission-boards.md)).
+- Stage QG6b: the Faction Board of a faction representative (a commander of a settlement, the conversation option "Open Faction
+  Board") opens for a character of its faction; the board of a recruiter and of the other factions does not (the rules are in
+  [Mission boards](mission-boards.md)).
 - A backend of schema 17 refuses a database of schema 18. For a comparison with an earlier backend, use a copy of the data folder.
 - The progression ticker of the HUD shows a faction gain only with an experience event (`eXpEventType_Reputation`,
   `eXpEventType_ProgressionCurrency`). The backend sends none: a command changes the points with no ticker. The reward notice of a
@@ -199,8 +200,7 @@ tools/world tokens NAME syndicate 0 100           # the rank and the points of t
 - The faction shops (stage 5.1): the token balances are categorical progressions of slot 65. A purchase is a negative change with
   `Skills::add_faction_points` (it refuses a balance that is too low). The rank gate of a shop row is
   RequiredCategoricalProgressionRank against the rank of the reputation.
-- The faction missions of the boards (stage QG6b): the hand-in already pays FactionReputation and FactionTokens of an event with the
-  GainFactionRep card. The mission bonus (RewardModifierData FactionMissionBonus: token modifier 4, reputation modifier 0) and the
-  request 3817 (`RequestPurchaseRankIncrease`) are not done.
+- The faction missions of the boards: done in stage QG6b ([Mission boards](mission-boards.md): the offers, 3816, the faction rewards,
+  the daily bonus FactionMissionBonus). The request 3817 (`RequestPurchaseRankIncrease`) is not done.
 - PvP, the wars, and the territory owner need the public faction of the Faction state and the checks of 0x30AD140 that the backend does
   not do now (PvP flag, war, territory count, company).
