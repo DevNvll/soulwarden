@@ -32,6 +32,12 @@
 //                                                        to a position (a character that is not
 //                                                        in the world: its row gets the place)
 //   GET  /v1/dev/world/places                            the travel places of the game data
+//   POST /v1/dev/world/instance/enter?character=ID&map=MAP[&instance=N]
+//                                                        stage DG1: the character goes into a new instance of a map of the
+//                                                        game modes (or joins the instance N of that map), at the start of the map
+//   POST /v1/dev/world/instance/return?character=ID      stage DG1: the character goes back to its return place
+//   GET  /v1/dev/world/instances                         stage DG1: the instances, their members, and the counts
+//   GET  /v1/dev/world/game-maps                         stage DG1: the maps of the game modes of the game data
 //   GET  /v1/dev/world/path?x0=X&y0=Y&z0=Z&x1=X&y1=Y&z1=Z the path of a creature between two places, by
 //                                                        the navigation of the world (the corners, the
 //                                                        length, the steps and the time of the search)
@@ -254,6 +260,8 @@ json entity_json(const world::Entity& entity) {
         {"character", entity.characterId},
         {"name", entity.name},
         {"session", entity.owner},
+        // Stage DG1: the space of the entity (0: the main world).
+        {"space", entity.space},
         {"position", {entity.position.x, entity.position.y, entity.position.z}},
         {"health", entity.vitals.health},
         {"healthMax", entity.vitals.healthMax},
@@ -338,6 +346,8 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                  {"abilities", commands::abilities_json(target, "")},
                                  // The spell entities (stage 3.3b-S2a).
                                  {"spells", commands::spells_json(target)},
+                                 // The instances (stage DG1).
+                                 {"instances", commands::instances_json(target)},
                                  // The projectiles of the players (stage 3.3b-S3).
                                  {"projectiles", commands::projectiles_json(target)},
                                  // The stamina and the dodges (stage 3.4f-B).
@@ -665,7 +675,8 @@ service::HttpResponse make_probe(const Services& services, const RouteContext& c
         for (world::RawFragment& fragment : fragments) {
             stamp_server_time(fragment.state, target.clock());
         }
-        const world::Entity* probe = target.make_probe(body, position, std::move(fragments));
+        // Stage DG1: the probe is in the space of the character of 'near'.
+        const world::Entity* probe = target.make_probe(body, position, std::move(fragments), reference->space);
         if (probe == nullptr) {
             return message(400, "the position is not a position of the world, or the actor id is the id of an entity");
         }
@@ -928,6 +939,22 @@ void register_dev_routes(Router& router, const Services& services) {
         }
         // The travel places do not change after the start of the backend: a read needs no world task.
         return json_reply(200, commands::travel_places_json(services.world.options().travelPlaces).dump());
+    });
+    // Stage DG1: the instances (docs/systems/instances.md).
+    router.add("POST", "", "/v1/dev/world/instance/enter", "dev.world_instance_enter", command_route(services, commands::enter_instance));
+    router.add("POST", "", "/v1/dev/world/instance/return", "dev.world_instance_return", command_route(services, commands::return_instance));
+    router.add("GET", "", "/v1/dev/world/instances", "dev.world_instances", [&services](const RouteContext& context) {
+        if (!context.request.host.empty()) {
+            return message(403, "forbidden");
+        }
+        return in_world(services, [](world::World& target) { return json_reply(200, commands::instances_json(target).dump()); });
+    });
+    router.add("GET", "", "/v1/dev/world/game-maps", "dev.world_game_maps", [&services](const RouteContext& context) {
+        if (!context.request.host.empty()) {
+            return message(403, "forbidden");
+        }
+        // The game modes do not change after the start of the backend: a read needs no world task.
+        return json_reply(200, commands::game_maps_json(services.world.options().gameModes).dump());
     });
     router.add("GET", "", "/v1/dev/world/path", "dev.world_path", bind(find_path));
     router.add("POST", "", "/v1/dev/world/touch", "dev.world_touch", bind(touch_entity));

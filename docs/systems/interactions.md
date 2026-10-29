@@ -286,6 +286,12 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   state (type 14): without it the client shows no prompt [client 0x42D0300; live L3, L4]. The loader refuses a variation slot above 4095
   or one that is the slot of an other state of the template [agent].
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): the objects of this system are objects of the main world. A request of a character in an
+  instance is refused (`unknownObject`: no change), the grid of the object entities gives nothing for a different space, and the server
+  children of the placements come only for the characters of the main world [agent: the objects of an instance level are stage DG2].
+
 ## Commands
 
 ```sh

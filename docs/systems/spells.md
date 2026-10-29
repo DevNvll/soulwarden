@@ -384,6 +384,12 @@ From stage 3.4f-D the creature data has 10 spells (22 slices, 177 kinds, 539 spa
   the loot, the experience) have no rule in the data or the client.
 - `Undead_Officer_ShieldActivate`: a shield of the officer (the block is not in this part).
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): a spell entity is in the space of its caster, and each search of a spell (a target, a member of
+  an area, a shield) uses the space of the spell. A move of the caster to a different space ends its spells and the auras that follow it
+  (`World::move_to_space`) [agent].
+
 ## Commands
 
 ```sh

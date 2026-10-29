@@ -285,6 +285,10 @@ WorldCommand spawn_creature(const std::string& character, const Arguments& argum
         if (reference == nullptr) {
             return message(404, "the character is not in the world: a new creature needs its place");
         }
+        if (reference->space != world::kMainSpace) {
+            // Stage DG1: an instance has no content and no level data (the heights and the navigation of its level are stage DG2).
+            return message(409, "the character is in an instance: a creature of a command comes there with the level data of stage DG2");
+        }
         state::WorldPosition position{reference->position.x + offset.x, reference->position.y + offset.y,
                                       reference->position.z + offset.z};
         const float yaw = wantedYaw                                                              ? *wantedYaw

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "gamedata/game_modes.h"
 #include "gamedata/mission_data.h"
 #include "gamedata/ability_data.h"
 #include "gamedata/appearance_tables.h"
@@ -112,8 +113,10 @@ struct ServerHost {
     gamedata::EncounterData encounters;
     /** The mission data of the boards (stage QG6a). Empty until a case loads it (and binds the quest data): a board offers nothing. */
     gamedata::MissionData missions;
+    /** The game modes (stage DG1). Empty until a case sets them: "instance enter" is then refused. */
+    gamedata::GameModes gameModes;
     world::World world{clock, store, tables,
-                       with_missions(with_encounters(with_quest_objects(with_triggers(with_conversations(with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
+                       with_game_modes(with_missions(with_encounters(with_quest_objects(with_triggers(with_conversations(with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
                                                                                                               combat, places, terrain, navigation,
                                                                                                               loot, abilities, perks, spells,
                                                                                                               projectiles, weaponActions),
@@ -124,7 +127,7 @@ struct ServerHost {
                                      crafting),
                                      quests),
                                      pois),
-                                     conversations), triggers), questObjects), encounters), missions)};
+                                     conversations), triggers), questObjects), encounters), missions), gameModes)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -326,6 +329,10 @@ struct ServerHost {
     }
     static world::WorldOptions with_missions(world::WorldOptions options, const gamedata::MissionData& missions) {
         options.missionData = &missions;
+        return options;
+    }
+    static world::WorldOptions with_game_modes(world::WorldOptions options, const gamedata::GameModes& modes) {
+        options.gameModes = &modes;
         return options;
     }
 

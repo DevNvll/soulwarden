@@ -438,6 +438,13 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
 - Stage QG5c5: a member with a patrol path of the data (a part of a group) has its route in world coordinates in its entity
   (`Creature::memberRoute`, `Creatures::spawn_member`); the behavior takes it as the route of a spawn point ([Creature behavior](creature-behavior.md)).
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): each creature is in the main world (the spawn points, the encounters, and the commands are main
+  world content). The spawn point rule takes the places of the characters of the main world only: a character in an instance makes no
+  creature of a point at the same coordinates (case IN10). A creature of a command near a character in an instance is refused (409): the
+  creatures of an instance level come with its level data (stage DG2) [agent].
+
 ## Open points
 
 - Stage QG5c1: a stationary target has no server part of its slice: the area status of a corruption barb on the players near it

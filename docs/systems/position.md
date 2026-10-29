@@ -41,6 +41,10 @@ contracts are in the protocol notes (sections 4.6 and 4.7).
   the field for 1 s. The log of a session names its source, and each change of it. A position
   of the client never goes back to its own client as a new position (the movement state is
   not marked).
+- Stage DG1 ([Instances](instances.md)): the position row of a character keeps the main world position while the character is in an
+  instance (its return place). The save rule writes no position of an instance space, and a travel in an instance moves the character in
+  its space with no row; the entry and the exit of an instance write the return place in their transactions [agent]. A position report
+  of the client in an instance is checked as in the main world: the space changes no rule of the check.
 - The weight of the bag (stage U3, [Items and equipment](items-and-equipment.md)): the check has only upper limits, and the client
   makes the speed of an encumbered character itself. The check accepts the slow walk of an overencumbered client (live: 1.57 m/s at
   300.2 before the stage; backward 0.62 m/s at 300.4 after it) and its jog (5.4 m/s at 200.2 and at 300.4 forward: the client did not

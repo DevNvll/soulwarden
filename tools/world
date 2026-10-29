@@ -28,6 +28,16 @@ Usage:
                                                 the ground, or above it: the character falls)
                                                 --screen: the loading screen of the client (auto:
                                                 a loading screen for a place more than 100 m away)
+  tools/world instance maps [TEXT]              the maps of the game modes of the game data (stage DG1) whose id, mode,
+                                                name, or level has the text
+  tools/world instance enter CHARACTER MAP [INSTANCE]
+                                                the character goes into a new instance of the map (MAP: a map id of
+                                                `tools/world instance maps`, for example DungeonAmrine), or into the
+                                                instance INSTANCE of that map: the level change of its client in the
+                                                same connection, at the start of the map. Its return place is its
+                                                place now (docs/systems/instances.md)
+  tools/world instance return CHARACTER         the character goes back to its return place in the main world
+  tools/world instance list                     the instances, their members, and their return places
   tools/world path X0 Y0 Z0 X1 Y1 Z1 [--tsv FILE]
                                                 the path of a creature between two places, by the
                                                 navigation data of the backend: each corner of the
@@ -538,6 +548,29 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         document = {"message": body}
     if isinstance(document, dict) and "phaseNumber" in document and "cycle" in document:
         print("world: " + world_time_text(document))
+    elif isinstance(document, dict) and document.get("message") == "done" and isinstance(document.get("instance"), dict):
+        # Stage DG1: instance enter and instance return.
+        x, y, z = document["place"]
+        instance = document["instance"]
+        ended = ", the instance ended" if document.get("ended") else ""
+        print(f"world: done: instance {instance['id']} (space {instance['space']}, map {instance['map']}, level {instance['level']}), "
+              f"{len(instance['members'])} member(s); the character is at {x:.2f} {y:.2f} {z:.2f}{ended}")
+    elif isinstance(document, dict) and "instances" in document and "counts" in document:
+        print(instances_text(document))
+    elif isinstance(document, dict) and "maps" in document and "loaded" in document:
+        if not document["loaded"]:
+            print("world: the backend has no game modes (tools/gamedata/game-modes.sh makes game-modes.json)")
+        words = [word.lower() for word in (filter_text or "").split()]
+        shown = 0
+        for entry in document["maps"]:
+            text = " ".join([entry["id"], entry["mode"], entry["name"], entry["level"]]).lower()
+            if all(word in text for word in words):
+                x, y, z, heading = entry["starts"][0]
+                kind = "solo" if entry["soloTrial"] else "dungeon" if entry["dungeon"] else ""
+                print(f"{entry['id']:<30} {entry['level']:<32} {x:9.2f} {y:9.2f} {z:7.2f} {heading:6.1f}  {kind:<8} "
+                      f"capacity {entry['teamCapacity']}  {entry['name']}")
+                shown += 1
+        print(f"{shown} of {len(document['maps'])} maps")
     elif isinstance(document, dict) and "step" in document and "blackboard" in document:
         show_tree(document)
     elif isinstance(document, dict) and "loaded" in document and "refused" in document:
@@ -660,6 +693,9 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             spells = load.get("spells")
             if spells:
                 print(spells_text(spells))
+            instances = load.get("instances")
+            if instances and (instances["instances"] or any(instances["counts"].values())):
+                print(instances_text(instances))
             projectiles = load.get("projectiles")
             if projectiles:
                 print(projectiles_text(projectiles))
@@ -1415,6 +1451,22 @@ def show_ownership(document: dict) -> None:
     print(f"rewards that the character got: {', '.join(document['rewards']) or '-'}")
 
 
+def instances_text(document: dict) -> str:
+    """@return The lines of the instances (stage DG1): each instance with its members, and the counts."""
+    counts = document["counts"]
+    lines = [f"instances: {len(document['instances'])} now; {counts['made']} made, {counts['ended']} ended, {counts['entries']} entries, "
+             f"{counts['exits']} returns, {counts['departures']} members that left the world, {counts['recovered']} rows of an earlier "
+             f"start, {counts['refused']} refused" + ("" if document.get("data", True) else " (the backend has no game modes)")]
+    for instance in document["instances"]:
+        x, y, z = instance["start"]
+        lines.append(f"  instance {instance['id']}  space {instance['space']}  map {instance['map']} ({instance['level']})  start "
+                     f"{x:.2f} {y:.2f} {z:.2f}  {len(instance['members'])} of {instance['capacity']} member(s)  {instance['seconds']:.0f} s")
+        for member in instance["members"]:
+            rx, ry, rz = member["returnPlace"]
+            lines.append(f"    member {member['character']}  return place {rx:.2f} {ry:.2f} {rz:.2f}  {member['seconds']:.0f} s")
+    return "\n".join(lines)
+
+
 def show(entity: dict) -> None:
     x, y, z = entity["position"]
     session = f"session s{entity['session']}" if entity["session"] else "no session"
@@ -1422,8 +1474,9 @@ def show(entity: dict) -> None:
     health = ""
     if "health" in entity and entity.get("kind") in ("player", "creature"):
         health = f"  health {entity['health']:.1f} of {entity['healthMax']:.1f}{'  DEAD' if entity.get('dead') else ''}"
+    space = f"  space {entity['space']}" if entity.get("space") else ""
     print(f"entity {entity['entity']}  actor {entity['actor']}  {entity['name']:<16} {owner}  "
-          f"{session:<11} position {x:.3f} {y:.3f} {z:.3f}{health}")
+          f"{session:<11} position {x:.3f} {y:.3f} {z:.3f}{space}{health}")
 
 
 def whole(word: str, what: str) -> int:
@@ -1874,6 +1927,21 @@ def main() -> None:
         if table:
             Path(table).write_text("kind\tx\ty\tz\n" + "".join(f"place\t{x:.3f}\t{y:.3f}\t{z:.3f}\n" for _, x, y, z in places))
             print(f"{len(places)} places are in {table}")
+    elif command == "instance" and len(arguments) >= 2 and arguments[1] in ("maps", "enter", "return", "list"):
+        action = arguments[1]
+        if action == "maps" and len(arguments) in (2, 3):
+            request(data_dir, "GET", "/v1/dev/world/game-maps", filter_text=arguments[2] if len(arguments) == 3 else "")
+        elif action == "list" and len(arguments) == 2:
+            request(data_dir, "GET", "/v1/dev/world/instances")
+        elif action == "enter" and len(arguments) in (4, 5):
+            if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[3]):
+                fail("the map must be a map id of the game modes (tools/world instance maps)")
+            join = f"&instance={whole(arguments[4], 'the instance')}" if len(arguments) == 5 else ""
+            request(data_dir, "POST", f"/v1/dev/world/instance/enter?character={character_id(data_dir, arguments[2])}&map={arguments[3]}{join}")
+        elif action == "return" and len(arguments) == 3:
+            request(data_dir, "POST", f"/v1/dev/world/instance/return?character={character_id(data_dir, arguments[2])}")
+        else:
+            fail("usage: tools/world instance maps [TEXT] | enter CHARACTER MAP [INSTANCE] | return CHARACTER | list")
     elif command == "places" and len(arguments) in (1, 2):
         request(data_dir, "GET", "/v1/dev/world/places", filter_text=arguments[1] if len(arguments) == 2 else "")
     elif command == "travel" and len(arguments) >= 3:

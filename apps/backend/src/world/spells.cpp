@@ -282,7 +282,7 @@ Entity* Spells::make(const SpellRequest& request) {
     }
     const std::string casterName = caster->name;
     const std::uint32_t casterLevel = caster->progression.level;
-    Entity& entity = m_world.make_spell(body, position);
+    Entity& entity = m_world.make_spell(body, position, caster->space);
     if (entity.spell.vitalsRow != nullptr) {
         entity.vitals.health = health;
         entity.vitals.healthMax = health;
@@ -442,7 +442,7 @@ void Spells::summon_shot(Entity& spell, Live& live) {
     const state::WorldPosition origin{spell.position.x, spell.position.y, spell.position.z + spell_rules::kShotHeight};
     Entity* target = nullptr;
     float best = 0.0F;
-    m_world.for_each_near(spell.position, volume->radius + creature_reach(m_world), [&](Entity& entity) {
+    m_world.for_each_near(spell.space, spell.position, volume->radius + creature_reach(m_world), [&](Entity& entity) {
         ++m_counts.looked;
         if (entity.kind != EntityKind::creature || entity.creature.dead || entity.creature.immune()) {
             return;
@@ -498,7 +498,7 @@ void Spells::trap_step(Entity& spell, Live& live) {
     // The first creature whose capsule is in the detection volume (a sphere at the place of the trap).
     const float reach = creature_reach(m_world);
     bool found = false;
-    m_world.for_each_near(spell.position, volume->radius + reach, [&](Entity& entity) {
+    m_world.for_each_near(spell.space, spell.position, volume->radius + reach, [&](Entity& entity) {
         ++m_counts.looked;
         if (!found && entity.kind == EntityKind::creature && !entity.creature.dead && !entity.creature.immune()
             && capsule_gap(spell.position, capsule_of(entity)) <= volume->radius) {
@@ -521,7 +521,7 @@ void Spells::trap_step(Entity& spell, Live& live) {
     std::vector<EntityId> hit;
     if (offense != nullptr) {
         const state::WorldPosition eye{spell.position.x, spell.position.y, spell.position.z + 0.5F};
-        m_world.for_each_near(spell.position, offense->radius + reach, [&](Entity& entity) {
+        m_world.for_each_near(spell.space, spell.position, offense->radius + reach, [&](Entity& entity) {
             ++m_counts.looked;
             if (entity.kind == EntityKind::creature && !entity.creature.dead && !entity.creature.immune()
                 && capsule_gap(spell.position, capsule_of(entity)) <= offense->radius
@@ -597,7 +597,7 @@ void Spells::aura_step(Entity& spell, Live& live) {
         // goes behind a wall leaves the area.
         state::WorldPosition center = spell.position;
         center.z += 1.5F;
-        m_world.for_each_near(spell.position, live.radius, [&](Entity& entity) {
+        m_world.for_each_near(spell.space, spell.position, live.radius, [&](Entity& entity) {
             ++m_counts.looked;
             if (entity.kind == EntityKind::player && !entity.life.dead && distance3(entity.position, spell.position) <= live.radius
                 && std::fabs(entity.position.z - spell.position.z) <= spell_rules::kHeight && m_world.friendly(*caster, entity)) {
@@ -928,7 +928,7 @@ Entity* Spells::make_area(const AreaRequest& request) {
                                creature->creature.level};
     const std::string casterName = creature->creature.kind != nullptr ? creature->creature.kind->id : std::string("?");
     const std::uint32_t level = creature->creature.level;
-    Entity& entity = m_world.make_spell(body, request.position);
+    Entity& entity = m_world.make_spell(body, request.position, creature->space);
     entity.progression.level = level;
     const EntityId id = entity.id;
     m_byCaster[body.caster].push_back(id);
@@ -997,7 +997,7 @@ void Spells::area_step(Entity& spell, Live& live) {
     // The characters in the volume (the position index near the area; a character that lives).
     const float reach = std::max(live.volume->shapeRadius, live.volume->radius) + live.volume->height + 3.0F;
     std::set<EntityId> inside;
-    m_world.for_each_near(spell.position, reach, [&](Entity& entity) {
+    m_world.for_each_near(spell.space, spell.position, reach, [&](Entity& entity) {
         ++m_counts.looked;
         if (entity.kind == EntityKind::player && !entity.life.dead && in_area(spell, live, entity)) {
             inside.insert(entity.id);
@@ -1136,7 +1136,7 @@ void Spells::strike_sample(Entity& spell, Live& live, WorldClock::time_point sam
     const state::WorldPosition eye{spell.position.x, spell.position.y, spell.position.z + 0.5F};
     const gamedata::CreatureData* creatures = m_world.creatures().data();
     std::vector<EntityId> targets;
-    m_world.for_each_near(spell.position, reach, [&](Entity& entity) {
+    m_world.for_each_near(spell.space, spell.position, reach, [&](Entity& entity) {
         ++m_counts.looked;
         if (entity.kind != EntityKind::player || entity.life.dead || live.struck.contains(entity.id)) {
             return;
@@ -1183,7 +1183,7 @@ std::optional<float> Spells::absorbs(const state::WorldPosition& from, const sta
     const float length = distance3(from, to);
     const state::WorldPosition middle{(from.x + to.x) * 0.5F, (from.y + to.y) * 0.5F, (from.z + to.z) * 0.5F};
     std::optional<float> first;
-    m_world.for_each_near(middle, length * 0.5F + kShieldReach, [&](Entity& entity) {
+    m_world.for_each_near(source->space, middle, length * 0.5F + kShieldReach, [&](Entity& entity) {
         if (entity.kind != EntityKind::spell || entity.spell.role != SpellRole::shield) {
             return;
         }

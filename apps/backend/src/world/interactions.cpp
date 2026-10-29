@@ -307,6 +307,11 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     if (character.life.dead) {
         return InteractionVerdict::dead;
     }
+    if (character.space != kMainSpace) {
+        // Stage DG1: each object of this system is an object of the main world: a character in an instance has no object near it (the
+        // objects of an instance level are stage DG2). The request changes nothing (rule MP-5).
+        return InteractionVerdict::unknownObject;
+    }
     // The reference: a bound of a level object (the reference map of the data), or of a server child (its G is its entity id).
     Site site;
     std::uint32_t boundIndex = 0;
@@ -1139,6 +1144,10 @@ void Interactions::scan() {
     // camps of stage 2.6 (a decision of an agent: live check L5 of stage 2.5b, the client shows only a name and a bind option there).
     std::set<std::uint32_t> wanted;
     m_world.for_each_character([&](const Entity& character) {
+        // Stage DG1: the placements are placements of the main world: a character in an instance makes no child.
+        if (character.space != kMainSpace) {
+            return;
+        }
         catalog->for_each_spawned_near(
             character.position, kSpawnEnter,
             [&](std::uint32_t index) {
@@ -1154,7 +1163,7 @@ void Interactions::scan() {
     for (const auto& [index, id] : m_spawnedLive) {
         const gamedata::SpawnedPlacement& child = catalog->spawned()[index];
         bool near = false;
-        m_world.for_each_near(child.position, kSpawnLeave, [&](Entity& entity) { near = near || entity.kind == EntityKind::player; });
+        m_world.for_each_near(kMainSpace, child.position, kSpawnLeave, [&](Entity& entity) { near = near || entity.kind == EntityKind::player; });
         if (!near) {
             far.push_back(id);
         }

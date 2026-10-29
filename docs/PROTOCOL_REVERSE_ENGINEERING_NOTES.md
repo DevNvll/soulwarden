@@ -643,6 +643,16 @@ bundle). Session 1 has version 1 and instance 1, as before. Live proof of the re
 log `m_clientContextInstanceId 1 changing to levelInfo.m_clientContextInstanceId 2`, then
 `InGame`.
 
+**The account rule** (stage DG1, section 4.66; docs/systems/instances.md). A level change in one connection gives the client a new version
+and a new instance too, and the session id alone then fails: session 1 moves to instance 2, and session 2 of the same game process would
+start with instance 2, the instance that the client has (research dungeons.md 2.4; the client compares only with its last values: the
+branches 0x64468B1 and 0x6446B47 of 0x6446800 [static]). The game server keeps, for each account (persona id), the last version and the
+last instance that it gave (`server/rep/level_contexts.h`); each new level information of that account (a world entry, a level change)
+gets one more version and the next instance (1 to 255, never 0) [project rule: the backend cannot see the game process; the key is the
+account]. The first level information of an account in a backend process has the values of the session id (the stored bytes of case T2).
+Live proof (stage DG1): a second connection of one game process after three level changes got version 5 and instance 5, and the client
+entered the world (`m_clientContextInstanceId 4 changing to levelInfo.m_clientContextInstanceId 5`).
+
 **Session end.** A session ends one time, with one of these causes (log line `rep: session
 ended, cause: CAUSE; client port N, A datagrams in, B datagrams out (C bytes) [mark]`):
 
@@ -7967,6 +7977,52 @@ Bonuses Available 3/3", then "2/3" after a hand-in with the bonus]:
 
 **What is not proved**: the original selection of the faction offers, the refresh interval, and the duplicate rules (the backend rule
 is in [Mission boards](systems/mission-boards.md)); the PvP accept 3818; the field 0 gameEvents of the GameEvent state.
+
+### 4.66 The level change in one connection: the self identification, the level information, the spawn notice, the bundle sequence, the owner record, the acknowledgement 5181 (live proof of the probe of research DG0 and of stage DG1; static proof for the client code; the instance model, the return place, and the account key are project rules)
+
+The live probe is in research `dungeons.md` section 2 (2026-10-22, a probe patch of `5174ff8`); the backend of stage DG1 sends the same
+sequence (`RepSession::change_level`, docs/systems/instances.md). Live runs of stage DG1: four level changes of one session (the main
+world to Amrine, the return, a second entry, a third entry), a second connection, and a login after a backend stop
+(`~/Games/soulwarden/work/evidence/dungeons/dg1/implement/RESULT.md`).
+
+**The sequence of the server** [live], for a client in `InGame`:
+
+1. The self identification 1628 (section 3.5) with the new context instance in its level block (the same actors).
+2. The level information 1635 (section 4.1: level text, terrain text, the four floats 0, u64 0, an empty list, flag 0, the instance, the
+   reload flag 1, flag 0, the version) with the level of the new space, a new version, and a new instance (the account rule of section
+   3.5). The level of an instance: the CoatlicueName of its map row in lower case with "/" and its last part (`nw_dungeon_windsward_00`,
+   `coatlicue/nw_dungeon_windsward_00`) [data; live].
+3. The spawn point notice 1617 (no fields).
+4. An empty state bundle with the sequence 1 and the new instance: the client resets its expected sequence to 1 (0x6463540 [static]), and
+   this bundle starts the load (0x643EEE9 [static]).
+5. The next tick: the full owner record (sequence 2, interest number 1, the metadata state in slot 0 first), then the records of the
+   entities of the new space with new interest numbers. The client cleaned its context (`ClientContext::Initialize` 0x171B850, cleanup
+   0x16835B0 [static]): no stop is needed for the entities of the old context. The entity, its actor id, and its GDE id stay [live: research
+   dungeons.md 2.3, U5].
+
+**What the client does** [live]: game log `LevelInfoChanged`, `Reset`, `InGame` to `WaitingForPlayerSpawn`, `m_clientContextInstanceId A
+changing to levelInfo.m_clientContextInstanceId B`, `Calling clientContext->Initialize`, then one line `HandleUnexpectedMessage skipping
+ReceiveStateBundle for bundle message due to clientContext == nullptr` and, after the map load, `ProcessPendingReliableMsgQueue processing 1
+messages from m_pendingUnexpectedMsgs`: the client keeps the bundle that starts the load and applies it after the load (the same two lines
+come at the first world entry; stage DG1: six loads, six pairs, no `Failure during read`, no disconnect; the bag, the gear, the coin, the
+quick slots, the attributes, the journal, and the tracker the same after each load). Then `Loading level LEVEL` and `player spawn succeeds,
+in game`. The loading screen shows a tip of the level (Amrine: "Got the Munchies"). Times of stage DG1: the mine 4 s to 8 s after the level
+information, the main world 11 s.
+
+**The acknowledgement 5181** (`PlayerComponentServerFacet_OnAckLevelInfoChanged`; body target:u64 entity:u64 value:u8; reader 0x65917B0,
+top-level reader 0x658A6A0 [static]): the client sends it from the old context 11 ms to 26 ms after the level information, with the new
+instance as its byte [live]. The backend writes one log line and waits for nothing: the owner record is in the bundles that the client keeps
+until its level is ready [live].
+
+**The observers** [project rule, MP-2]: a session in the old space gets the stop of the interest number of the mover at its next interest
+scan (at once: the move marks `last_travel`), and it keeps its level, its context instance, and its bundle sequence (case IN8). A session in
+the new space gets a record of the mover with a new interest number (live: a remote character that joined the instance came into the
+interest table of the client in Amrine and showed with its name tag).
+
+**Not sent at a level change** [project rule]: 3746 and 6709 (the end of the input lock of a travel), 3951 (the loading screen of a far
+travel), and 3954 (on player teleport). Not checked: the four floats and the list of 1635 (zero and empty), the U2 and U3 questions of
+research expeditions.md (the self identification and the spawn notice are sent; their need is not tested), and a level change to the same
+level text (a story instance in `newworld_vitaeeterna`).
 
 ## 5. Open items
 

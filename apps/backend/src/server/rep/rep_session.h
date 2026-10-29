@@ -14,6 +14,7 @@
 #include "server/rep/client_input.h"
 #include "server/rep/health_messages.h"
 #include "server/rep/item_requests.h"
+#include "server/rep/level_contexts.h"
 #include "server/rep/observer.h"
 #include "server/rep/progress_requests.h"
 #include "server/rep/research.h"
@@ -56,6 +57,12 @@ inline constexpr std::uint32_t kTypeReplicatedStateBundle = 8; // 8a40aec2-ae07-
 inline constexpr std::uint32_t kTypeClientInput = 1589; // ActionListComponentServerFacet_ReceiveInputFromClient
 inline constexpr std::uint32_t kTypePlayerManagerRejected = 1630; // Javelin::ClientMessagesTrait::PlayerManagerRejectedMsg
 inline constexpr std::uint32_t kTypeKickClient = 271;             // KickClientTrait::KickClientMsg
+/**
+ * Stage DG1: PlayerComponentServerFacet_OnAckLevelInfoChanged (body target:u64 entity:u64 value:u8; reader 0x65917B0). The client sends it
+ * at once after a level information that starts a level change (before the load), from the old client context, with the new context
+ * instance as its byte (live probe of research dungeons.md 2.2). The backend writes a log line and does not wait for it.
+ */
+inline constexpr std::uint32_t kTypeAckLevelInfoChanged = 5181;
 
 /**
  * Result of the registration reply for a registration that the backend refuses: the client
@@ -88,6 +95,11 @@ struct SessionOptions {
     bool observePlayers{false};
     /** Ids of the player slice for the check of the component calls. Null or not loaded: no check of a target. */
     const gamedata::SliceIds* playerSlice{nullptr};
+    /**
+     * Stage DG1: the account rule of the level information of the game server (server/rep/level_contexts.h). Null: the session rule (the
+     * session id), with no level change after the first one.
+     */
+    LevelContexts* levelContexts{nullptr};
 };
 
 /** Counts of the client messages of a session, by the result of the id check (protocol notes 4.2). */
@@ -147,6 +159,12 @@ public:
      * reports starts again from the new place.
      */
     void traveled(const world::Travel& travel) override;
+
+    /**
+     * Stage DG1: the world moved the character of this session to a different space (World::move_to_space): the client changes its
+     * level in this connection (change_level).
+     */
+    void space_changed(const world::SpaceChange& change) override;
 
     /** @return The teleport number of the last full movement state of its character that the client got. 0: none. */
     [[nodiscard]] std::optional<std::uint8_t> client_teleport() const override {
@@ -261,6 +279,19 @@ private:
     void send_registration_reply(std::int32_t result);
     void send_self_identification();
     void send_level_information();
+    /**
+     * Stage DG1: the level change in one connection (research dungeons.md 2.1 and 2.4, live probe of 2026-10-22): the session forgets each
+     * record (the client makes a new client context and cleans the old one), takes the next version and the next context instance of the
+     * account rule, starts the bundle sequence again at 0, and sends the self identification (1628) with the new instance, the level
+     * information (1635) with the level of the space of its entity, the spawn point notice (1617), and an empty bundle (sequence 1). The
+     * next tick sends the full owner record. The session does not wait for 5181 of the client: the client keeps the records until its
+     * level is ready.
+     */
+    void change_level(const world::SpaceLevel& level);
+    /** Stage DG1: the next version and context instance of a level information (the account rule, or the session rule). */
+    void next_level_context();
+    /** Stage DG1: the acknowledgement 5181 of the client: a log line. */
+    void handle_level_acknowledgement(std::span<const std::uint8_t> body);
     /**
      * Sends one state bundle. @param stops Interest numbers that the client must remove: they
      * go into the control block of the bundle (100 numbers at most).
@@ -515,6 +546,16 @@ private:
      * session has its own number: a client that leaves the world can enter it again.
      */
     std::uint8_t m_contextInstance;
+    /**
+     * Stage DG1: the version of the last level information. The session id at the start (the session rule); the account rule
+     * (SessionOptions::levelContexts) gives the next one for each level information of the account.
+     */
+    std::uint64_t m_levelVersion;
+    /** Stage DG1: the persona id of the registration (the key of the account rule). */
+    std::string m_personaId;
+    /** Stage DG1: the level changes of the session, and the acknowledgements 5181 of its client. */
+    std::uint32_t m_levelChanges{0};
+    std::uint32_t m_levelAcknowledgements{0};
     SessionOptions m_options;
     /** Research switch: time of the kick message. No value when no kick waits. */
     std::optional<carrier::Clock::time_point> m_researchKickAt;

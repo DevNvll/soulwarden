@@ -585,10 +585,10 @@ void way_to_the_target(const Options&) {
           "the height of each step is the height of the ground at that place (a slope of the test terrain)");
     check(near(wolf->creature.yaw, 90.0F, 0.5F), "the creature looks at its target: west is the direction 90 degrees");
     bool found = false;
-    host.world.for_each_near(state::WorldPosition{stop + 0.2F, 1000.0F, kHeight}, 0.5F,
+    host.world.for_each_near(world::kMainSpace, state::WorldPosition{stop + 0.2F, 1000.0F, kHeight}, 0.5F,
                              [&](world::Entity& entity) { found = found || entity.id == wolfId; });
     bool old = false;
-    host.world.for_each_near(state::WorldPosition{1030.0F, 1000.0F, kHeight}, 3.0F,
+    host.world.for_each_near(world::kMainSpace, state::WorldPosition{1030.0F, 1000.0F, kHeight}, 3.0F,
                              [&](world::Entity& entity) { old = old || entity.id == wolfId; });
     check(found && !old, "the position index of the world follows the creature into a different cell");
     // What the session of an observer got: one movement state for each step, with the

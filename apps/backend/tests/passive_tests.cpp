@@ -387,7 +387,7 @@ void passive_load(const Options&) {
         for (const std::string& id : characters) {
             world::Entity* character = shop.world().find_character(id);
             world::Entity* target = nullptr;
-            shop.world().for_each_near(character->position, 3.0F, [&](world::Entity& entity) {
+            shop.world().for_each_near(world::kMainSpace, character->position, 3.0F, [&](world::Entity& entity) {
                 if (target == nullptr && entity.kind == world::EntityKind::creature && !entity.creature.dead) {
                     target = &entity;
                 }

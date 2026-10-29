@@ -261,8 +261,10 @@ void context_instance(const Options&) {
     FakeClient again(27002);
     host.enter(again, players.alpha.registration());
     const Bundle bundleAgain = read_bundle(again.got.at(5).body);
-    check(bundleAgain.complete && bundleAgain.instance == 3,
-          "the client of session 1 connects again: its new session has instance 3, not 1");
+    // Stage DG1 (the account rule of server/rep/level_contexts.h): the next instance of the account of the client, not the instance of
+    // the session id.
+    check(bundleAgain.complete && bundleAgain.instance == 2,
+          "the client of session 1 connects again: its new session (session 3) has the next instance of its account (2), not 1");
 }
 
 /** E1: a session with no registration request ends 30 s after its start. */

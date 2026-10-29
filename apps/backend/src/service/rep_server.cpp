@@ -138,6 +138,7 @@ void RepServer::on_connected(PeerId peer) {
     sessionOptions.research = m_options.research;
     sessionOptions.observePlayers = m_options.observePlayers;
     sessionOptions.playerSlice = m_options.playerSlice;
+    sessionOptions.levelContexts = &m_levelContexts;
     client.session = std::make_unique<server::rep::RepSession>(
         client.id,
         [connection](std::uint8_t channel, std::span<const std::uint8_t> data, server::carrier::Reliability reliability) {

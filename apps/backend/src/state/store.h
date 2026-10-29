@@ -216,6 +216,20 @@ struct CharacterFactionRow {
 };
 
 /**
+ * Stage DG1: the member row of a character in an instance (table `character_instances`, schema 21; docs/systems/instances.md): the instance
+ * id of its backend process, the map row of the game modes (GameModeMapId), the return place in the main world, and the wall time of the
+ * entry (Unix nanoseconds of the wall clock of the world). A backend stop ends each instance: the next start puts the character of each row
+ * at its return place and removes the row.
+ */
+struct InstanceMemberRow {
+    std::string characterId;
+    std::uint64_t instanceId{0};
+    std::string map;
+    WorldPosition returnPlace;
+    std::uint64_t enteredNs{0};
+};
+
+/**
  * One task of a saved quest (stage 1.8a, table `character_quest_tasks`; docs/systems/quests.md): the index of the task in the tree of the
  * objective, its id and CRC-32 (a check against the game data at the load), its progress, its state, and the start of a timer (Unix
  * nanoseconds; 0: none).
@@ -637,6 +651,12 @@ public:
     [[nodiscard]] std::vector<DailyBonusRow> list_daily_bonuses(const std::string& characterId);
     /** Stage QG6b: writes (inserts or replaces) the daily bonus row of a character for its modifier. In a batch: a savepoint. */
     [[nodiscard]] bool write_daily_bonus(const std::string& characterId, const DailyBonusRow& row);
+    /** Stage DG1: @return Each member row of the instances (all characters), in the order of the character ids. */
+    [[nodiscard]] std::vector<InstanceMemberRow> list_instance_members();
+    /** Stage DG1: writes (inserts or replaces) the member row of a character. In a batch: a savepoint of its transaction. */
+    [[nodiscard]] bool write_instance_member(const InstanceMemberRow& row);
+    /** Stage DG1: removes the member row of a character. In a batch: a savepoint. @return False only for a fault of the database. */
+    [[nodiscard]] bool delete_instance_member(const std::string& characterId);
     /** Stage QG7: @return The faction row of a character (a character with no row: faction 0, no change). */
     [[nodiscard]] CharacterFactionRow faction(const std::string& characterId);
     /** Stage QG7: writes (inserts or replaces) the faction row of a character. In a batch: a savepoint of its transaction. */

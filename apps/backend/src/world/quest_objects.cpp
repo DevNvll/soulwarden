@@ -172,8 +172,9 @@ void QuestObjects::tick() {
 void QuestObjects::look(Entity& character) {
     const gamedata::QuestObjectData* objects = data();
     // An accepted position only (a camera estimate or a travel changes nothing), a character that lives, no cutscene or cinematic.
-    if (objects == nullptr || character.life.dead || character.positionEstimated || character.quests.cutsceneStarted
-        || character.quests.pendingCinematic != 0) {
+    // Stage DG1: the quest objects are objects of the main world: a character in an instance finds none.
+    if (objects == nullptr || character.life.dead || character.positionEstimated || character.space != kMainSpace
+        || character.quests.cutsceneStarted || character.quests.pendingCinematic != 0) {
         return;
     }
     ++m_counts.proximityLooks;

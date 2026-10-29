@@ -1914,7 +1914,7 @@ Entity* Abilities::heal_target(Entity& caster, const gamedata::SpellRow& spell, 
     eye.z += 1.5F;
     Entity* best = nullptr;
     float nearest = range;
-    m_world.for_each_near(caster.position, range, [&](Entity& entity) {
+    m_world.for_each_near(caster.space, caster.position, range, [&](Entity& entity) {
         if (entity.kind != EntityKind::player || entity.id == caster.id) {
             return;
         }
@@ -2043,7 +2043,8 @@ void Abilities::throw_projectile(Cast& cast, const state::WorldPosition& origin,
     const float dy = direction[1] / flat;
     float best = range;
     std::optional<state::WorldPosition> touched;
-    m_world.for_each_near(origin, range + ability_rules::kProjectileWidth, [&](Entity& entity) {
+    const Entity* thrower = m_world.find(cast.caster);
+    m_world.for_each_near(thrower != nullptr ? thrower->space : kMainSpace, origin, range + ability_rules::kProjectileWidth, [&](Entity& entity) {
         if (entity.kind != EntityKind::creature || entity.creature.dead || entity.creature.immune()) {
             return;
         }
@@ -2261,7 +2262,7 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
     // The radius of the offense of the slice when the plan has it (the explosion of Explosive Arrow; code review of stage B1, finding B1-R7),
     // else the radius of the spell row.
     const float radius = phase.radius.value_or(spell->radius);
-    m_world.for_each_near(center, radius + reach, [&](Entity& entity) {
+    m_world.for_each_near(caster->space, center, radius + reach, [&](Entity& entity) {
         ++m_counts.areaLooked;
         if (entity.kind != EntityKind::creature || entity.creature.dead || std::fabs(entity.position.z - center.z) > height) {
             return;
@@ -2884,7 +2885,7 @@ void Abilities::start_motion(Cast& cast, Entity& character) {
     // dash distance, or to the first creature on the line (it stops kDashStop in front of it), through the navigation.
     const std::array<float, 2> ahead = direction_of(cast.yaw);
     float distance = motion.dash;
-    m_world.for_each_near(character.position, motion.dash + ability_rules::kProjectileWidth, [&](Entity& entity) {
+    m_world.for_each_near(character.space, character.position, motion.dash + ability_rules::kProjectileWidth, [&](Entity& entity) {
         if (entity.kind != EntityKind::creature || entity.creature.dead) {
             return;
         }
@@ -3029,7 +3030,7 @@ void Abilities::perk_burst(Entity& caster, std::string_view spellId) {
     }
     const state::WorldPosition center = caster.position;
     std::vector<std::pair<float, EntityId>> found_;
-    m_world.for_each_near(center, spell->radius, [&](Entity& entity) {
+    m_world.for_each_near(caster.space, center, spell->radius, [&](Entity& entity) {
         ++m_counts.areaLooked;
         if (entity.kind == EntityKind::creature && !entity.creature.dead && std::fabs(entity.position.z - center.z) <= ability_rules::kAreaHeight) {
             found_.emplace_back(horizontal_distance(entity.position, center), entity.id);
@@ -3315,7 +3316,7 @@ void Abilities::follow_strike(Cast& cast, Entity& caster, const gamedata::Attack
     }
     std::vector<std::pair<float, EntityId>> eligible;
     if (reach > 0.0F) {
-        m_world.for_each_near(caster.position, reach + ability_rules::kShapeSlack, [&](Entity& entity) {
+        m_world.for_each_near(caster.space, caster.position, reach + ability_rules::kShapeSlack, [&](Entity& entity) {
             if (entity.kind != EntityKind::creature || entity.creature.dead || entity.creature.immune()
                 || std::fabs(entity.position.z - caster.position.z) > ability_rules::kShapeHeight) {
                 return;

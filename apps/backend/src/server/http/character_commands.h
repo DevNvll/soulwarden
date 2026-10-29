@@ -247,6 +247,18 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 // and its next world entry is there ("applied":"stored").
 [[nodiscard]] WorldCommand travel(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
+// The instances (stage DG1, world/instances.h, server/http/instance_commands.cpp; docs/systems/instances.md). Development only (the
+// development routes, with the harness gate) until stage DG3 gives the entrance of the game.
+// enter_instance: `map` (a GameModeMapId of the game modes, "DungeonAmrine", or the id of a mode with one map) and, when necessary,
+// `instance` (the id of an instance of that map to join): the character goes from the main world to the start of the map in one connection
+// (the level change of its client); its return place is its place now. return_instance: no argument: the character goes to its return place.
+[[nodiscard]] WorldCommand enter_instance(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand return_instance(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/** @return The instances of the world (world thread): each one with its map, level, space, members, return places, age, and the counts. */
+[[nodiscard]] nlohmann::json instances_json(world::World& world);
+/** @return The maps of the game modes (game data game-modes.json), or "loaded": false. */
+[[nodiscard]] nlohmann::json game_maps_json(const gamedata::GameModes* modes);
+
 // The health commands (world/health.h, server/http/health_commands.cpp).
 // heal: no argument. The character gets its full health, and a dead character lives again at
 // its place. For a character that is not in the world nothing changes ("applied":"stored"):

@@ -42,6 +42,7 @@
 #include "gamedata/crafting_data.h"
 #include "gamedata/gathering_data.h"
 #include "gamedata/interaction_data.h"
+#include "gamedata/game_modes.h"
 #include "gamedata/travel_places.h"
 #include "server/http/admin_access.h"
 #include "server/http/request_handler.h"
@@ -579,6 +580,16 @@ int main(int argc, char** argv) {
                    travelPlacesPath.c_str(),
                    travelPlaces.error().c_str());
     }
+    // Stage DG1: the game modes (the maps of the instances: the level, the terrain, the start). With no file "instance enter" is refused.
+    const std::string gameModesPath = (gameDataDirectory / gamedata::kGameModesFile).string();
+    gamedata::GameModes gameModes;
+    if (gameModes.load(gameModesPath)) {
+        log::write("backend: game modes loaded from %s (%zu maps)", gameModesPath.c_str(), gameModes.maps().size());
+    } else {
+        log::write("backend: no game modes at %s (%s): the development command \"instance enter\" is refused. Make the file with "
+                   "tools/gamedata/game-modes.sh",
+                   gameModesPath.c_str(), gameModes.error().c_str());
+    }
     // The interaction objects of the world (stage 2.5a): the lore pages, the persons, and each other object of the level data
     // that a player can use. With no file the backend refuses each request of an interaction.
     const std::string interactionDataPath = (gameDataDirectory / gamedata::kInteractionDataFile).string();
@@ -820,6 +831,7 @@ int main(int argc, char** argv) {
     worldOptions.creatureData = &creatureData;
     worldOptions.combatTables = &combatTables;
     worldOptions.travelPlaces = &travelPlaces;
+    worldOptions.gameModes = &gameModes;
     worldOptions.interactionData = &interactionData;
     worldOptions.craftingData = &craftingData;
     worldOptions.questData = &questData;

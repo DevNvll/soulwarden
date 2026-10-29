@@ -623,6 +623,10 @@ void Encounters::scan() {
     // The placement rule: the cells near each character (MP-8: no look at each placement of the world).
     std::set<std::uint32_t> near;
     m_world.for_each_character([&](const Entity& character) {
+        // Stage DG1: the placements are placements of the main world (the instance recipes are a later stage).
+        if (character.space != kMainSpace) {
+            return;
+        }
         const std::int64_t lowX = cell_of(character.position.x - encounter_rules::kSpawnEnter);
         const std::int64_t highX = cell_of(character.position.x + encounter_rules::kSpawnEnter);
         const std::int64_t lowY = cell_of(character.position.y - encounter_rules::kSpawnEnter);
@@ -656,7 +660,7 @@ void Encounters::scan() {
             continue;
         }
         bool someone = false;
-        m_world.for_each_near(entity->position, encounter_rules::kSpawnLeave, [&](Entity& other) {
+        m_world.for_each_near(entity->space, entity->position, encounter_rules::kSpawnLeave, [&](Entity& other) {
             ++m_counts.entitiesLooked;
             someone = someone || other.kind == EntityKind::player;
         });
@@ -727,7 +731,7 @@ void Encounters::look_proximity() {
         for (const auto& [characterId, ledger] : object.failures) {
             finders.push_back(characterId);
         }
-        m_world.for_each_near(object.place, radius, [&](Entity& entity) {
+        m_world.for_each_near(kMainSpace, object.place, radius, [&](Entity& entity) {
             ++m_counts.entitiesLooked;
             if (entity.kind != EntityKind::player || entity.life.dead || entity.positionEstimated || entity.quests.cutsceneStarted
                 || entity.quests.pendingCinematic != 0 || distance3(entity.position, object.place) > radius
@@ -833,7 +837,7 @@ void Encounters::update_participants(EncounterInstance& instance) {
     const gamedata::CreatureCapsule* player = creatures != nullptr && creatures->player_capsule() ? &*creatures->player_capsule() : nullptr;
     // The detector (OnlyPlayerTarget, m_ignoreHeight 0): a sphere in three dimensions; stage QG5c3: a cylinder or an axis box, and a character
     // in one of the shapes of the entity of the tracker is in the detector.
-    m_world.for_each_near(root->position, recipe.detectorReach + kBodyReach, [&](Entity& entity) {
+    m_world.for_each_near(root->space, root->position, recipe.detectorReach + kBodyReach, [&](Entity& entity) {
         ++m_counts.entitiesLooked;
         if (entity.kind == EntityKind::player && in_detector(recipe, root->position, capsule_of(entity, player))) {
             inside.insert(entity.characterId);
@@ -948,7 +952,7 @@ void Encounters::look_triggers() {
         std::string finder;
         for (const gamedata::EncounterTrigger& trigger : stage.objective.triggers) {
             ++m_counts.triggerLooks;
-            m_world.for_each_near(trigger.position, trigger.reach + kBodyReach, [&](Entity& entity) {
+            m_world.for_each_near(kMainSpace, trigger.position, trigger.reach + kBodyReach, [&](Entity& entity) {
                 ++m_counts.entitiesLooked;
                 if (!finder.empty() || entity.kind != EntityKind::player || entity.positionEstimated || (entity.life.dead && !trigger.deadTargets)) {
                     return;

@@ -15,6 +15,7 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
 | Ids of an entity, check of the client messages | Protocol notes 4.2, `tools/gamedata/slice_ids.sh` |
 | Add a replicated state to the world | Protocol notes section 4, then `tools/st NAME_REGEX` |
 | An entity that is not a character or a creature: a spell, a probe, an object of the level data | [Spell entities](spells.md), [Interactions](interactions.md), `World::make_spell`, `World::make_probe`, `World::make_object`, `codecs_of` in `server/rep/states/state_codecs.h` |
+| The space of an entity, an instance, the level change of a session | [Instances](instances.md), `World::move_to_space`, `RepSession::change_level` |
 
 ## Rules
 
@@ -27,6 +28,11 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   (`world/world_clock.h`), not from the clock of the computer. The stop of the backend waits
   for each HTTP connection thread before it destroys the world: `HttpServer::stop` joins
   each thread and has no time limit.
+- Stage DG1 ([Instances](instances.md)): each entity has a space (`Entity::space`; 0 is the main world, each instance has its own
+  space). The position index has the space in its key, and `World::for_each_near` takes a space: a rule that uses the index sees only
+  its space. `World::move_to_space` is the one path of a character to a different space; the interest scan of a session uses the space
+  of its own entity, and an entity of a different space goes out of its table (the stop). A level change in one connection is
+  `RepSession::change_level`.
 - The entity table of the world has one entity for each character that is in the world
   (`world/entity.h`). The name, the position, the appearance, the vitals, and each later
   state of a character are in its entity, not in `RepSession`. The world gives each entity
@@ -259,8 +265,11 @@ tools/world remove NAME              # take that entity out of the world
   60 s after its last datagram (`dtls: no datagram from port N for 60 s`).
 - Each session must send a level information version and a client context instance that
   the game process did not get before, or the client drops each state bundle and stays in
-  `WaitingForPlayerSpawn` for 120 s (protocol notes 3.5). The backend uses the session id.
-  A change of the level information or of the state bundle must keep this.
+  `WaitingForPlayerSpawn` for 120 s (protocol notes 3.5). Stage DG1: the account rule of the game server (`server/rep/level_contexts.h`):
+  the first level information of an account in a backend process has the values of the session id; each later one of that account (a
+  new session, a level change) has one more version and the next instance. The session id alone fails after a level change (session 1
+  moves to instance 2, session 2 would have instance 2; [Instances](instances.md)). A change of the level information or of the state
+  bundle must keep this.
 - A leave through the Game Menu can give no carrier disconnect: in stage 3.3b-S2a the client
   went to the main menu, and the session ended 30 s later (`cause: idle`).
   `tools/scenarios/leave.sh` then says that the client did not leave. Until the session ends,

@@ -373,6 +373,12 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   test case QGR5C1B]. The navigation data has false walls (the top of the Perseus ruin): there a hit can be refused [live L2 of stage
   QG5c2].
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): a respawn in an instance is at the start of its map, in its space (the travel places are places
+  of the main world; the checkpoints of an instance are stage DG3) [agent]. A character that leaves the world dead in an instance enters
+  again at its return place.
+
 ## Commands
 
 ```sh

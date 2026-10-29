@@ -102,6 +102,12 @@ inline constexpr std::uint16_t kStartTerritory = 6;
 inline constexpr state::WorldPosition kBeachStart{9622.62F, 2306.48F, 40.24F};
 /** The client keeps 8 pinned objectives at most (reader 0x3A68340, research quest-engine.md Q2). */
 inline constexpr std::size_t kMaxTracked = 8;
+/**
+ * Stage QG8: the largest count of the rolls of a loot table of a game event (ItemRewardQty; the data has 1 for each such event) [agent: a
+ * work limit of one tick]. Code review of stage QG8, finding QG8R-R4: a larger quantity is refused, not cut: the task waits and the support
+ * manifest blocks it (no event completes with a part of its reward).
+ */
+inline constexpr std::uint32_t kRewardTableRolls = 100;
 
 enum class QuestError {
     none,

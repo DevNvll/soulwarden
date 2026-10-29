@@ -360,6 +360,12 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   paid before the store took it [agent]. A recipient that is not in the world at the time of the payout gets nothing [agent].
 - The event of a start object goes only to its gatherer [data: the gatherable row; live QG5c2 L4].
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): the placements are placements of the main world: only the characters of the main world make an
+  instance of a placement; the searches near a root use the space of the root. A character that moves to an instance leaves a detector as
+  after a travel (its link goes after the grace time) [agent].
+
 ## Commands
 
 - `tools/world encounter CHARACTER [METERS]` (route `GET /v1/dev/encounters`; the admin state member `encounters`, 200 m): the instances

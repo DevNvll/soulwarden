@@ -664,7 +664,7 @@ void load(const Options&) {
         for (const std::string& id : characters) {
             world::Entity* character = shop.world().find_character(id);
             std::vector<world::EntityId> near;
-            shop.world().for_each_near(character->position, 3.0F, [&](world::Entity& entity) {
+            shop.world().for_each_near(world::kMainSpace, character->position, 3.0F, [&](world::Entity& entity) {
                 if (entity.kind == world::EntityKind::creature && !entity.creature.dead) {
                     near.push_back(entity.id);
                 }

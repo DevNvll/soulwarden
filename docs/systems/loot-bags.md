@@ -109,6 +109,11 @@ The source of each rule is in brackets: game data, client code, live check (the 
 - Not in this stage: the shared bag of a death, the permissions of a bag for a group, the trade between players [decision of the user];
   the special locks, keys, quests, and events (3.5b.3).
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): a bag is an object of the main world. A discard of a character in an instance is refused
+  (`notValid`: the items stay), and the LootTracker and the storage map of a character take only the bags of its space [agent].
+
 ## Commands
 
 ```sh

@@ -25,6 +25,11 @@ runs the document builder and the writer of the tool (main).
   negative-bucket-odds     the odds -0.2 of a bucket candidate                status 1, the file stays
   chest-root               a row of the chest variation table names a root    status 1, the file stays
                            that no table has (stage 3.5b.1)
+  event-child              a table names a child table that is not there and  status 1, the file stays
+                           that an event also names as its item reward
+                           (code review of stage QG8, finding QG8R-R1)
+  shared-event-root        a container and an event name one root that is     status 0; the two rewards are left
+                           not there (code review of stage QG8, QG8R-R2)      out and counted
 The six cases after not-finite are the corrections of the findings F3 and F4 of the code review of stage 3.5a, the
 last three the correction of finding F13 of the code review of stage 3.3a (each value is outside the range of the
 backend, LootTables::check: the tool writes no file that the backend refuses).
@@ -82,7 +87,7 @@ class FakeSheet:
 def loot_table_sheet(case: str) -> FakeSheet:
     columns = ["LootTableID", "AND/OR", "RollBonusSetting", "Conditions", "ConditionOverridesRoll", "UseLevelGS", "GSBonus",
                "MaxRoll", "Item1", "GearScoreRange1", "Item2", "GearScoreRange2", "Item3", "GearScoreRange3"]
-    common_child = "[LTID]nothing_here" if case == "unresolved-table" else "[LTID]test_gear"
+    common_child = "[LTID]nothing_here" if case == "unresolved-table" else "[LTID]Test_NoEventTable" if case == "event-child" else "[LTID]test_gear"
     bucket = "[LBID]NoBucket" if case == "unresolved-bucket" else "[LBID]Test_Weapons"
     quantity = "1-x" if case == "quantity-text" else "1-3"
     return FakeSheet("LootTables", columns, [
@@ -133,7 +138,8 @@ def sheets(case: str) -> dict:
                         # an item reward is not a root).
                         FakeSheet("GameEvents_Rewards", ["EventID", "ItemReward"],
                                   [["Test_Lottery", "[LTID]Test_Unused"], ["Test_NoTable_Lottery", "[LTID]Test_NoEventTable"],
-                                   ["Test_Plain_Reward", "TestOre"], ["Test_Lottery", "[LTID]Test_Gear"]]),
+                                   ["Test_Plain_Reward", "TestOre"], ["Test_Lottery", "[LTID]Test_Gear"]]
+                                  + ([["Test_NoBox_Lottery", "[LTID]Test_NoBoxTable"]] if case == "shared-event-root" else [])),
                         # Stage QG2a: the salvage events of the containers (the first row of an id has the cells).
                         FakeSheet("GameEvents_Salvage", ["EventID", "CurrencyReward", "EmitTelemetry", "EntitlementId"],
                                   [["Test_Box_Event", "2500", "1", ""], ["Test_Purse_Event", " 50000 ", "", ""],
@@ -265,7 +271,7 @@ def main() -> int:
     failures = 0
     cases = ("valid", "unresolved-table", "unresolved-bucket", "base-table", "quantity-text", "reward-levels", "not-finite",
              "variant-base", "event-override", "creature-type", "negative-experience", "negative-factor", "bad-flag",
-             "negative-disparity", "large-disparity", "negative-bucket-odds", "chest-root")
+             "negative-disparity", "large-disparity", "negative-bucket-odds", "chest-root", "event-child", "shared-event-root")
     for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")
@@ -281,6 +287,13 @@ def main() -> int:
             wrong = valid_values(json.loads(text)) if status == 0 and text != MARK else ["no document"]
             passed = status == 0 and not wrong
             detail = f"status {status}" + (f", not correct: {'; '.join(wrong)}" if wrong else ", each value is correct")
+        elif case == "shared-event-root":
+            document = json.loads(text) if status == 0 and text != MARK else {}
+            counts = document.get("counts", {})
+            passed = (status == 0 and "test_nobox_lottery" not in document.get("eventRoots", {}) and counts.get("eventsWithNoTable") == 2
+                      and counts.get("containersWithNoTable") == 1 and "test_notablebox" not in document.get("containerRoots", {}))
+            detail = (f"status {status}, events with no table {counts.get('eventsWithNoTable')}, containers with no table "
+                      f"{counts.get('containersWithNoTable')}" + (f": {errors.getvalue().strip()}" if status != 0 else ""))
         else:
             passed = status == 1 and text == MARK and not (work / f"{case}.json.tmp").exists()
             detail = f"status {status}, file {'kept' if text == MARK else 'replaced'}: {errors.getvalue().strip()}"

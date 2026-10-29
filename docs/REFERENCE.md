@@ -135,6 +135,7 @@ tools/gamedata/projectiles.sh      # one time: projectile data (profiles, slices
 tools/gamedata/weapon-actions.sh   # one time: the attack graphs of the melee weapons (without them a melee hit has the light or the heavy row of its weapon); needs an Oodle library
 tools/gamedata/perks.sh            # one time: perk data (perks, buckets, item perk places, consumables, equip load; without it an item has no perk)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
+tools/gamedata/game-modes.sh       # one time: the maps of the game modes (the instances: the level, the terrain, the start; without them "instance enter" is refused); 4 s; needs an Oodle library
 tools/gamedata/interactions.sh     # one time: the interaction objects of the world (without them each use of an object is refused); 24 MB, 4 minutes; needs an Oodle library
 tools/gamedata/chests.sh           # one time: the chests of the world (without them no chest opens); 3.6 MB; needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
@@ -496,6 +497,11 @@ button on "Confirm").
   `tools/gamedata/places.sh --list` prints the places and writes no file. Without the file
   the backend starts, the travel list is empty, and a travel takes only a position in
   numbers.
+- `tools/gamedata/game-modes.sh` makes the game modes (`~/.local/share/soulwarden/gamedata/game-modes.json`, stage DG1,
+  [Instances](systems/instances.md)): the 57 maps of the game modes with a terrain project and a start place (the level text and the
+  terrain text of the level information, the start of each team, and the cells of the mode: the levels, the group sizes, the kind, the
+  timeout). `tools/gamedata/game-modes.sh --list` prints the maps and writes no file. Without the file the backend starts, and the
+  development command `instance enter` is refused.
 - `tools/gamedata/interactions.sh` makes the interaction objects
   (`~/.local/share/soulwarden/gamedata/interaction-data.json`, stage 2.5a; format 2 from stage
   2.5b): each placement of the level data whose slice has an Interact component (43,225 objects
@@ -1042,6 +1048,13 @@ button on "Confirm").
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
   abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar
   of the HUD goes away at full mana ([Combat and health](systems/combat-and-health.md)).
+- Instances (stage DG1, [Instances](systems/instances.md)): a development run moves a character into an instance of a map of the game
+  modes and back, in the same connection: `tools/world instance maps [TEXT]`, `tools/world instance enter CHARACTER MAP [INSTANCE]` (for
+  example `DungeonAmrine`: the loading screen of the expedition, then the character at the start of the map; INSTANCE: the id of an
+  instance of that map to join), `tools/world instance return CHARACTER` (back to the place of the entry in the main world),
+  `tools/world instance list`. `tools/world list` shows the space of each entity. An instance has no creature and no object yet (stage
+  DG2), and the entrance of the game comes with stage DG3. A character that leaves the world in an instance, or whose backend stops,
+  enters the world again at the place of its entry.
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is

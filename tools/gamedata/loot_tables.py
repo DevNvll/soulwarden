@@ -630,6 +630,9 @@ def read_loot(sheets: dict[str, list[Sheet]], roots: list[str]) -> tuple[dict, d
     tables: dict[str, list] = {}
     buckets: dict[str, list] = {}
     unresolved: dict[str, int] = {}
+    # Code review of stage QG8, finding QG8R-R1: the ids that a table of the document names (a child table or a bucket). Such an id is a
+    # required reference: an absent one stops the tool, also when it is an optional root of a container or of an event too.
+    referenced: set[str] = set()
     pending = list(roots)
     names: dict[str, str] = {}
     while pending:
@@ -672,8 +675,10 @@ def read_loot(sheets: dict[str, list[Sheet]], roots: list[str]) -> tuple[dict, d
             if text.startswith(TABLE_PREFIX):
                 kind, target = "t", text[len(TABLE_PREFIX):].strip()
                 pending.append(target)
+                referenced.add(target.lower())
             elif text.startswith(BUCKET_PREFIX):
                 kind, target = "b", text[len(BUCKET_PREFIX):].strip()
+                referenced.add(target.lower())
                 if target.lower() not in buckets_source:
                     unresolved[target.lower()] = unresolved.get(target.lower(), 0) + 1
                     continue
@@ -721,7 +726,8 @@ def read_loot(sheets: dict[str, list[Sheet]], roots: list[str]) -> tuple[dict, d
             candidates.append([item, low, high, odds, match_one, tags])
         buckets[key] = candidates
     resolved_buckets = {buckets_source[key][0]: value for key, value in buckets.items()}
-    counts = {"tableRows": len(rows), "secondRowsOfOneId": duplicates, "unresolved": dict(sorted(unresolved.items()))}
+    counts = {"tableRows": len(rows), "secondRowsOfOneId": duplicates, "unresolved": dict(sorted(unresolved.items())),
+              "required": {key for key in unresolved if key in referenced}}
     return resolved_tables, resolved_buckets, counts
 
 
@@ -748,30 +754,32 @@ def build_tables(sources: Sources) -> dict:
     roots = sorted({base[5] for base in bases if base[5]} | set(chest_roots) | set(gathering_roots) | set(container_roots.values())
                    | set(event_roots.values()))
     tables, buckets, loot_counts = read_loot(sheets, roots)
+    required = loot_counts.pop("required")
     # A container item whose table the loot tables do not have (stage 1.8d): not exported (the backend keeps such a reward refused).
-    other_roots = {root.lower() for root in chest_roots} | {root.lower() for root in gathering_roots} | {base[5].lower() for base in bases if base[5]}
-    containers_missing = sorted(item for item, root in container_roots.items() if root.lower() in loot_counts["unresolved"])
-    for item in containers_missing:
-        root = container_roots.pop(item).lower()
-        if root not in other_roots:
-            loot_counts["unresolved"].pop(root, None)
     # Stage QG8: an event table that the loot tables do not have is not exported (the backend gives no item of such an event).
-    events_missing = sorted(event for event, root in event_roots.items() if root.lower() in loot_counts["unresolved"])
-    for event in events_missing:
-        root = event_roots.pop(event).lower()
-        if root not in other_roots and root not in {value.lower() for value in container_roots.values()}:
+    # Code review of stage QG8, findings QG8R-R1 and QG8R-R2: the absent optional roots come from one look at the unresolved ids, before a
+    # change of a list (a root that a container and an event share is left out of both, and counted for both). Only an absent id that no
+    # table names and that is no root of a vitals row, a chest, or a gathering row leaves the unresolved ids: a required reference stops
+    # the tool.
+    other_roots = {root.lower() for root in chest_roots} | {root.lower() for root in gathering_roots} | {base[5].lower() for base in bases if base[5]}
+    absent = set(loot_counts["unresolved"])
+    containers_missing = sorted(item for item, root in container_roots.items() if root.lower() in absent)
+    events_missing = sorted(event for event, root in event_roots.items() if root.lower() in absent)
+    optional_absent = {container_roots.pop(item).lower() for item in containers_missing} | {event_roots.pop(event).lower() for event in events_missing}
+    for root in optional_absent:
+        if root not in other_roots and root not in required:
             loot_counts["unresolved"].pop(root, None)
     # A gathering root with no table (stage 3.6a: the rows of quests and events of the gatherable tables name roots that no loot table has):
     # the row is refused by the backend (noLoot); the file names each one in its counts. A table that such a root reaches is not read.
     gathering_missing = sorted(root for root in gathering_roots if root.lower() in loot_counts["unresolved"]
                                and root.lower() not in {name.lower() for name in chest_roots}
-                               and root.lower() not in {base[5].lower() for base in bases if base[5]})
+                               and root.lower() not in {base[5].lower() for base in bases if base[5]} and root.lower() not in required)
     for root in gathering_missing:
         del loot_counts["unresolved"][root.lower()]
     gathering_roots = [root for root in gathering_roots if root not in gathering_missing]
     # A chest root of the variation tables with no table (stage 3.5b.1): only the roots of CHEST_ROOTS_NOT_IN_GAME.
     for root in chest_roots:
-        if root.lower() in loot_counts["unresolved"] and root in CHEST_ROOTS_NOT_IN_GAME:
+        if root.lower() in loot_counts["unresolved"] and root in CHEST_ROOTS_NOT_IN_GAME and root.lower() not in required:
             del loot_counts["unresolved"][root.lower()]
     chest_roots = [root for root in chest_roots if root not in CHEST_ROOTS_NOT_IN_GAME]
     # A vitals row whose table the loot tables do not have, and a reference that does not resolve: the game has no

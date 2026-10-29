@@ -212,7 +212,9 @@ Entity* Creatures::make(const gamedata::CreatureKind& kind,
     creature.yaw = yaw;
     creature.spawnPoint = spawnPoint;
     creature.madeAt = m_world.clock().now();
-    Entity& entity = m_world.make_creature(creature, position, health);
+    // Stage DG1: each creature is in the main world (the spawn points, the encounters, and the commands are main world content; the
+    // creatures of an instance level come with stage DG2).
+    Entity& entity = m_world.make_creature(creature, position, health, kMainSpace);
     m_creatures.insert(entity.id);
     m_counts.largest = std::max(m_counts.largest, m_creatures.size());
     if (body->spawnAction) {
@@ -1525,7 +1527,12 @@ void Creatures::scan() {
     // The cost of a scan depends on the players and on what is near them: the list of all
     // spawn points of the world is long, and the scan does not walk it.
     std::vector<state::WorldPosition> players;
-    m_world.for_each_character([&players](const Entity& entity) { players.push_back(entity.position); });
+    // Stage DG1: the spawn points are points of the main world: a character in an instance makes no creature of them.
+    m_world.for_each_character([&players](const Entity& entity) {
+        if (entity.space == kMainSpace) {
+            players.push_back(entity.position);
+        }
+    });
     ++m_counts.scans;
     m_counts.lastScanPoints = 0;
     m_counts.lastScanCreatures = 0;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -48,17 +49,21 @@ inline constexpr float kHighestTravelHeight = 999.0F;
     return valid_position(position) && position.z >= kLowestTravelHeight && position.z <= kHighestTravelHeight;
 }
 
+/**
+ * The key of a cell is the space and the cell of the position (stage DG1, docs/systems/instances.md): an entity of one space is never a
+ * candidate of a search in a different space, also at the same coordinates (an instance level has its own coordinates from 0).
+ */
 class PositionIndex {
 public:
     /** @param cellSize Edge of one cell, in meters. */
     explicit PositionIndex(float cellSize = 64.0F) : m_cellSize(cellSize) {}
 
-    void insert(EntityId id, const state::WorldPosition& position) {
-        m_cells[cell_of(position)].insert(id);
+    void insert(EntityId id, SpaceId space, const state::WorldPosition& position) {
+        m_cells[cell_of(space, position)].insert(id);
     }
 
-    void erase(EntityId id, const state::WorldPosition& position) {
-        const auto cell = m_cells.find(cell_of(position));
+    void erase(EntityId id, SpaceId space, const state::WorldPosition& position) {
+        const auto cell = m_cells.find(cell_of(space, position));
         if (cell == m_cells.end()) {
             return;
         }
@@ -68,33 +73,33 @@ public:
         }
     }
 
-    void move(EntityId id, const state::WorldPosition& from, const state::WorldPosition& to) {
-        if (cell_of(from) != cell_of(to)) {
-            erase(id, from);
-            insert(id, to);
+    void move(EntityId id, SpaceId space, const state::WorldPosition& from, const state::WorldPosition& to) {
+        if (cell_of(space, from) != cell_of(space, to)) {
+            erase(id, space, from);
+            insert(id, space, to);
         }
     }
 
     /**
-     * Calls `visit(EntityId)` for each entity in a cell that the circle touches. An entity of
-     * the result can be farther than `range`: the caller compares the exact distance.
+     * Calls `visit(EntityId)` for each entity of the space in a cell that the circle touches. An entity of the result can be farther than
+     * `range`: the caller compares the exact distance.
      */
     template <class Visit>
-    void for_each_candidate(const state::WorldPosition& center, float range, Visit&& visit) const {
-        const Cell low = cell_of(state::WorldPosition{center.x - range, center.y - range, 0.0F});
-        const Cell high = cell_of(state::WorldPosition{center.x + range, center.y + range, 0.0F});
+    void for_each_candidate(SpaceId space, const state::WorldPosition& center, float range, Visit&& visit) const {
+        const Cell low = cell_of(space, state::WorldPosition{center.x - range, center.y - range, 0.0F});
+        const Cell high = cell_of(space, state::WorldPosition{center.x + range, center.y + range, 0.0F});
         // One search for each column of cells that the circle touches: the cost is the cells of
         // the circle, not the cells of the world. A circle with more columns than the index has
-        // cells (a very large range) walks the cells of the index one time. The sequence of
+        // cells (a very large range) walks the cells of the space one time. The sequence of
         // the visits is the same for the two ways: the columns from west to east, the cells of
         // a column from south to north, and the ids of a cell from the lowest one.
-        const std::int64_t columns = static_cast<std::int64_t>(high.first) - low.first + 1;
+        const std::int64_t columns = static_cast<std::int64_t>(high.column) - low.column + 1;
         if (columns > static_cast<std::int64_t>(m_cells.size())) {
-            for (auto cell = m_cells.lower_bound(Cell{low.first, low.second}); cell != m_cells.end(); ++cell) {
-                if (cell->first.first > high.first) {
+            for (auto cell = m_cells.lower_bound(low); cell != m_cells.end(); ++cell) {
+                if (cell->first.space != space || cell->first.column > high.column) {
                     break;
                 }
-                if (cell->first.second < low.second || cell->first.second > high.second) {
+                if (cell->first.row < low.row || cell->first.row > high.row) {
                     continue;
                 }
                 for (const EntityId id : cell->second) {
@@ -103,29 +108,45 @@ public:
             }
             return;
         }
-        for (std::int32_t column = low.first;; ++column) {
-            for (auto cell = m_cells.lower_bound(Cell{column, low.second});
-                 cell != m_cells.end() && cell->first.first == column && cell->first.second <= high.second; ++cell) {
+        for (std::int32_t column = low.column;; ++column) {
+            for (auto cell = m_cells.lower_bound(Cell{space, column, low.row});
+                 cell != m_cells.end() && cell->first.space == space && cell->first.column == column && cell->first.row <= high.row; ++cell) {
                 for (const EntityId id : cell->second) {
                     visit(id);
                 }
             }
-            if (column == high.first) {
+            if (column == high.column) {
                 break;
             }
         }
     }
 
-    /** @return The number of cells that have an entity. */
+    /** Calls `visit(EntityId)` for each entity of a space (stage DG1: the end of an instance). The cost is the cells of that space. */
+    template <class Visit>
+    void for_each_in_space(SpaceId space, Visit&& visit) const {
+        for (auto cell = m_cells.lower_bound(Cell{space, INT32_MIN, INT32_MIN}); cell != m_cells.end() && cell->first.space == space; ++cell) {
+            for (const EntityId id : cell->second) {
+                visit(id);
+            }
+        }
+    }
+
+    /** @return The number of cells that have an entity, in all spaces. */
     [[nodiscard]] std::size_t cell_count() const {
         return m_cells.size();
     }
 
 private:
-    using Cell = std::pair<std::int32_t, std::int32_t>;
+    struct Cell {
+        SpaceId space;
+        std::int32_t column;
+        std::int32_t row;
 
-    [[nodiscard]] Cell cell_of(const state::WorldPosition& position) const {
-        return Cell{static_cast<std::int32_t>(std::floor(position.x / m_cellSize)),
+        auto operator<=>(const Cell&) const = default;
+    };
+
+    [[nodiscard]] Cell cell_of(SpaceId space, const state::WorldPosition& position) const {
+        return Cell{space, static_cast<std::int32_t>(std::floor(position.x / m_cellSize)),
                     static_cast<std::int32_t>(std::floor(position.y / m_cellSize))};
     }
 

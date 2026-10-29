@@ -34,6 +34,7 @@
 #include "world/gear.h"
 #include "world/health.h"
 #include "world/ids.h"
+#include "world/instances.h"
 #include "world/chests.h"
 #include "world/crafting.h"
 #include "world/encounters.h"
@@ -116,6 +117,32 @@ struct TravelResult {
     float distance{0.0F};
 };
 
+/**
+ * Stage DG1 (docs/systems/instances.md): a change of the space of a character (World::move_to_space): what the session of its owner gets
+ * (SessionSink::space_changed). The session changes the level of its client in the same connection (RepSession::change_level).
+ */
+struct SpaceChange {
+    SpaceId from{kMainSpace};
+    SpaceId to{kMainSpace};
+    /** The place in the new space: a place on the ground (the client lets the character fall from the spawn lift). */
+    state::WorldPosition place;
+    /** The level of the new space: the texts of the level information. */
+    SpaceLevel level;
+    /** The instance of the new space; 0: the main world. */
+    std::uint64_t instance{0};
+};
+
+enum class SpaceMoveError {
+    none,
+    notInWorld,
+    /** The space is not a space of the world (World::has_space). */
+    noSpace,
+    /** The character is in this space already. */
+    sameSpace,
+    /** The place is not a place for a character (travel_position). */
+    badPosition,
+};
+
 /** Why a session lost its character. */
 enum class LostCause {
     /** A newer session registered the character (a character is in one session at most). */
@@ -143,6 +170,16 @@ public:
      */
     virtual void traveled(const Travel& travel) {
         (void)travel;
+    }
+
+    /**
+     * Stage DG1: the world moved the character of this session to a different space (World::move_to_space). The session changes the
+     * level of its client in the same connection (RepSession::change_level: a new level information with a new version and a new
+     * context instance, and then a full owner record). The movement state of the entity has the new place and a new teleport number. A
+     * sink with no client does nothing.
+     */
+    virtual void space_changed(const SpaceChange& change) {
+        (void)change;
     }
 
     /**
@@ -295,6 +332,8 @@ struct WorldOptions {
     const gamedata::CombatTables* combatTables{nullptr};
     /** The travel places (game data). Null: the travel command takes only a position in numbers. */
     const gamedata::TravelPlaces* travelPlaces{nullptr};
+    /** Stage DG1: the game modes (game data game-modes.json; docs/systems/instances.md). Null or not loaded: "instance enter" is refused. */
+    const gamedata::GameModes* gameModes{nullptr};
     /** The loot tables and the kill rewards (game data). Null: a kill gives nothing. */
     const gamedata::LootTables* lootTables{nullptr};
     /** The ability data (game data, stage 3.3a). Null: the backend refuses each ability press. */
@@ -610,6 +649,39 @@ public:
                         const state::WorldPosition& position,
                         TravelScreen screen = TravelScreen::automatic);
 
+    /**
+     * Stage DG1 (docs/systems/instances.md, rule MP-2): the one path that moves a character to a different space: the main world
+     * (kMainSpace) or the space of an instance. Only the instance system calls it, after its rows are in the database (the position row
+     * of the character keeps the main world position: this function writes no row). The world ends what the character does in the old
+     * space (as a travel: the basic attack, the aim, the dodge, the interaction, the conversation; and its spells and its projectiles),
+     * moves the entity out of the cells of the old space and into the cells of the new one, gives it a teleport
+     * number, and marks its movement state. Each session that observes the mover compares its interest at once (last_travel): a session
+     * in the old space sends the stop. The session of the mover gets SessionSink::space_changed.
+     */
+    SpaceMoveError move_to_space(const std::string& characterId, SpaceId space, const state::WorldPosition& place);
+    /**
+     * Stage DG1: removes each entity of a space that is not a character (a probe of a command, a spell): the end of an instance. Only the
+     * instance system calls it, after each member left. @return The number of removed entities.
+     */
+    std::size_t clear_space(SpaceId space);
+    /** @return The number of the entities of a space (the cells of the position index of that space). */
+    [[nodiscard]] std::size_t space_entity_count(SpaceId space) const;
+    /** @return True for kMainSpace and for the space of each instance. */
+    [[nodiscard]] bool has_space(SpaceId space) const {
+        return m_instances.has_space(space);
+    }
+    /** @return The level of a space (the texts of the level information), or null for a space that is not there. */
+    [[nodiscard]] const SpaceLevel* level_of(SpaceId space) const {
+        return m_instances.level_of(space);
+    }
+    /** @return The instance system (stage DG1, world/instances.h). */
+    [[nodiscard]] Instances& instances() {
+        return m_instances;
+    }
+    [[nodiscard]] const Instances& instances() const {
+        return m_instances;
+    }
+
     /** @return The world revision of the last travel of a character. 0: none. */
     [[nodiscard]] Revision last_travel() const {
         return m_lastTravel;
@@ -660,7 +732,7 @@ public:
      * @param creature The kind, the slice, the level, the direction, and the spawn point.
      * @param health The maximum health of the creature, which is its health at the start.
      */
-    Entity& make_creature(const Creature& creature, const state::WorldPosition& position, float health);
+    Entity& make_creature(const Creature& creature, const state::WorldPosition& position, float health, SpaceId space);
     /** Removes the entity of a creature. Only the creature system calls it. No effect for a different entity. */
     void remove_creature(EntityId id);
     /**
@@ -673,9 +745,9 @@ public:
      * Development aid (tools/world probe, live check L4 of stage 3.3b-S2a): makes an entity of a slice whose states are
      * the fragments of the command (Entity::rawFragments). Its actor id comes from the id allocator. Each session that
      * is `body.interestRadius` or less from it gets its record. @return The entity, or null for a position that is not a
-     * position of the world.
+     * position of the world, or for a space that the world does not have (stage DG1: the space of the character of the command).
      */
-    Entity* make_probe(const ProbeBody& body, const state::WorldPosition& position, std::vector<RawFragment> fragments);
+    Entity* make_probe(const ProbeBody& body, const state::WorldPosition& position, std::vector<RawFragment> fragments, SpaceId space);
     /** Removes a probe entity: each session that observes it sends the stop. @return False: no probe with this id. */
     bool remove_probe(EntityId id);
 
@@ -715,9 +787,9 @@ public:
 
     /**
      * Makes the entity of a spell (stage 3.3b-S2a). Only the spell system calls it (world/spells.h). Its actor id comes from
-     * the id allocator; the sessions near it look for it in the same tick (last_spell).
+     * the id allocator; the sessions near it look for it in the same tick (last_spell). Stage DG1: `space` is the space of its caster.
      */
-    Entity& make_spell(const SpellBody& body, const state::WorldPosition& position);
+    Entity& make_spell(const SpellBody& body, const state::WorldPosition& position, SpaceId space);
     /** Removes the entity of a spell: each session that observes it sends the stop. Only the spell system calls it. */
     void remove_spell(EntityId id);
     /**
@@ -750,9 +822,9 @@ public:
      * Makes the entity of a projectile of a creature (stage 3.4f-A). Only the projectile system calls it (world/projectiles.h). Its actor
      * id comes from the id allocator; the sessions near it look for it in the same tick (last_projectile: a flight lives some tenths of
      * a second, and a record that waits for the interval of the interest scan comes when the arrow is far along its path: live check
-     * L2a). The caller checks the position (valid_position).
+     * L2a). The caller checks the position (valid_position). Stage DG1: `space` is the space of the creature that shoots it.
      */
-    Entity& make_projectile(const ProjectileBody& body, const state::WorldPosition& position);
+    Entity& make_projectile(const ProjectileBody& body, const state::WorldPosition& position, SpaceId space);
     /** Removes the entity of a projectile: each session that observes it sends the stop. Only the projectile system calls it. */
     void remove_projectile(EntityId id);
     /** Moves the entity of a projectile to its place in the flight (the position index, the interest). No state change. */
@@ -782,9 +854,12 @@ public:
     /** @return The distance above which a session stops to observe an entity. */
     [[nodiscard]] float interest_leave(const Entity& entity) const;
 
-    /** Calls `visit(Entity&)` for each entity that is `range` or less from `center` (horizontal). */
+    /**
+     * Calls `visit(Entity&)` for each entity of a space that is `range` or less from `center` (horizontal). Stage DG1: an entity of a
+     * different space is never in the result (the position index has the space in its key; docs/systems/instances.md).
+     */
     template <class Visit>
-    void for_each_near(const state::WorldPosition& center, float range, Visit&& visit);
+    void for_each_near(SpaceId space, const state::WorldPosition& center, float range, Visit&& visit);
 
     /**
      * Calls `visit(const Entity&)` for the entity of each character that is in the world, in
@@ -1137,6 +1212,8 @@ private:
     Missions m_missions;
     /** The build presets (stage B0): they use the inventory, the progress, the skill, and the ownership systems. */
     BuildPresets m_presets;
+    /** The instances (stage DG1): the spaces of the world after the main world. */
+    Instances m_instances;
 };
 
 template <class Result>
@@ -1198,10 +1275,10 @@ std::optional<Result> World::call(std::function<Result(World&)> task,
 }
 
 template <class Visit>
-void World::for_each_near(const state::WorldPosition& center, float range, Visit&& visit) {
-    m_index.for_each_candidate(center, range, [&](EntityId id) {
+void World::for_each_near(SpaceId space, const state::WorldPosition& center, float range, Visit&& visit) {
+    m_index.for_each_candidate(space, center, range, [&](EntityId id) {
         const auto found = m_entities.find(id);
-        if (found != m_entities.end() && horizontal_distance(center, found->second.position) <= range) {
+        if (found != m_entities.end() && found->second.space == space && horizontal_distance(center, found->second.position) <= range) {
             visit(found->second);
         }
     });

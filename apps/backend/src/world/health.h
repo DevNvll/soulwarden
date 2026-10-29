@@ -184,7 +184,10 @@ public:
      */
     HealthResult respawn(SessionId session);
 
-    /** @return The place at which a character that is dead now lives again. */
+    /**
+     * @return The place at which a character that is dead now lives again: the nearest travel place of the main world; stage DG1: in an
+     *         instance the start of its map.
+     */
     [[nodiscard]] RespawnPlace respawn_place(const Entity& character) const;
 
     /** A character did damage to a creature: it is in a fight (its health does not come back for `kRestTime`). */

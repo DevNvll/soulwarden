@@ -141,6 +141,8 @@ private:
     DatagramTransport& m_transport;
     world::World& m_world;
     RepServerOptions m_options;
+    /** Stage DG1: the account rule of the level information of the sessions (server/rep/level_contexts.h). It outlives each session. */
+    server::rep::LevelContexts m_levelContexts;
     /** The address of a client stays the same until its erase: the carrier connection keeps it. */
     std::map<PeerId, Client> m_clients;
     std::uint32_t m_nextSession{1};

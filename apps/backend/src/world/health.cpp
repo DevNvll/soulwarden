@@ -370,6 +370,15 @@ void Health::tick() {
 RespawnPlace Health::respawn_place(const Entity& character) const {
     RespawnPlace place;
     place.position = character.position;
+    if (character.space != kMainSpace) {
+        // Stage DG1 (docs/systems/instances.md) [agent]: in an instance the start of its map (the travel places are places of the main
+        // world). The checkpoints of an instance (respawn type 10) are stage DG3.
+        if (const Instance* instance = m_world.instances().instance_of_space(character.space)) {
+            place.position = instance->start;
+            place.name = "the start of instance " + std::to_string(instance->id);
+        }
+        return place;
+    }
     const gamedata::TravelPlaces* places = m_world.options().travelPlaces;
     if (places == nullptr) {
         return place;

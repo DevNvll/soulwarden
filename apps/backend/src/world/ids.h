@@ -32,6 +32,12 @@ using EntityId = std::uint64_t;
 using SessionId = std::uint32_t;
 /** A value of the revision counter of the world. 0: never. */
 using Revision = std::uint64_t;
+/**
+ * Stage DG1 (docs/systems/instances.md): the space of an entity. The main world is space 0; each instance has a space of its own from the
+ * allocator of the instance system (1, 2, ...; a number is not given two times in one backend process).
+ */
+using SpaceId = std::uint32_t;
+inline constexpr SpaceId kMainSpace = 0;
 
 struct ActorId {
     std::array<std::uint8_t, 16> bytes{};

@@ -31,19 +31,8 @@ namespace {
 constexpr std::uint32_t kRefusalLines = 32;
 
 constexpr std::size_t kRouteSize = 16;
-/** Main open-world level of the supported build. */
-constexpr const char* kLevelName = "newworld_vitaeeterna";
-/**
- * Terrain project of the level (game data folder sharedassets/coatlicue/<name>). The client
- * starts its terrain system only when this text is not empty (client code at image RVA
- * 0x6448CD0). Without the terrain the loading screen does not end.
- */
-constexpr const char* kTerrainProject = "coatlicue/newworld_vitaeeterna";
-/**
- * Largest client context instance: the level information and the state bundle have one byte
- * for it, and the client uses 0 for "no instance".
- */
-constexpr std::uint32_t kContextInstanceCount = 255;
+// The level texts of the main world are world::kMainLevel and world::kMainTerrain (world/instances.h); a session sends the level of the
+// space of its entity (stage DG1).
 constexpr std::uint8_t kEnvelopeTarget = 0x01;
 constexpr std::uint8_t kEnvelopeSource = 0x02;
 constexpr std::uint8_t kEnvelopeExtension = 0x04;
@@ -295,7 +284,8 @@ RepSession::RepSession(std::uint32_t id, Send send, world::World& world, Session
     : m_id(id),
       m_logMark(log::session_mark(id)),
       // Session 1 has instance 1, the value of each session before the sessions had an id.
-      m_contextInstance(static_cast<std::uint8_t>((id + kContextInstanceCount - 1) % kContextInstanceCount + 1)),
+      m_contextInstance(session_context_instance(id)),
+      m_levelVersion(id),
       m_options(std::move(options)),
       m_send(std::move(send)),
       m_world(world),
@@ -441,6 +431,10 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
     case kTypeTimeRequest:
         check_route(route, type, body, firstOfType);
         handle_time_request(route, body);
+        break;
+    case kTypeAckLevelInfoChanged:
+        check_route(route, type, body, firstOfType);
+        handle_level_acknowledgement(body);
         break;
     case kTypeCraftRequest:
         check_route(route, type, body, firstOfType);
@@ -1025,8 +1019,13 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
             if (id == own.id || entity == nullptr) {
                 continue;
             }
-            // Stage QG6a: the world entity stays at each distance.
+            // Stage QG6a: the world entity stays at each distance (stage DG1: in each space).
             if (entity->kind == world::EntityKind::object && entity->object.world) {
+                continue;
+            }
+            // Stage DG1: an entity of a different space goes out of the interest table (a character that moved to an instance or back).
+            if (entity->space != own.space) {
+                gone.push_back(id);
                 continue;
             }
             // An object: the distance of its nearest bound (code review of stage 2.5a, finding INT-R3).
@@ -1078,7 +1077,8 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     m_creaturesWaited = creaturesWait;
     // The largest interest distance of an entity is the distance of a character.
     std::vector<std::pair<float, const world::Entity*>> creatures;
-    m_world.for_each_near(own.position, m_world.options().interestEnter, [&](world::Entity& entity) {
+    // Stage DG1: the entities of the space of the own entity only (the position index has the space in its key).
+    m_world.for_each_near(own.space, own.position, m_world.options().interestEnter, [&](world::Entity& entity) {
         if (entity.id == own.id || m_observer.find(entity.id) != nullptr) {
             return;
         }
@@ -1173,7 +1173,8 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     // fixture, each at the distance of a character from its nearest bound (code review of stage 2.5a, finding INT-R3: a bound can be
     // more than 100 m from the root of its placement). Its record has the state of now, also when the client has an older one (the
     // client keeps the last state of a stopped record of a level object: live check L2 of stage 2.5a).
-    m_world.interactions().for_each_entity_near(own.position, m_world.options().interestEnter, [&](world::Entity& entity) {
+    // Stage DG1: the objects of the interaction system are objects of the main world (its level data); an instance has none (stage DG2).
+    m_world.interactions().for_each_entity_near(own.space, own.position, m_world.options().interestEnter, [&](world::Entity& entity) {
         if (m_observer.find(entity.id) != nullptr) {
             return;
         }
@@ -3447,6 +3448,9 @@ void RepSession::handle_registration(std::uint32_t type, std::span<const std::ui
                    *research.rejectReason);
         return;
     }
+    // Stage DG1: the account rule of the version and the context instance (the first world entry of an account: the session id).
+    m_personaId = request.personaId;
+    next_level_context();
     send_self_identification();
     send_level_information();
     // ClientViewListenerTrait::ReceivePlayerSpawnPointMsg has no fields.
@@ -3592,9 +3596,16 @@ void RepSession::send_level_information() {
     // LevelInfoChangedMsg, client writer at image RVA 0x1500850:
     //   level:text terrain:text pair:u32,u32 pair:u32,u32 u64 list{u8,u32,u64,u32}
     //   flag instance:u8 reload:flag flag version:u64
+    // Stage DG1: the level of the space of the own entity (the main world, or the level of an instance).
+    const world::Entity* own = m_world.find(m_observer.own());
+    const world::SpaceLevel* level = own != nullptr ? m_world.level_of(own->space) : nullptr;
+    const world::SpaceLevel main{world::kMainLevel, world::kMainTerrain};
+    if (level == nullptr) {
+        level = &main;
+    }
     hub::Writer body;
-    body.string(kLevelName);
-    body.string(kTerrainProject);
+    body.string(level->level);
+    body.string(level->terrain);
     body.u32(0);
     body.u32(0);
     body.u32(0);
@@ -3607,10 +3618,89 @@ void RepSession::send_level_information() {
     body.boolean(false);
     // The client does nothing for a level information whose version is the version of the
     // last one that it got, also when that one came on an earlier connection (client code at
-    // image RVA 0x6446800). The session id is different for each connection.
-    body.u64(m_id);
+    // image RVA 0x6446800). Stage DG1: the account rule gives each level information of an account a new version (the first one is the
+    // session id).
+    body.u64(m_levelVersion);
     send_message(kTypeLevelInfoChanged, body.data());
-    log::write("rep: level information sent (%s)", kLevelName);
+    log::write("rep: level information sent (%s, version %llu, context instance %u)", level->level.c_str(),
+               static_cast<unsigned long long>(m_levelVersion), static_cast<unsigned>(m_contextInstance));
+}
+
+void RepSession::next_level_context() {
+    if (m_options.levelContexts == nullptr || m_personaId.empty()) {
+        // The session rule: the first level information has the values of the session id; a later one counts from them.
+        if (m_levelChanges > 0) {
+            ++m_levelVersion;
+            m_contextInstance = static_cast<std::uint8_t>(m_contextInstance % kContextInstanceCount + 1);
+        }
+        return;
+    }
+    const LevelContext next = m_options.levelContexts->next(m_personaId, m_id);
+    m_levelVersion = next.version;
+    m_contextInstance = next.instance;
+}
+
+void RepSession::space_changed(const world::SpaceChange& change) {
+    // The call comes from the world, in a task of a command.
+    const log::Context context(m_logMark);
+    if (!m_inWorld || m_closing) {
+        return;
+    }
+    log::write("rep: the character changes its space: space %u to space %u (instance %llu), level %s", change.from, change.to,
+               static_cast<unsigned long long>(change.instance), change.level.level.c_str());
+    // The rules of a travel for the check of the position reports and for the camera estimate: the client reports from the new place.
+    m_track.traveled();
+    m_followCamera = false;
+    forget_camera_distance();
+    m_knownBehind = kCameraBehind;
+    m_travelAnchor = TravelAnchor{change.place, std::nullopt, false};
+    m_creaturesAfterTravel = m_clock.now() + kCreaturesAfterTravel;
+    // The world ended the interaction and the conversation of the character (World::move_to_space). The client makes a new client
+    // context: the session sends no message to the old one before the level information (the sequence of the live probe of research
+    // dungeons.md 2.1, with no 3746 and no 6709 of a travel).
+    server_ended_use();
+    change_level(change.level);
+}
+
+void RepSession::change_level(const world::SpaceLevel& level) {
+    const world::EntityId own = m_observer.own();
+    // The client makes a new client context (ClientContext::Initialize 0x171B850 cleans the interest table of the old one): it has no
+    // entity of the old context. The own entity gets the interest number 1 again, and each other entity a new record.
+    m_observer.clear();
+    m_observer.set_own(own);
+    m_pendingStops.clear();
+    const std::uint8_t oldInstance = m_contextInstance;
+    const std::uint64_t oldVersion = m_levelVersion;
+    ++m_levelChanges;
+    next_level_context();
+    const std::uint64_t oldSequence = m_bundleSequence;
+    // The reset of the client (0x6463540) sets its expected bundle sequence to 1.
+    m_bundleSequence = 0;
+    // The client context starts at the teleport number 0: the full movement state of the next record puts the character at its place.
+    m_clientTeleport = 0;
+    m_travelNotice = false;
+    m_lastInterestScan = {};
+    log::write("rep: level change %u to %s (terrain %s): version %llu to %llu, context instance %u to %u, bundle sequence %llu to 0",
+               m_levelChanges, level.level.c_str(), level.terrain.c_str(), static_cast<unsigned long long>(oldVersion),
+               static_cast<unsigned long long>(m_levelVersion), static_cast<unsigned>(oldInstance), static_cast<unsigned>(m_contextInstance),
+               static_cast<unsigned long long>(oldSequence));
+    send_self_identification();
+    send_level_information();
+    send_message(kTypeReceivePlayerSpawnPoint, {});
+    log::write("rep: spawn point notice sent");
+    // The first bundle of the new context makes the client load the level (0x643EEE9). The next tick sends the full owner record.
+    send_state_bundle({});
+}
+
+void RepSession::handle_level_acknowledgement(std::span<const std::uint8_t> body) {
+    ++m_levelAcknowledgements;
+    // PlayerComponentServerFacet_OnAckLevelInfoChanged: target:u64 entity:u64 value:u8 (the new context instance of the client).
+    if (body.size() != 17) {
+        log::write("rep: level information acknowledgement (type %u) with %zu bytes, not 17", kTypeAckLevelInfoChanged, body.size());
+        return;
+    }
+    log::write("rep: the client acknowledged the level information: context instance %u (the session has %u)", static_cast<unsigned>(body[16]),
+               static_cast<unsigned>(m_contextInstance));
 }
 
 void RepSession::send_state_bundle(std::span<const std::uint8_t> payload, std::span<const std::uint32_t> stops) {

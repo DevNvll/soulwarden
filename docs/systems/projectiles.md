@@ -245,6 +245,11 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 - The cost: a pierce looks only at the creatures near the segment (the position index), as each shot (test case BW10: the same looks
   with 40 and with 4,040 creatures).
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): a projectile of a creature is in the space of the creature, and the searches of a flight use the
+  space of the caster or of the creature. A move of the caster to a different space ends its projectiles [agent].
+
 ## Commands
 
 ```sh

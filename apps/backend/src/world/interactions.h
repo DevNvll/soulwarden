@@ -575,7 +575,7 @@ public:
      * the place of a server child with no bound. It looks only at the cells near the center (MP-8). Each entity one time.
      */
     template <class Visit>
-    void for_each_entity_near(const state::WorldPosition& center, float range, Visit&& visit);
+    void for_each_entity_near(SpaceId space, const state::WorldPosition& center, float range, Visit&& visit);
     /** @return The horizontal distance of the nearest interest point of an object entity from a place (another entity: its place). */
     [[nodiscard]] float distance_to(const Entity& entity, const state::WorldPosition& place) const;
 
@@ -735,8 +735,10 @@ private:
 };
 
 template <class Visit>
-void Interactions::for_each_entity_near(const state::WorldPosition& center, float range, Visit&& visit) {
-    if (m_entityCells.empty() || !(range >= 0.0F)) {
+void Interactions::for_each_entity_near(SpaceId space, const state::WorldPosition& center, float range, Visit&& visit) {
+    // Stage DG1: the objects of this system are objects of the main world (the interaction data is the level data of the main world, and
+    // each server child is made there); a different space has none (the level data of an instance is stage DG2).
+    if (space != kMainSpace || m_entityCells.empty() || !(range >= 0.0F)) {
         return;
     }
     const auto low = [](float value) { return static_cast<std::int32_t>(std::floor(value / gamedata::InteractionData::kCellSize)); };
@@ -752,7 +754,7 @@ void Interactions::for_each_entity_near(const state::WorldPosition& center, floa
                     continue;
                 }
                 Entity* entity = find_entity(id);
-                if (entity != nullptr && distance_to(*entity, center) <= range) {
+                if (entity != nullptr && entity->space == space && distance_to(*entity, center) <= range) {
                     visit(*entity);
                 }
             }

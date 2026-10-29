@@ -47,6 +47,10 @@ client (a conversation, a cutscene). The wire contracts are in the protocol note
   of a spawn action. A travel and a respawn end each lock of the input of the client: the
   session of the owner sends the messages 3746 and 6709 before the messages of the travel
   (protocol notes 4.20).
+- Stage DG1 ([Instances](instances.md)): a travel moves a character in its space. In an instance it writes no position row (the row
+  keeps the return place in the main world). A move to a different space is not a travel: it is `World::move_to_space`, with a level
+  change of the client in the same connection (no message 3951 and no 3746 or 6709 of a travel). A respawn in an instance is at the start
+  of its map.
 - The lock of the input of a client (protocol notes 4.20, `server/rep/lock_messages.h`). A
   conversation with a person (the key E, "Talk") is a player cutscene of the client: at its
   end the client sends 6705 and keeps the input of its character blocked until the answer

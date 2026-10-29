@@ -487,9 +487,9 @@ void creature_entity(const Options&) {
           "a function for a character does not find a creature (an empty character id finds nothing), and the creature system "
           "does not find the entity of a player");
     std::set<world::EntityId> near;
-    host.world.for_each_near(kPlace, 50.0F, [&](world::Entity& entity) { near.insert(entity.id); });
+    host.world.for_each_near(world::kMainSpace, kPlace, 50.0F, [&](world::Entity& entity) { near.insert(entity.id); });
     std::set<world::EntityId> far;
-    host.world.for_each_near(state::WorldPosition{1300.0F, 1000.0F, kHeight}, 50.0F, [&](world::Entity& entity) { far.insert(entity.id); });
+    host.world.for_each_near(world::kMainSpace, state::WorldPosition{1300.0F, 1000.0F, kHeight}, 50.0F, [&](world::Entity& entity) { far.insert(entity.id); });
     check(near == std::set<world::EntityId>{player->id, wolfId} && far == std::set<world::EntityId>{rabbit.entity->id},
           "the position index has the creatures: a search near the player finds the wolf, and a search 300 m away finds the rabbit");
     check(creatures.count() == 2 && creatures.counts().spawnedByCommand == 2 && creatures.counts().largest == 2,
@@ -499,7 +499,7 @@ void creature_entity(const Options&) {
               && creatures.remove(player->id).error == CreatureError::unknownCreature && host.world.find_character(kCharacterA) != nullptr,
           "a removed creature is not in the table; a second removal and the removal of a player entity give \"no such creature\"");
     near.clear();
-    host.world.for_each_near(kPlace, 50.0F, [&](world::Entity& entity) { near.insert(entity.id); });
+    host.world.for_each_near(world::kMainSpace, kPlace, 50.0F, [&](world::Entity& entity) { near.insert(entity.id); });
     check(near == std::set<world::EntityId>{player->id}, "the position index has no entry of the removed creature");
     check(creatures.spawn("No_Such_Kind", kPlace, 0.0F).error == CreatureError::unknownKind
               && creatures.spawn("Test_Wolf", state::WorldPosition{5000000.0F, 0.0F, 0.0F}, 0.0F).error == CreatureError::badPosition

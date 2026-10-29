@@ -704,7 +704,8 @@ void LootBags::refresh(Entity& character, bool panel) {
             ++m_counts.refreshBags;
             const auto found = m_bags.find(key);
             const Entity* entity = found != m_bags.end() && found->second.entity != 0 ? m_world.find(found->second.entity) : nullptr;
-            if (entity == nullptr) {
+            // Stage DG1: only the bags of the space of the character (each bag is in the main world).
+            if (entity == nullptr || entity->space != character.space) {
                 continue;
             }
             const LootBag& bag = found->second;
@@ -1009,6 +1010,11 @@ BagResult LootBags::make_discard(Entity& character, Release&& release) {
     const gamedata::LootContainer* data = container();
     if (data == nullptr) {
         return refuse(BagRefusal::noData, character, "a discard");
+    }
+    if (character.space != kMainSpace) {
+        // Stage DG1: a bag is an object of the main world (the bags of an instance come with its content); a discard in an instance
+        // changes nothing (rule MP-5).
+        return refuse(BagRefusal::notValid, character, "a discard in an instance");
     }
     const WorldClock::time_point now = m_world.clock().now();
     LootBag bag;

@@ -816,24 +816,24 @@ void delete_in_world(const Options&) {
 /** P1: the position index. */
 void position_index(const Options&) {
     world::PositionIndex index(64.0F);
-    index.insert(1, state::WorldPosition{10.0F, 10.0F, 0.0F});
-    index.insert(2, state::WorldPosition{100.0F, 10.0F, 0.0F});
-    index.insert(3, state::WorldPosition{-200.0F, -200.0F, 0.0F});
-    index.insert(4, state::WorldPosition{10.0F, 500.0F, 0.0F});
+    index.insert(1, world::kMainSpace, state::WorldPosition{10.0F, 10.0F, 0.0F});
+    index.insert(2, world::kMainSpace, state::WorldPosition{100.0F, 10.0F, 0.0F});
+    index.insert(3, world::kMainSpace, state::WorldPosition{-200.0F, -200.0F, 0.0F});
+    index.insert(4, world::kMainSpace, state::WorldPosition{10.0F, 500.0F, 0.0F});
     const auto near = [&](float x, float y, float range) {
         std::set<world::EntityId> ids;
-        index.for_each_candidate(state::WorldPosition{x, y, 0.0F}, range, [&](world::EntityId id) { ids.insert(id); });
+        index.for_each_candidate(world::kMainSpace, state::WorldPosition{x, y, 0.0F}, range, [&](world::EntityId id) { ids.insert(id); });
         return ids;
     };
     check(index.cell_count() == 4 && near(0.0F, 0.0F, 30.0F) == std::set<world::EntityId>{1},
           "a search of 30 m at the origin reads only the cells that the circle touches: one entity");
     check(near(0.0F, 0.0F, 120.0F) == (std::set<world::EntityId>{1, 2}), "a search of 120 m finds the entity at 100 m also");
     check(near(0.0F, 0.0F, 600.0F).size() == 4, "a search of 600 m finds the four entities, also at negative coordinates");
-    index.move(2, state::WorldPosition{100.0F, 10.0F, 0.0F}, state::WorldPosition{1000.0F, 10.0F, 0.0F});
+    index.move(2, world::kMainSpace, state::WorldPosition{100.0F, 10.0F, 0.0F}, state::WorldPosition{1000.0F, 10.0F, 0.0F});
     check(near(0.0F, 0.0F, 120.0F) == std::set<world::EntityId>{1} && near(1000.0F, 0.0F, 30.0F) == std::set<world::EntityId>{2},
           "an entity that moves goes to the cell of its new position");
-    index.erase(1, state::WorldPosition{10.0F, 10.0F, 0.0F});
-    index.erase(2, state::WorldPosition{1000.0F, 10.0F, 0.0F});
+    index.erase(1, world::kMainSpace, state::WorldPosition{10.0F, 10.0F, 0.0F});
+    index.erase(2, world::kMainSpace, state::WorldPosition{1000.0F, 10.0F, 0.0F});
     check(index.cell_count() == 2 && near(0.0F, 0.0F, 120.0F).empty(), "an entity that is erased is in no cell, and an empty cell goes away");
 
     ServerHost host;
@@ -844,7 +844,7 @@ void position_index(const Options&) {
     host.enter(b, players.beta.registration());
     const auto count = [&](float range) {
         int found = 0;
-        host.world.for_each_near(state::WorldPosition{1000.0F, 1000.0F, 900.0F}, range, [&](world::Entity&) { ++found; });
+        host.world.for_each_near(world::kMainSpace, state::WorldPosition{1000.0F, 1000.0F, 900.0F}, range, [&](world::Entity&) { ++found; });
         return found;
     };
     check(count(99.0F) == 1 && count(100.0F) == 2,

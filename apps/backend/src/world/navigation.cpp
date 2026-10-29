@@ -368,7 +368,12 @@ void Navigation::want_around(const state::WorldPosition& position, float distanc
 
 void Navigation::update_wanted() {
     const WorldClock::time_point now = m_world.clock().now();
-    m_world.for_each_character([&](const Entity& character) { want_around(character.position, navigation_rules::kKeepDistance, now); });
+    // Stage DG1: the navigation data is the data of the main world: a character in an instance needs no tile of it.
+    m_world.for_each_character([&](const Entity& character) {
+        if (character.space == kMainSpace) {
+            want_around(character.position, navigation_rules::kKeepDistance, now);
+        }
+    });
     for (auto route = m_routes.begin(); route != m_routes.end();) {
         // A path that no creature used for some time: its creature left the world.
         if (now - route->second.used > navigation_rules::kDropAfter) {

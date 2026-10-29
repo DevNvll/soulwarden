@@ -2112,6 +2112,11 @@ struct Entity {
     EncounterBody encounter;
     /** The session of the client that plays this character. 0: no session. */
     SessionId owner{0};
+    /**
+     * Stage DG1 (docs/systems/instances.md): the space of the entity: kMainSpace (the main world), or the space of an instance. The
+     * position index and the interest of a session use the space and the position together. Only World::move_to_space changes it.
+     */
+    SpaceId space{kMainSpace};
 
     /**
      * Position in the world. The world object changes it: World::report_position for the

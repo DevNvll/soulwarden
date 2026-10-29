@@ -28,8 +28,6 @@ namespace task_type = gamedata::task_type;
 constexpr std::uint64_t kFirstInstance = 1;
 /** The largest number of task activations and completions of one plan: a loop of achievement actions stops the plan. */
 constexpr std::uint64_t kStepLimit = 100000;
-/** Stage QG8: the largest count of the rolls of a loot table of a game event (ItemRewardQty; the data has 1 for each such event). */
-constexpr std::uint32_t kRewardTableRolls = 100;
 /** The largest number of rounds of the TaskAchievement evaluator in one plan. */
 constexpr int kSettleRounds = 64;
 /** The depth of non-persisted achievements in one conditional (an NPA can name an NPA). */
@@ -674,7 +672,8 @@ struct Quests::Plan {
     /** @return True when the character is in a point of interest of the tags (the territory of the task limits them). */
     bool in_place(const QuestTask& task) const {
         const gamedata::PoiData* pois = owner.pois();
-        if (pois == nullptr || entity.positionEstimated) {
+        // Stage DG1: the points of interest are places of the main world: a character in an instance is in none of them.
+        if (pois == nullptr || entity.positionEstimated || entity.space != kMainSpace) {
             return false;
         }
         return pois->inside(task.poiTags, task.territory, entity.position.x, entity.position.y);
@@ -709,7 +708,9 @@ struct Quests::Plan {
         if (task.type == task_type::kExitPoi) {
             // Outside each point of interest of the tags, also at the activation (0x825EBF0). No data, or no shape of a tag of the task:
             // no knowledge of the place (code review of stage 1.8c, finding QR8C-R7: an unknown shape is not an exit).
-            return owner.pois() != nullptr && owner.pois()->knows(task.poiTags) && !entity.positionEstimated && !in_place(task) ? node.target
+            return owner.pois() != nullptr && owner.pois()->knows(task.poiTags) && !entity.positionEstimated && entity.space == kMainSpace
+                           && !in_place(task)
+                       ? node.target
                                                                                                                                  : 0U;
         }
         if (task.type == task_type::kAchievement) {
@@ -743,7 +744,9 @@ struct Quests::Plan {
             // volumes: live check T1). Enter and Stay Inside: inside one volume of the tag; Leave: outside each one. No trigger data, no
             // volume of the tag, or a camera estimate: no knowledge of the place, the task waits (the rule of QR8C-R7).
             const gamedata::TriggerData* triggers = owner.triggers();
-            if (triggers == nullptr || task.targetTag.empty() || entity.positionEstimated || !triggers->knows(task.targetTag)) {
+            // Stage DG1: the volumes are volumes of the main world: in an instance the task waits.
+            if (triggers == nullptr || task.targetTag.empty() || entity.positionEstimated || entity.space != kMainSpace
+                || !triggers->knows(task.targetTag)) {
                 return 0U;
             }
             const bool inside = triggers->inside(task.targetTag, entity.position.x, entity.position.y, entity.position.z, &counts.triggerVisits);
@@ -775,11 +778,17 @@ struct Quests::Plan {
                 const std::optional<std::uint32_t> root = rewards.tables() != nullptr ? rewards.tables()->table_index(table) : std::nullopt;
                 if (!root) {
                     notes.push_back("the loot table " + table + " of the game event " + eventId + " is not in the loot data: no item");
+                } else if (quantity > kRewardTableRolls) {
+                    // Code review of stage QG8, finding QG8R-R4: a quantity above the work limit is refused, not cut. The task waits (it is in
+                    // the index of the items); the support manifest blocks it.
+                    notes.push_back("the ItemRewardQty " + std::to_string(quantity) + " of the game event " + eventId + " is above the limit of "
+                                    + std::to_string(kRewardTableRolls) + " rolls of a loot table: the task " + task.id + " waits");
+                    return false;
                 }
                 LootContext context;
                 context.characterLevel = entity.progression.level;
                 context.creatureLevel = entity.progression.level;
-                for (std::uint32_t roll = 0; root && roll < std::min<std::uint32_t>(quantity, kRewardTableRolls); ++roll) {
+                for (std::uint32_t roll = 0; root && roll < quantity; ++roll) {
                     for (GrantItem& item : rewards.grant_items(rewards.roll_root(*root, context), entity.progression.level)) {
                         grants.push_back(std::move(item));
                     }
@@ -2741,7 +2750,7 @@ std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> Quests::matc
             }
             if (task.enforceLocation && !task.poiTags.empty()) {
                 const gamedata::PoiData* data = pois();
-                if (data == nullptr || entity.positionEstimated
+                if (data == nullptr || entity.positionEstimated || entity.space != kMainSpace
                     || !data->inside(task.poiTags, task.territory, entity.position.x, entity.position.y)) {
                     continue; // EnforceLocationRequirement (0x825DAD0): only in the place of the task.
                 }
@@ -2928,7 +2937,8 @@ std::optional<QuestDrop> Quests::roll_drop(Entity& entity, std::uint64_t instanc
         return std::nullopt; // AwardOnlyOnce: the task gave its target count of items (0x825F8F0).
     }
     if (task.enforceLocation && !task.poiTags.empty()
-        && (pois() == nullptr || entity.positionEstimated || !pois()->inside(task.poiTags, task.territory, entity.position.x, entity.position.y))) {
+        && (pois() == nullptr || entity.positionEstimated || entity.space != kMainSpace
+            || !pois()->inside(task.poiTags, task.territory, entity.position.x, entity.position.y))) {
         return std::nullopt;
     }
     // The roll: the chance in percent; GuranteedDropAttempts: the drop after that many misses is sure (0x825F630). Stage QG5a: the chest

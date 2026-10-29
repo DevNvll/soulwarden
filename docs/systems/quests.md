@@ -286,6 +286,9 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
   character plays the beach cutscene by itself at the world entry; the Grace cutscene of 06_survivors starts at its trigger area.
 - The cinematics (6606 started, 6542 ended, the CRC-32 of the name) [research quest-engine.md Q3; no live check]: 6606 counts for
   TaskCinematicStart and is the pending cinematic of the character; a 6542 counts for TaskCinematicComplete only for the pending cinematic.
+- Stage DG1 ([Instances](instances.md)): the points of interest, the area shapes, and the trigger volumes are places of the main world.
+  A character in an instance is in none of them: a task of a place, a trigger task, an exit task, and the location rule of a drop or an
+  event wait until the character is in the main world again; its territory is 0 [agent: the level data of an instance is a later stage].
 - TaskTriggerGameEvent [client 0x8260AE0; data GameEventData, WhisperData]: the activation applies the game event of KillEnemyType (one
   time) and completes: its whisper (the WhisperId or WhisperID of the event, else the whisper whose GameEvent names it) goes to the client of
   the character as 5070 with the CRC-32 of the lower-case WhisperId, and the AchievementId of the whisper is set; the AchievementId, the
@@ -1134,7 +1137,9 @@ the live checks are in `~/Games/soulwarden/work/evidence/quests/qg8/implement/RE
   Darkness, the arenas, the invasions); the prefix of the loot tables]. The activation of a TaskTriggerGameEvent rolls the table at the
   level of the character for each unit of ItemRewardQty (a blank quantity: 1) and gives the items of the roll, whole or not at all (a
   full bag: the task waits, and the next change of the bag rolls again) [agent: the quantity of a table entry is the count of its visits,
-  the rule of the loot tables]. A table that the loot data does not have gives no item; the event applies. `gamedata::reward_table`,
+  the rule of the loot tables]. The largest quantity is 100 rolls (`kRewardTableRolls`, a work limit of one tick) [agent]: a larger one is
+  refused, not cut (the task waits, and the manifest blocks it; code review of stage QG8, finding QG8R-R4). The data has the quantity 1 for
+  each such event [data]. A table that the loot data does not have gives no item; the event applies. `gamedata::reward_table`,
   `Quests::Plan::apply_event`. The loot tool exports the tables of these events (`loot-tables.json` member `eventRoots`). Case QG8C.
   - The hand-in does not roll a table: a success event with such an item stays refused ("the item catalog has no reward item") [agent: no
     success event of the quest data has one].
@@ -1157,6 +1162,22 @@ the live checks are in `~/Games/soulwarden/work/evidence/quests/qg8/implement/RE
   recipes (S8), the game event rewards of a gather that the gathering does not pay (the soul fragments of Gather_LostMemory: a collectible
   progression, a standing, an achievement), the rows of an instance or of a raid (the gems and the ice of the Great Cleave, the flowers of
   C10A_M4), and the items with no declared source.
+
+### The corrections of the code review of stage QG8 (in stage DG1)
+
+The findings: `~/Games/soulwarden/work/evidence/quests/qg8/code-review/FINDINGS.md`. Each case fails on the tree of stage QG8.
+
+- QG8R-R1 and QG8R-R2 (case LT8, the cases `event-child` and `shared-event-root` of `check_loot_tool.py`): the loot tool keeps the required
+  references (a child table or a bucket of a table of the document) apart from the optional roots of a container and of an event, and it
+  finds the absent optional roots before a change of a list ([Game data](../development/game-data.md)). The export of the supported build
+  does not change.
+- QG8R-R4 (case QG8R4): an ItemRewardQty of a loot table above 100 rolls is refused, not cut: no item, the event task waits, and the support
+  manifest blocks the task with the cause; 100 rolls give 100 items.
+- QG8R-R5 (case QG8R5): the support manifest indexes the items of an event only for a quantity that the world gives (above 0; for a loot
+  table not above 100): an event with ItemRewardQty 0 completes and gives no item, and it is no source of an item task.
+- QG8R-R3 (rejected in stage DG1): the cause text of the two tasks of `17_CQ_SoulFragment` needs the item reward of the gather events
+  (`Gather_LostMemory_NN`) in the game data; the events of `gathering-data.json` keep only a progression and its amount. A change of the
+  format of that file belongs to the stage of the collectibles. The tasks stay unsupported with the class `none`.
 
 ### The corrections of the code review of stage QG6b (in stage QG8)
 

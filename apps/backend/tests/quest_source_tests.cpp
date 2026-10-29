@@ -13,6 +13,12 @@
 //   QG8D  the support manifest: the quest object source of a possession task, the items of a loot table of a game event (the history
 //         decides), the reason and the class of an item with no source (a task drop of an ordinary row, a chest drop, a loot table with no
 //         root, none), the count itemTasksWithNoSource
+//
+// The cases of the code review of stage QG8 (in stage DG1; the findings: ~/Games/soulwarden/work/evidence/quests/qg8/code-review/FINDINGS.md).
+// Each one fails on the tree of stage QG8 (trees/after-qg8):
+//   QG8R4  finding QG8R-R4: an ItemRewardQty of a loot table above the roll limit (kRewardTableRolls, 100) is refused, not cut: no ticket, the
+//          task waits, and the manifest blocks it; the limit itself (100) gives 100 tickets; B gets nothing (MP-10)
+//   QG8R5  finding QG8R-R5: an event with ItemRewardQty 0 completes and gives no ticket, and the manifest names it as no source of the tickets
 
 #include <string>
 #include <tuple>
@@ -288,11 +294,86 @@ void manifest(const Options&) {
 
 } // namespace
 
+/** The lottery data with an ItemRewardQty, and a tickets table that gives ticket A at each roll (an AND table with one entry). */
+void lottery_with_quantity(SourceShop& shop, const std::string& quantity) {
+    json quests = source_quests();
+    quests["events"]["test_qg8_lottery_event"]["ItemRewardQty"] = quantity;
+    check(shop.host.quests.load_text(quests.dump()), "setup: the quest data with the ItemRewardQty " + quantity + " loads");
+    gamedata::LootData loot = shop.host.loot.data();
+    for (gamedata::LootTable& table : loot.tables) {
+        if (table.id == "Test_QG8_Tickets") {
+            table.all = true;
+            table.maxRoll = 0;
+            table.entries.resize(1);
+            table.entries[0].threshold = 0;
+        }
+    }
+    check(shop.host.loot.set(loot), "setup: the tickets table gives one ticket A at each roll");
+}
+
+const json* manifest_row(const json& manifest, const char* id) {
+    for (const json& row : manifest["objectives"]) {
+        if (row["id"] == id) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
+void review_event_limit(const Options&) {
+    {
+        SourceShop shop;
+        lottery_with_quantity(shop, "100");
+        shop.enter();
+        check(shop.grant(kCharacterA, "Test_QG8_LotteryQuest"), "setup: A starts the lottery");
+        shop.settle();
+        check(count_of(*shop.entity(kCharacterA), "TestQG8TicketA") == 100 && state_of(shop.quest(kCharacterA, "Test_QG8_LotteryQuest"), 0) == kComplete,
+              "the limit itself: ItemRewardQty 100 rolls the table 100 times (100 tickets), and the event completes");
+    }
+    SourceShop shop;
+    lottery_with_quantity(shop, "101");
+    shop.enter();
+    check(shop.grant(kCharacterA, "Test_QG8_LotteryQuest"), "setup: A starts the lottery");
+    shop.settle();
+    const std::uint32_t tickets = count_of(*shop.entity(kCharacterA), "TestQG8TicketA");
+    note("QG8R4: ItemRewardQty 101 gives " + std::to_string(tickets) + " ticket(s)");
+    check(tickets == 0 && state_of(shop.quest(kCharacterA, "Test_QG8_LotteryQuest"), 0) == kActive,
+          "ItemRewardQty 101 (above the limit of 100 rolls) is refused, not cut: no ticket, and the event task waits (no part of its reward)");
+    check(count_of(*shop.entity(kCharacterB), "TestQG8TicketA") == 0, "B gets nothing (MP-10)");
+    world::QuestSupport support(shop.host.world);
+    const json manifest = support.manifest({});
+    const json* row = manifest_row(manifest, "Test_QG8_LotteryQuest");
+    check(row != nullptr && !(*row)["tasks"][0].value("supported", true)
+              && (*row)["tasks"][0].value("reason", "").find("above the limit of 100 rolls") != std::string::npos,
+          "the manifest blocks the event task with the cause (the limit of the rolls)");
+    check(row != nullptr && (*row)["tasks"][1].value("questItem", "").empty(), "the manifest names no ticket of the refused event");
+}
+
+void review_event_zero(const Options&) {
+    SourceShop shop;
+    lottery_with_quantity(shop, "0");
+    shop.enter();
+    check(shop.grant(kCharacterA, "Test_QG8_LotteryQuest"), "setup: A starts the lottery");
+    shop.settle();
+    const std::uint32_t tickets = count_of(*shop.entity(kCharacterA), "TestQG8TicketA") + count_of(*shop.entity(kCharacterA), "TestQG8TicketB");
+    check(tickets == 0 && state_of(shop.quest(kCharacterA, "Test_QG8_LotteryQuest"), 0) == kComplete,
+          "setup: ItemRewardQty 0 completes the event and gives no ticket (the rule of the world)");
+    world::QuestSupport support(shop.host.world);
+    const json manifest = support.manifest({});
+    const json* row = manifest_row(manifest, "Test_QG8_LotteryQuest");
+    check(row != nullptr, "setup: the lottery row is in the manifest");
+    note("QG8R5: the ticket task: " + (row != nullptr ? (*row)["tasks"][1].dump() : std::string("no row")));
+    check(row != nullptr && !(*row)["tasks"][1].value("supported", true) && (*row)["tasks"][1].value("questItem", "").empty(),
+          "an event with ItemRewardQty 0 supplies no ticket in the manifest (the ticket task has no source)");
+}
+
 std::vector<Case> quest_source_cases() {
     return {{"QG8A", "quest sources QG8 (I2, I6, MP-10): a possession task drops at the gather of a quest object of its ItemDropVC", quest_object_drop},
             {"QG8B", "quest sources QG8 (I2): the key of a quest object in the drop planner", drop_planner},
             {"QG8C", "quest sources QG8 (I2, I6, MP-10): the loot table [LTID] of the game event of a task", event_table},
-            {"QG8D", "quest sources QG8 (I2, I3): the support manifest of the new sources and the reasons of the others", manifest}};
+            {"QG8D", "quest sources QG8 (I2, I3): the support manifest of the new sources and the reasons of the others", manifest},
+            {"QG8R4", "review of QG8, finding QG8R-R4: an event quantity above the roll limit is refused, not cut", review_event_limit},
+            {"QG8R5", "review of QG8, finding QG8R-R5: an event with ItemRewardQty 0 supplies no item in the manifest", review_event_zero}};
 }
 
 } // namespace soulwarden::backend::tests

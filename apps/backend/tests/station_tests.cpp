@@ -68,7 +68,7 @@ void object_entity(const Options&) {
               && station->object.bounds[0].slot == 4 && station->object.asset == asset_of(1),
           "the actor is an id of the allocator (an even first byte), and the body is the slice descriptor: the asset, the slots, Complete");
     bool indexed = false;
-    shop.host.world.for_each_near(kStationPlace, 0.5F, [&](world::Entity& entity) { indexed = indexed || entity.id == station->id; });
+    shop.host.world.for_each_near(world::kMainSpace, kStationPlace, 0.5F, [&](world::Entity& entity) { indexed = indexed || entity.id == station->id; });
     check(indexed, "the station is in the position index of the world at its place");
     // The metadata codec tells a player, a creature, and an object apart.
     gamedata::CreatureSlice slice;
@@ -113,7 +113,7 @@ void object_entity(const Options&) {
     }
     const world::Entity* forge = shop.host.world.find(station->id + 0);
     std::uint32_t forgeInterest = 0;
-    shop.host.world.for_each_near(kStationPlace, 0.5F, [&](world::Entity& entity) {
+    shop.host.world.for_each_near(world::kMainSpace, kStationPlace, 0.5F, [&](world::Entity& entity) {
         if (entity.id != station->id && entity.kind == world::EntityKind::object) {
             forgeInterest = interest_of(shop.clientA, entity.actor.bytes);
         }
@@ -205,7 +205,7 @@ void station_use(const Options&) {
     shop.request(shop.clientA, wrong);
     shop.end_block(shop.clientA);
     world::Entity* forge = nullptr;
-    shop.host.world.for_each_near(kStationPlace, 0.5F, [&](world::Entity& entity) {
+    shop.host.world.for_each_near(world::kMainSpace, kStationPlace, 0.5F, [&](world::Entity& entity) {
         forge = entity.kind == world::EntityKind::object && entity.id != station->id ? &entity : forge;
     });
     InteractionBlock toForge = craft;

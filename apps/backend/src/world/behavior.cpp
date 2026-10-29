@@ -261,7 +261,7 @@ std::uint32_t Behavior::next_attack(const Creature& creature, std::uint32_t ligh
 
 const Entity* Behavior::taken(const Entity& creature, const state::WorldPosition& place) const {
     const Entity* found = nullptr;
-    m_world.for_each_near(place, behavior_rules::kCrowdDistance, [&](Entity& other) {
+    m_world.for_each_near(creature.space, place, behavior_rules::kCrowdDistance, [&](Entity& other) {
         if (found == nullptr && other.kind == EntityKind::creature && other.id != creature.id && !other.creature.dead
             && std::fabs(other.position.z - place.z) <= behavior_rules::kContactHeight
             && horizontal_distance(other.position, place) < behavior_rules::kCrowdDistance) {
@@ -488,7 +488,7 @@ void Behavior::sense() {
         characters.push_back(&character);
     });
     for (const Entity* character : characters) {
-        m_world.for_each_near(character->position, range, [&](Entity& creature) {
+        m_world.for_each_near(character->space, character->position, range, [&](Entity& creature) {
             if (creature.kind != EntityKind::creature || creature.creature.dead
                 || creature.creature.mind.mode != CreatureMode::rest || !creature.creature.body->fights()) {
                 return;
@@ -602,6 +602,11 @@ bool Behavior::keep_target(Entity& creature, float loseDistance) {
                               : gone->kind == EntityKind::spell   ? "the summon ends"
                               : gone->life.dead                   ? "the target is dead"
                                                                   : "the creatures ignore the target");
+        return false;
+    }
+    // Stage DG1: a target in a different space (a character that went into an instance or back) is not a target of the creature.
+    if (target->space != creature.space) {
+        lose_target(creature, "the target went to a different space");
         return false;
     }
     const gamedata::CreatureBehavior& values = *body.behavior;
@@ -887,8 +892,10 @@ bool Behavior::spawn_lead_over(const Entity& creature, WorldClock::time_point no
 bool Behavior::observed(const Entity& creature) const {
     bool seen = false;
     const float leave = m_world.interest_leave(creature);
+    // Stage DG1: a character of the space of the creature.
     m_world.for_each_character([&](const Entity& character) {
-        seen = seen || (character.owner != 0 && horizontal_distance(character.position, creature.position) <= leave);
+        seen = seen || (character.owner != 0 && character.space == creature.space
+                        && horizontal_distance(character.position, creature.position) <= leave);
     });
     return seen;
 }
@@ -969,10 +976,11 @@ void Behavior::select_roamers() {
     // character, not on the creatures of the world.
     std::set<EntityId> selected;
     const float range = m_world.options().interestLeave;
-    std::vector<state::WorldPosition> places;
-    m_world.for_each_character([&](const Entity& character) { places.push_back(character.position); });
-    for (const state::WorldPosition& place : places) {
-        m_world.for_each_near(place, range, [&](Entity& creature) {
+    // Stage DG1: the creatures of the space of each character.
+    std::vector<std::pair<SpaceId, state::WorldPosition>> places;
+    m_world.for_each_character([&](const Entity& character) { places.emplace_back(character.space, character.position); });
+    for (const auto& [space, place] : places) {
+        m_world.for_each_near(space, place, range, [&](Entity& creature) {
             if (creature.kind != EntityKind::creature || creature.creature.mind.mode != CreatureMode::rest
                 || selected.count(creature.id) != 0
                 || horizontal_distance(place, creature.position) > m_world.interest_leave(creature) || !roams(creature)) {

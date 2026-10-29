@@ -433,6 +433,11 @@ void older_schemas(const Options& options) {
                                    && store.list_faction_offers(kCharacterA)[0].unavailable == std::vector<std::uint32_t>{0xC4AC0921U}
                                    && store.list_daily_bonuses(kCharacterA).size() == 1 && store.list_daily_bonuses(kCharacterA)[0].used == 1
                                    && store.list_daily_bonuses(kCharacterA)[0].resetNs == 1792627200000000000ULL;
+        // Schema version 21 (stage DG1): the member row of a character in an instance (the delete removes it).
+        const bool instanced = store.write_instance_member(state::InstanceMemberRow{kCharacterA, 7, "Test_Map", {1.0F, 2.0F, 3.0F}, 99})
+                               && store.list_instance_members().size() == 1 && store.list_instance_members()[0].instanceId == 7
+                               && store.list_instance_members()[0].map == "Test_Map" && store.list_instance_members()[0].returnPlace.z == 3.0F
+                               && store.list_instance_members()[0].enteredNs == 99;
         // Schema version 17 (stage 1.8d): the repeat rows of the quests.
         const bool repeated = store.write_quest_repeat(kCharacterA, state::QuestRepeatRow{"Test_Quest", 1, 100, 200})
                               && store.write_quest_repeat(kCharacterA, state::QuestRepeatRow{"Test_Quest", 2, 300, 400})
@@ -450,16 +455,17 @@ void older_schemas(const Options& options) {
                              && store.list_quest_undo(kCharacterA).empty() && store.list_quest_awards(kCharacterA).empty()
                              && store.list_quest_repeats(kCharacterA).empty() && store.faction(kCharacterA).faction == 0
                              && store.list_mission_offers(kCharacterA).empty() && store.list_faction_offers(kCharacterA).empty()
-                             && store.list_daily_bonuses(kCharacterA).empty();
-        check(made && opened && schema_version(path) == 20 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
-                  && timed && gathered && cooled && quested && awarded && repeated && factioned && missioned && factionBoards && deleted,
+                             && store.list_daily_bonuses(kCharacterA).empty() && store.list_instance_members().empty();
+        check(made && opened && schema_version(path) == 21 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
+                  && timed && gathered && cooled && quested && awarded && repeated && factioned && missioned && factionBoards && instanced
+                  && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 20: its character row and its item stay (the item with no perk), its persona has an account, "
+                  + " opens and gets version 21: its character row and its item stay (the item with no perk), its persona has an account, "
                     "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
                     "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, a loot "
                     "claim with a kept item (stage 3.5b.1), the part of a loot bag with a stored instance (stage 3.5b.2) and its fast end, the world time (stage 2.2), "
                     "the run clock and a depleted gathering node (stage 3.6a), the cooldown of a recipe (stage 3.7b), a quest with a full u64 "
-                    "instance, its pin, its grant, and its undo row (stage 1.8a), an award row and the delete of a quest (stage 1.8c), a repeat row (stage 1.8d), a faction row (stage QG7), a mission of a board and a town entry (stage QG6a), a faction board entry and a daily bonus (stage QG6b), and the delete of a "
+                    "instance, its pin, its grant, and its undo row (stage 1.8a), an award row and the delete of a quest (stage 1.8c), a repeat row (stage 1.8d), a faction row (stage QG7), a mission of a board and a town entry (stage QG6a), a faction board entry and a daily bonus (stage QG6b), an instance member row (stage DG1), and the delete of a "
                     "character removes the rows of the character (the entitlement of the account stays)");
     }
 }

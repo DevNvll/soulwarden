@@ -227,7 +227,7 @@ void Runes::explode(Entity& start) {
     const state::WorldPosition center = character->position;
     const float height = std::max(spell->height, 0.5F);
     std::vector<std::pair<float, EntityId>> found_;
-    m_world.for_each_near(center, spell->radius, [&](Entity& entity) {
+    m_world.for_each_near(character->space, center, spell->radius, [&](Entity& entity) {
         if (entity.kind == EntityKind::creature && !entity.creature.dead && std::fabs(entity.position.z - center.z) <= height) {
             found_.emplace_back(horizontal_distance(entity.position, center), entity.id);
         }

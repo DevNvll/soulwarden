@@ -115,6 +115,11 @@ The source of each rule is in brackets: game data, client code, live check (the 
   the data: the backend has no such systems yet), the locks, keys, quests, and events (3.5b.3). The personal loot bag of stage 3.5b.2 is
   in [Loot bags](loot-bags.md).
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): the chests are chests of the main world: the LootTracker of a character in an instance has no
+  chest entry [agent].
+
 ## Commands
 
 ```sh

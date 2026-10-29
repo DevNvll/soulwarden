@@ -1021,7 +1021,7 @@ std::uint32_t Passives::around_count(const gamedata::CellValues& cells, std::str
         // A box in front of the look of the character (stage 3.3b-M2: Blood Lust): forward 0 to 2 x Length, Radius to each side.
         const float length = 2.0F * spell->cells.number("Length");
         const float ahead[2] = {-std::sin(character.look), std::cos(character.look)};
-        m_world.for_each_near(character.position, length, [&](Entity& entity) {
+        m_world.for_each_near(character.space, character.position, length, [&](Entity& entity) {
             if (entity.kind != EntityKind::creature || entity.creature.dead || entity.creature.immune()) {
                 return;
             }
@@ -1035,7 +1035,7 @@ std::uint32_t Passives::around_count(const gamedata::CellValues& cells, std::str
         });
         return count;
     }
-    m_world.for_each_near(character.position, spell->radius, [&](Entity& entity) {
+    m_world.for_each_near(character.space, character.position, spell->radius, [&](Entity& entity) {
         if (entity.kind == EntityKind::creature && !entity.creature.dead && !entity.creature.immune()
             && horizontal_distance(entity.position, character.position) <= spell->radius
             && std::fabs(entity.position.z - character.position.z) <= height) {

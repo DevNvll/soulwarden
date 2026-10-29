@@ -506,7 +506,9 @@ void Chests::refresh_tracker(Entity& character, Own& own) {
     own.cell = gamedata::ChestData::cell_of(character.position.x, character.position.y);
     own.hasCell = true;
     std::vector<LootTrackerEntry> entries;
-    if (data() != nullptr) {
+    // Stage DG1: the chests are chests of the main world: a character in an instance has none near it (the chests of an instance level
+    // come with its level data, stage DG2).
+    if (data() != nullptr && character.space == kMainSpace) {
         ++m_counts.trackers;
         const float rangeSq = chest_rules::kTrackerRange * chest_rules::kTrackerRange;
         for (const auto& [key, claim] : own.claims) {

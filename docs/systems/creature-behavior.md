@@ -409,6 +409,12 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   memory of the world, with the character id as its key (`Behavior::set_ignored`), which
   stays when its session ends, until the backend stops.
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): the vision, the roam selection, the crowd rule, and the rule "observed" use the space of the
+  creature (the position index by space); a target in a different space is lost ("the target went to a different space"; case IN10)
+  [agent].
+
 ## Commands
 
 ```sh

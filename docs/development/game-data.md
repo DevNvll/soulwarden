@@ -418,10 +418,26 @@ backend. The tool of each system is also in the document of that system.
   data, and counts them (`containerRoots`, `containersWithNoTable`, `containersWithSalvageEvent`). The format stays 2: the member is
   optional, and a file of before opens no container (the hand-in of a quest with a container reward is refused). The loader refuses a root
   whose table is not in the file. With made-up tables the item tables are optional (`check_loot_tool.py`).
+- `game-modes.json`, stage DG1 ([Instances](../systems/instances.md); `tools/gamedata/game-modes.sh`, `game_modes.py`,
+  `check_game_modes_tool.py`, case IN3): format 1, the 57 maps of the map table (GameModeMapData, 62 rows) with a terrain project and a
+  start place, each with its mode (GameModeData, 53 rows): the map id, the mode id, the rows, the level text and the terrain text (the
+  CoatlicueName in lower case with "/", and its last part: the texts that the client loaded live), the start of each team
+  (TeamTeleportData "x,y,z,heading", a "+" between two teams), the display name key and its English text, RecommendedLevel,
+  RequiredLevel, TeamCapacity, MinGroupSize, IsDungeon, IsSoloTrial, IsRaidTrial, TimerThresholdDefault. The 5 map rows with no terrain
+  project or no start (Dungeon, Mutation, Duel, TestMode1, TestMode2) are not in the file, and the counts name them. The tool stops for two
+  modes or two maps with one id, a map of a mode that is not there, and a start that is not four finite numbers with a height from -99 to
+  999. A mode with more than one map (Outpost Rush, the arenas, the CTF maps) has a lookup by its map id only. The backend refuses a file
+  that is not complete as a whole; with no file `instance enter` is refused.
 - `loot-tables.json`, stage QG8 ([Quests](../systems/quests.md)): the optional member `eventRoots` (`{EVENT_ID_LOWER: TABLE}`: the loot
   table of each game event whose ItemReward is "[LTID]NAME"), and these tables and what they reach are roots of the export. The backend
   rolls the table of the game event of a TaskTriggerGameEvent (`gamedata::reward_table`); it reads the table by its name, not the member.
   No entry of the build has the typed form "[IID]": an item entry is the bare ItemID.
+  Code review of stage QG8 (findings QG8R-R1 and QG8R-R2, case LT8: `check_loot_tool.py` cases `event-child` and `shared-event-root`): the
+  tool keeps the required references apart from the optional roots. An id that a table of the document names (a child table or a bucket)
+  is a required reference: when it is not there the tool stops, also when a container or an event names it as its root. The absent
+  optional roots come from one look at the unresolved ids before a change of a list: a root that a container and an event share is left
+  out of both and counted for both (`containersWithNoTable`, `eventsWithNoTable`). The export of the supported build is the same document
+  as before the correction.
 - `loot-tables.json`, stage QG2a ([Quests](../systems/quests.md), [Items and equipment](../systems/items-and-equipment.md)): three
   optional members; the format stays 2. `containerEvents`: the SalvageGameEventID of each item of the class LootContainer (the item id in
   lower case to the event id; 319 items of the build, also with no table: the coin purses, `Coin_Stack_500`). A container with a table and
@@ -643,6 +659,7 @@ tools/gamedata/spells.sh             # one time: spell entity data for the backe
 tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots, the bow actions with their marks: format 3; 75 KB, 10 s); needs an Oodle source
 tools/gamedata/weapon-actions.sh     # one time: the attack graphs and the abilities of the melee weapons for the backend (fragments, transitions, strikes, lengths; 0.4 MB, 5 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
+tools/gamedata/game-modes.sh         # one time: the maps of the game modes for the backend (the instances: level, terrain, starts, mode cells; 23 KB, 4 s); needs an Oodle source
 tools/gamedata/chests.sh             # one time: the chests of the world for the backend (placements, gatherable rows, loot roots, territories; 3.6 MB); needs an Oodle source
 tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, the stations, ...; 25 MB, 2 to 4 minutes); needs an Oodle source
 tools/gamedata/crafting.sh           # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits, the gear score and perk data for the backend (format 3 of stage 3.7c; 9 MB, 5 s); needs an Oodle source

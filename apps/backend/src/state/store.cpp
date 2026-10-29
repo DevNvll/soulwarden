@@ -15,7 +15,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 20;
+constexpr int kSchemaVersion = 21;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -458,6 +458,22 @@ CREATE TABLE IF NOT EXISTS character_daily_bonuses(
 );
 )sql";
 
+/**
+ * Version 21 (stage DG1: the instances, docs/systems/instances.md): the member row of a character in an instance. The position row of the
+ * character keeps the return place while the row is there; the next start of the backend removes each row (a stop ends each instance).
+ */
+constexpr const char* kMigration21Instances = R"sql(
+CREATE TABLE IF NOT EXISTS character_instances(
+    character_id TEXT PRIMARY KEY,
+    instance_id INTEGER NOT NULL,
+    map TEXT NOT NULL,
+    return_x REAL NOT NULL,
+    return_y REAL NOT NULL,
+    return_z REAL NOT NULL,
+    entered_ns INTEGER NOT NULL DEFAULT 0
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
@@ -465,7 +481,7 @@ constexpr const char* kCharacterTables[] = {"items",        "currencies",       
                                             "craft_cooldowns", "character_quests",  "character_quest_tasks", "character_quest_pins",
                                             "character_quest_grants", "character_quest_undo", "character_quest_awards",
                                             "character_quest_repeats", "character_factions", "character_mission_offers",
-                                            "character_faction_offers", "character_daily_bonuses"};
+                                            "character_faction_offers", "character_daily_bonuses", "character_instances"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -787,6 +803,13 @@ bool Store::migrate() {
     if (version < 20) {
         // Stage QG6b: the faction boards and the daily bonuses.
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration20FactionBoards) || !execute("PRAGMA user_version=20") || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 21) {
+        // Stage DG1: the member rows of the instances.
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration21Instances) || !execute("PRAGMA user_version=21") || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
         }
@@ -2244,6 +2267,62 @@ bool Store::write_daily_bonus(const std::string& characterId, const DailyBonusRo
     const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
     if (!ok) {
         log::write("store: no write of the daily bonus of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::vector<InstanceMemberRow> Store::list_instance_members() {
+    std::lock_guard lock(m_mutex);
+    std::vector<InstanceMemberRow> rows;
+    Statement statement(m_database, "SELECT character_id, instance_id, map, return_x, return_y, return_z, entered_ns FROM character_instances "
+                                    "ORDER BY character_id");
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        InstanceMemberRow row;
+        row.characterId = column_text(statement.handle, 0);
+        row.instanceId = static_cast<std::uint64_t>(std::max<sqlite3_int64>(0, sqlite3_column_int64(statement.handle, 1)));
+        row.map = column_text(statement.handle, 2);
+        row.returnPlace = WorldPosition{static_cast<float>(sqlite3_column_double(statement.handle, 3)),
+                                        static_cast<float>(sqlite3_column_double(statement.handle, 4)),
+                                        static_cast<float>(sqlite3_column_double(statement.handle, 5))};
+        row.enteredNs = static_cast<std::uint64_t>(std::max<sqlite3_int64>(0, sqlite3_column_int64(statement.handle, 6)));
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+bool Store::write_instance_member(const InstanceMemberRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "INSERT INTO character_instances(character_id, instance_id, map, return_x, return_y, return_z, entered_ns) "
+                                    "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(character_id) DO UPDATE SET instance_id=excluded.instance_id, "
+                                    "map=excluded.map, return_x=excluded.return_x, return_y=excluded.return_y, return_z=excluded.return_z, "
+                                    "entered_ns=excluded.entered_ns");
+    statement.bind(1, row.characterId);
+    sqlite3_bind_int64(statement.handle, 2, static_cast<sqlite3_int64>(row.instanceId));
+    statement.bind(3, row.map);
+    sqlite3_bind_double(statement.handle, 4, row.returnPlace.x);
+    sqlite3_bind_double(statement.handle, 5, row.returnPlace.y);
+    sqlite3_bind_double(statement.handle, 6, row.returnPlace.z);
+    sqlite3_bind_int64(statement.handle, 7, static_cast<sqlite3_int64>(row.enteredNs));
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of the instance row of character %s: %s", row.characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+bool Store::delete_instance_member(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "DELETE FROM character_instances WHERE character_id=?1");
+    statement.bind(1, characterId);
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no removal of the instance row of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
     }
     return end_write(ok);
 }

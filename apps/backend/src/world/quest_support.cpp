@@ -677,7 +677,12 @@ void QuestSupport::build() {
                 index.questItems.emplace(lower_text(task.itemName), "the task " + task.id);
             }
             if (task.type == task_type::kTriggerGameEvent && !task.targets.empty()) {
-                if (const gamedata::QuestGameEvent* event = data.game_event(task.targets.front()); event != nullptr && !event->item.empty()) {
+                // Code review of stage QG8, findings QG8R-R4 and QG8R-R5: an item of the event only for a quantity that the world gives (above
+                // 0; for a loot table not above kRewardTableRolls: Quests::Plan::apply_event refuses a larger one).
+                const gamedata::QuestGameEvent* event = data.game_event(task.targets.front());
+                const bool table = event != nullptr && !gamedata::reward_table(event->item).empty();
+                if (event != nullptr && !event->item.empty() && event->itemQty > 0
+                    && (!table || event->itemQty <= static_cast<std::int64_t>(kRewardTableRolls))) {
                     // Stage QG8: an ItemReward "[LTID]NAME" gives the items of its loot table (Quests::Plan::apply_event): each item that
                     // the table reaches (the rule of the world items: the tags and the conditions are not tested). A table that the loot
                     // data does not have gives nothing.
@@ -1454,6 +1459,12 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
             break;
         case task_type::kTriggerGameEvent:
             fact.supplier = "the activation (the game event " + (task.targets.empty() ? std::string{} : task.targets.front()) + ")";
+            // Code review of stage QG8, finding QG8R-R4: the world refuses a loot table reward above its roll limit (the task waits).
+            if (const gamedata::QuestGameEvent* event = task.targets.empty() ? nullptr : data.game_event(task.targets.front());
+                event != nullptr && !gamedata::reward_table(event->item).empty() && event->itemQty > static_cast<std::int64_t>(kRewardTableRolls)) {
+                block("the ItemRewardQty " + std::to_string(event->itemQty) + " of the game event " + event->id + " is above the limit of "
+                      + std::to_string(kRewardTableRolls) + " rolls of a loot table (the task waits)");
+            }
             break;
         case task_type::kTriggerArea:
             triggers.push_back(task.targetTag);

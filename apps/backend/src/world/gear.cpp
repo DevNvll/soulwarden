@@ -580,7 +580,7 @@ void Gear::perk_status(Entity& attacker, Entity& target, std::string_view status
                 // The nearest creature to the last one, with no wall between them.
                 float best = spell->radius;
                 const Entity* next = nullptr;
-                m_world.for_each_near(from, spell->radius, [&](Entity& entity) {
+                m_world.for_each_near(target.space, from, spell->radius, [&](Entity& entity) {
                     if (entity.kind != EntityKind::creature || entity.creature.dead || entity.creature.immune() || hit_.count(entity.id) != 0) {
                         return;
                     }

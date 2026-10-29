@@ -96,7 +96,8 @@ World::World(const WorldClock& clock,
       m_encounters(*this, options.encounterData),
       m_persons(*this, options.conversationData),
       m_missions(*this, store, options.missionData),
-      m_presets(*this, project_presets()) {
+      m_presets(*this, project_presets()),
+      m_instances(*this, store, options.gameModes) {
     m_random = options.randomSeed;
     m_quests.set_pois(options.poiData);
     m_quests.set_triggers(options.triggerData);
@@ -176,6 +177,8 @@ void World::tick() {
         m_encounters.tick();
         // The characters with a person conversation whose bits changed: the presence of the person (stage 2.5c; one look each).
         m_persons.tick();
+        // Stage DG1: the member rows of an earlier start at the first tick (a backend stop ends each instance).
+        m_instances.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -288,7 +291,7 @@ Entity& World::make_entity(const state::Character& character) {
         entity.changed[key] = revision;
     }
     m_characters[entity.characterId] = entity.id;
-    m_index.insert(entity.id, entity.position);
+    m_index.insert(entity.id, entity.space, entity.position);
     // The entitlements and the achievements of the DLC (stage 1.1b), before the first record: the client reads the
     // expansion of the character before its level window and its mastery tree. After the insert of the entity: the
     // reward item of a DLC pack goes into the bag of the entity.
@@ -321,7 +324,11 @@ void World::remove_entity(EntityId id) {
         return;
     }
     Entity& entity = found->second;
-    m_index.erase(id, entity.position);
+    // Stage DG1 (decision D9): a member of an instance leaves it with its entity: its row goes, and its position row has the return place.
+    if (entity.kind == EntityKind::player && entity.space != kMainSpace) {
+        m_instances.character_left(entity);
+    }
+    m_index.erase(id, entity.space, entity.position);
     // The committed interaction of a character ends with its entity (stage 2.5a: the users of the object).
     if (entity.kind == EntityKind::player) {
         m_interactions.left(entity);
@@ -459,6 +466,8 @@ EnterResult World::enter(SessionId session,
                          const std::string& characterId,
                          const std::string& personaId) {
     EnterResult result;
+    // Stage DG1: the member rows of an earlier start go first: the row of the character has its return place.
+    m_instances.recover();
     const auto character = m_store.find_character(characterId);
     if (!character) {
         log::write("world: no character %s in the store: session s%u does not enter", characterId.c_str(), session);
@@ -517,9 +526,10 @@ bool World::leave(SessionId session) {
     }
     // The sequence of the basic attacks of the character goes away with its entity (stage 3.3b-M1).
     m_combat.forget_sequence(entity->characterId);
-    if (entity->life.dead) {
+    if (entity->life.dead && entity->space == kMainSpace) {
         // A dead character is not dead at its next world entry: its row gets its respawn
-        // place, and each world entry starts with the full health (world/health.h).
+        // place, and each world entry starts with the full health (world/health.h). Stage DG1: in an instance the row has the return
+        // place (the exit of remove_entity).
         const RespawnPlace respawn = m_health.respawn_place(*entity);
         const std::string mark = log::session_mark(entity->owner, entity->characterId);
         const log::Context context(mark);
@@ -547,7 +557,7 @@ SpawnError World::spawn_character(const std::string& characterId, const state::W
         return SpawnError::unknownCharacter;
     }
     Entity& entity = make_entity(*character);
-    m_index.move(entity.id, entity.position, position);
+    m_index.move(entity.id, entity.space, entity.position, position);
     entity.position = position;
     entity.positionEstimated = false;
     log::write("world: entity %016llx of character %s has no session, position %.2f %.2f %.2f",
@@ -580,12 +590,13 @@ bool World::remove_character(const std::string& characterId, LostCause cause) {
     return true;
 }
 
-Entity& World::make_creature(const Creature& creature, const state::WorldPosition& position, float health) {
+Entity& World::make_creature(const Creature& creature, const state::WorldPosition& position, float health, SpaceId space) {
     const ActorId actor = m_ids.next(ActorKind::otherEntity);
     Entity& entity = m_entities[entity_group_id(actor)];
     entity.id = entity_group_id(actor);
     entity.actor = actor;
     entity.kind = EntityKind::creature;
+    entity.space = space;
     entity.creature = creature;
     entity.name = creature.kind->name.empty() ? creature.kind->id : creature.kind->name;
     entity.position = position;
@@ -597,7 +608,7 @@ Entity& World::make_creature(const Creature& creature, const state::WorldPositio
     for (const ComponentKey key : kCreatureComponents) {
         entity.changed[key] = revision;
     }
-    m_index.insert(entity.id, entity.position);
+    m_index.insert(entity.id, entity.space, entity.position);
     log::write("world: creature %016llx (actor %s) of the kind %s, level %u, health %.1f, at %.2f %.2f %.2f%s",
                static_cast<unsigned long long>(entity.id),
                actor_text(entity.actor).c_str(),
@@ -615,7 +626,7 @@ void World::place_creature(Entity& entity, const state::WorldPosition& position)
     if (entity.kind != EntityKind::creature || !valid_position(position)) {
         return;
     }
-    m_index.move(entity.id, entity.position, position);
+    m_index.move(entity.id, entity.space, entity.position, position);
     entity.position = position;
     entity.positionRevision = ++m_revision;
 }
@@ -627,8 +638,8 @@ void World::remove_creature(EntityId id) {
     }
 }
 
-Entity* World::make_probe(const ProbeBody& body, const state::WorldPosition& position, std::vector<RawFragment> fragments) {
-    if (!valid_position(position)) {
+Entity* World::make_probe(const ProbeBody& body, const state::WorldPosition& position, std::vector<RawFragment> fragments, SpaceId space) {
+    if (!valid_position(position) || !has_space(space)) {
         return nullptr;
     }
     // An actor id of the command (a level placement) must not be the id of an entity of the world.
@@ -640,6 +651,7 @@ Entity* World::make_probe(const ProbeBody& body, const state::WorldPosition& pos
     entity.id = entity_group_id(actor);
     entity.actor = actor;
     entity.kind = EntityKind::probe;
+    entity.space = space;
     entity.probe = body;
     entity.name = "probe";
     entity.position = position;
@@ -650,7 +662,7 @@ Entity* World::make_probe(const ProbeBody& body, const state::WorldPosition& pos
         fragment.changed = revision;
     }
     entity.rawFragments = std::move(fragments);
-    m_index.insert(entity.id, entity.position);
+    m_index.insert(entity.id, entity.space, entity.position);
     log::write("world: DEVELOPMENT COMMAND: probe entity %016llx (actor %s) at %.2f %.2f %.2f with %zu fragment(s)",
                static_cast<unsigned long long>(entity.id),
                actor_text(entity.actor).c_str(),
@@ -661,12 +673,13 @@ Entity* World::make_probe(const ProbeBody& body, const state::WorldPosition& pos
     return &entity;
 }
 
-Entity& World::make_spell(const SpellBody& body, const state::WorldPosition& position) {
+Entity& World::make_spell(const SpellBody& body, const state::WorldPosition& position, SpaceId space) {
     const ActorId actor = m_ids.next(ActorKind::otherEntity);
     Entity& entity = m_entities[entity_group_id(actor)];
     entity.id = entity_group_id(actor);
     entity.actor = actor;
     entity.kind = EntityKind::spell;
+    entity.space = space;
     entity.spell = body;
     entity.name = body.spellId;
     entity.position = position;
@@ -676,16 +689,17 @@ Entity& World::make_spell(const SpellBody& body, const state::WorldPosition& pos
         entity.changed[key] = revision;
     }
     m_lastSpell = revision;
-    m_index.insert(entity.id, entity.position);
+    m_index.insert(entity.id, entity.space, entity.position);
     return entity;
 }
 
-Entity& World::make_projectile(const ProjectileBody& body, const state::WorldPosition& position) {
+Entity& World::make_projectile(const ProjectileBody& body, const state::WorldPosition& position, SpaceId space) {
     const ActorId actor = m_ids.next(ActorKind::otherEntity);
     Entity& entity = m_entities[entity_group_id(actor)];
     entity.id = entity_group_id(actor);
     entity.actor = actor;
     entity.kind = EntityKind::projectile;
+    entity.space = space;
     entity.shot = body;
     entity.name = "projectile";
     entity.position = position;
@@ -694,7 +708,7 @@ Entity& World::make_projectile(const ProjectileBody& body, const state::WorldPos
     entity.changed[ComponentKey::metadata] = revision;
     entity.changed[ComponentKey::projectile] = revision;
     m_lastProjectile = revision;
-    m_index.insert(entity.id, entity.position);
+    m_index.insert(entity.id, entity.space, entity.position);
     return entity;
 }
 
@@ -709,13 +723,14 @@ void World::place_projectile(Entity& entity, const state::WorldPosition& positio
     if (entity.kind != EntityKind::projectile || !valid_position(position)) {
         return;
     }
-    m_index.move(entity.id, entity.position, position);
+    m_index.move(entity.id, entity.space, entity.position, position);
     entity.position = position;
 }
 
 std::uint16_t World::territory_of(const Entity& entity) const {
     const gamedata::PoiData* data = m_options.poiData;
-    return data != nullptr && data->loaded() ? data->territory_at(entity.position.x, entity.position.y) : 0;
+    // Stage DG1: the territories are areas of the main world: an entity in an instance is in none (research dungeons.md, open problem P6).
+    return data != nullptr && data->loaded() && entity.space == kMainSpace ? data->territory_at(entity.position.x, entity.position.y) : 0;
 }
 
 std::array<float, 3> World::velocity_of(const Entity& entity) const {
@@ -739,7 +754,7 @@ void World::place_spell(Entity& entity, const state::WorldPosition& position) {
     if (entity.position.x == position.x && entity.position.y == position.y && entity.position.z == position.z) {
         return;
     }
-    m_index.move(entity.id, entity.position, position);
+    m_index.move(entity.id, entity.space, entity.position, position);
     entity.position = position;
     entity.positionRevision = ++m_revision;
 }
@@ -776,7 +791,7 @@ Entity& World::make_object(const ObjectBody& body, const ActorId& actor, const s
     entity.positionRevision = revision;
     entity.changed[ComponentKey::metadata] = revision;
     entity.changed[ComponentKey::interact] = revision;
-    m_index.insert(entity.id, entity.position);
+    m_index.insert(entity.id, entity.space, entity.position);
     log::write("world: object entity %016llx (actor %s) of the interaction data, %zu bound(s), at %.2f %.2f %.2f",
                static_cast<unsigned long long>(entity.id), actor_text(entity.actor).c_str(), body.bounds.size(),
                static_cast<double>(position.x), static_cast<double>(position.y), static_cast<double>(position.z));
@@ -798,7 +813,7 @@ Entity& World::spawn_object(const ObjectBody& body, const state::WorldPosition& 
                                    ComponentKey::interact}) {
         entity.changed[key] = revision;
     }
-    m_index.insert(entity.id, entity.position);
+    m_index.insert(entity.id, entity.space, entity.position);
     return entity;
 }
 
@@ -847,7 +862,7 @@ Entity* World::make_encounter(const EncounterBody& body, const state::WorldPosit
     for (const ComponentKey key : kEncounterComponents) {
         entity.changed[key] = revision;
     }
-    m_index.insert(entity.id, entity.position);
+    m_index.insert(entity.id, entity.space, entity.position);
     return &entity;
 }
 
@@ -982,8 +997,10 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     // The row gets the new place first: a travel shows in the entity and in the session only
     // when its row is written. With a write that failed, the row has the old place, and the
     // next world entry of the character would be there. Such a travel changes nothing: the
-    // caller gets the error and can do the command again.
-    if (!m_store.set_character_position(entity->characterId, position)) {
+    // caller gets the error and can do the command again. Stage DG1: a travel in an instance moves the character in its space, and the
+    // row keeps the main world position (the return place).
+    const bool mainWorld = entity->space == kMainSpace;
+    if (mainWorld && !m_store.set_character_position(entity->characterId, position)) {
         const std::string mark = log::session_mark(entity->owner, entity->characterId);
         const log::Context context(mark);
         log::write("world: no travel of character %s (%s) to %.2f %.2f %.2f: the database did not accept the position, "
@@ -1002,7 +1019,9 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     place(*entity, position, true, false);
     // The position of the entity is the position of the row: a session that ends now saves
     // nothing, and the row has the new place, not the old one.
-    entity->savedPosition = position;
+    if (mainWorld) {
+        entity->savedPosition = position;
+    }
     entity->positionDirty = false;
     m_dirtyPositions.erase(entity->id);
     entity->lastSave = m_clock.now();
@@ -1034,7 +1053,9 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
                    static_cast<double>(position.z),
                    static_cast<double>(travel.distance),
                    static_cast<unsigned>(entity->teleport));
-        log::write("rep: position %.2f %.2f %.2f saved", position.x, position.y, position.z);
+        if (mainWorld) {
+            log::write("rep: position %.2f %.2f %.2f saved", position.x, position.y, position.z);
+        }
     }
     // The basic attack of the character ends with the travel (stage 3.3b-M1), and its aim of an ability (code review of stage 3.3b-S6,
     // finding S6-R8: a confirm after the travel would use the place before it).
@@ -1056,6 +1077,130 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     result.entity = entity;
     result.distance = travel.distance;
     return result;
+}
+
+SpaceMoveError World::move_to_space(const std::string& characterId, SpaceId space, const state::WorldPosition& place) {
+    Entity* entity = find_character(characterId);
+    if (entity == nullptr) {
+        return SpaceMoveError::notInWorld;
+    }
+    if (!has_space(space)) {
+        return SpaceMoveError::noSpace;
+    }
+    if (entity->space == space) {
+        return SpaceMoveError::sameSpace;
+    }
+    if (!travel_position(place)) {
+        return SpaceMoveError::badPosition;
+    }
+    const SpaceId from = entity->space;
+    const state::WorldPosition before = entity->position;
+    // What the character does in the old space ends there (the rules of a travel, and the effects that are entities of the old space).
+    m_combat.end_sequence(entity->characterId, SequenceEnd::travel);
+    m_abilities.cancel_aim(entity->characterId);
+    m_stamina.interrupted(entity->characterId, "a change of the space");
+    m_interactions.traveled(*entity);
+    m_persons.traveled(*entity);
+    m_spells.caster_left(entity->id);
+    m_spells.target_left(entity->id);
+    m_spells.member_left(*entity);
+    m_projectiles.caster_left(entity->id);
+    // An encounter of the old space loses the character as after a travel: out of its detector, its link goes after the grace time.
+    // The cells of the old space, then the cells of the new one. The place is a place on the ground: the client gets it with the spawn
+    // lift (an estimated position), and its next accepted position report is the exact position.
+    m_index.erase(entity->id, from, entity->position);
+    entity->space = space;
+    entity->position = place;
+    m_index.insert(entity->id, space, place);
+    entity->positionEstimated = true;
+    entity->moving = false;
+    entity->positionRevision = ++m_revision;
+    entity->velocity = {0.0F, 0.0F, 0.0F};
+    entity->velocitySampleAt = WorldClock::time_point{};
+    // The row is the work of the caller (the instance system: the return place). The save rule writes no position of an instance space;
+    // in the main world the place of the return is the position of the row.
+    entity->positionDirty = false;
+    m_dirtyPositions.erase(entity->id);
+    entity->lastSave = m_clock.now();
+    if (space == kMainSpace) {
+        entity->savedPosition = place;
+    }
+    // The next teleport number, as for a travel (the client of the owner gets a new client context and then the full movement state).
+    const auto sink = entity->owner != 0 ? m_sinks.find(entity->owner) : m_sinks.end();
+    const std::optional<std::uint8_t> known =
+        sink != m_sinks.end() && sink->second != nullptr ? sink->second->client_teleport() : std::nullopt;
+    entity->teleport = static_cast<std::uint8_t>(known.value_or(entity->teleport) % 15 + 1);
+    entity->changed[ComponentKey::movement] = m_revision;
+    // Each session that observes the character compares its interest at once: a session of the old space sends the stop.
+    m_lastTravel = m_revision;
+    const SpaceLevel* level = level_of(space);
+    const Instance* instance = m_instances.instance_of_space(space);
+    {
+        const std::string mark = log::session_mark(entity->owner, entity->characterId);
+        const log::Context context(mark);
+        log::write("world: space change of character %s (%s): from space %u at %.2f %.2f %.2f to space %u (%s, instance %llu) at %.2f %.2f "
+                   "%.2f, teleport number %u",
+                   entity->characterId.c_str(), entity->name.c_str(), from, static_cast<double>(before.x), static_cast<double>(before.y),
+                   static_cast<double>(before.z), space, level != nullptr ? level->level.c_str() : "no level",
+                   static_cast<unsigned long long>(instance != nullptr ? instance->id : 0), static_cast<double>(place.x),
+                   static_cast<double>(place.y), static_cast<double>(place.z), static_cast<unsigned>(entity->teleport));
+    }
+    // The creatures and the encounters of the new space (the main world after a return) look in this tick, and no creature takes the
+    // character at once.
+    m_creatures.scan_soon();
+    m_encounters.scan_soon();
+    m_creatures.behavior().shelter(*entity, entity->owner != 0);
+    // The place tasks of the quests, the LootTracker, and the bag selection look at the new place.
+    m_quests.moved(*entity);
+    m_chests.moved(*entity);
+    m_lootBags.moved(*entity);
+    if (sink != m_sinks.end() && sink->second != nullptr) {
+        SpaceChange change;
+        change.from = from;
+        change.to = space;
+        change.place = place;
+        change.level = level != nullptr ? *level : SpaceLevel{};
+        change.instance = instance != nullptr ? instance->id : 0;
+        sink->second->space_changed(change);
+    }
+    return SpaceMoveError::none;
+}
+
+std::size_t World::clear_space(SpaceId space) {
+    if (space == kMainSpace) {
+        return 0;
+    }
+    std::vector<EntityId> ids;
+    m_index.for_each_in_space(space, [&](EntityId id) { ids.push_back(id); });
+    std::size_t removed = 0;
+    for (const EntityId id : ids) {
+        const Entity* entity = find(id);
+        if (entity == nullptr || entity->kind == EntityKind::player) {
+            continue; // A character leaves a space only through move_to_space or with its entity.
+        }
+        const EntityKind kind = entity->kind;
+        if (kind == EntityKind::probe) {
+            removed += remove_probe(id) ? 1 : 0;
+        } else if (kind == EntityKind::spell) {
+            remove_spell(id);
+            ++removed;
+        } else if (kind == EntityKind::projectile) {
+            continue; // A projectile ends with its flight (its source is a creature, and this stage has none in an instance).
+        } else if (kind == EntityKind::creature) {
+            remove_creature(id);
+            ++removed;
+        } else {
+            remove_entity(id);
+            ++removed;
+        }
+    }
+    return removed;
+}
+
+std::size_t World::space_entity_count(SpaceId space) const {
+    std::size_t count = 0;
+    m_index.for_each_in_space(space, [&](EntityId) { ++count; });
+    return count;
 }
 
 PositionVerdict World::report_position(SessionId session, const PositionReport& report, PositionTrack& track) {
@@ -1122,7 +1267,7 @@ void World::place(Entity& entity, const state::WorldPosition& position, bool est
             entity.velocityAt = now;
         }
     }
-    m_index.move(entity.id, entity.position, position);
+    m_index.move(entity.id, entity.space, entity.position, position);
     entity.position = position;
     entity.positionEstimated = estimated;
     entity.positionRevision = ++m_revision;
@@ -1229,6 +1374,12 @@ void World::set_raw_fragment(EntityId id, std::uint32_t slot, std::uint32_t type
 bool World::save_position(Entity& entity, float minimumDistance) {
     entity.lastSave = m_clock.now();
     if (!entity.positionDirty) {
+        return false;
+    }
+    if (entity.space != kMainSpace) {
+        // Stage DG1: the row of a character in an instance keeps the main world position (its return place).
+        entity.positionDirty = false;
+        m_dirtyPositions.erase(entity.id);
         return false;
     }
     if (entity.savedPosition) {

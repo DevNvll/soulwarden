@@ -499,7 +499,7 @@ ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, Attack
             const std::optional<float> touch = sweep(launch.origin, far, capsule, radius);
             bool first = touch.has_value();
             if (first) {
-                m_world.for_each_near(along(launch.origin, far, 0.5F), range * 0.5F + reach() + radius, [&](Entity& other) {
+                m_world.for_each_near(target->space, along(launch.origin, far, 0.5F), range * 0.5F + reach() + radius, [&](Entity& other) {
                     if (other.id == target->id || other.kind != EntityKind::creature || other.creature.dead || other.creature.immune()) {
                         return;
                     }
@@ -922,7 +922,7 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
         const state::WorldPosition middle = along(projectile.position, end, 0.5F);
         const float range = distance3(projectile.position, end) * 0.5F + reach() + attack.radius + projectile_rules::kHitTolerance;
         std::vector<EntityId> candidates;
-        m_world.for_each_near(middle, range, [&](Entity& entity) {
+        m_world.for_each_near(caster->space, middle, range, [&](Entity& entity) {
             if (entity.kind == EntityKind::creature && !entity.creature.dead && !entity.creature.immune()) {
                 candidates.push_back(entity.id);
             } else if (projectile.characters && entity.kind == EntityKind::player && entity.id != projectile.caster && !entity.life.dead) {
@@ -1043,7 +1043,8 @@ std::optional<std::uint64_t> Projectiles::launch_creature(const CreatureShot& sh
     body.origin = shot.origin;
     body.velocity = flight.velocity;
     body.launched = now;
-    flight.entity = m_world.make_projectile(body, shot.origin).id;
+    const Entity* shooter = m_world.find(shot.creature);
+    flight.entity = m_world.make_projectile(body, shot.origin, shooter != nullptr ? shooter->space : kMainSpace).id;
     ++m_creatureCounts.launches;
     const Entity* aimed = shot.aimedAt != 0 ? m_world.find(shot.aimedAt) : nullptr;
     log::write("world: projectile %llu: creature %016llx (%s) shoots %s/%s (row %s, %s) at %s from %.2f %.2f %.2f to %.3f %.3f %.3f at "
@@ -1152,7 +1153,7 @@ bool Projectiles::fly(CreatureFlight& flight, WorldClock::time_point now) {
         const state::WorldPosition middle = along(flight.position, end, 0.5F);
         const float range = distance3(flight.position, end) * 0.5F + reach + release.radius;
         std::vector<EntityId> candidates;
-        m_world.for_each_near(middle, range, [&](Entity& entity) {
+        m_world.for_each_near(creature->space, middle, range, [&](Entity& entity) {
             if (entity.kind == EntityKind::player && !entity.life.dead && !m_world.creatures().behavior().ignores(entity.characterId)
                 && std::find(flight.passed.begin(), flight.passed.end(), entity.id) == flight.passed.end()) {
                 candidates.push_back(entity.id);

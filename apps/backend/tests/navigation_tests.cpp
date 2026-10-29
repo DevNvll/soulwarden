@@ -1052,7 +1052,7 @@ void footing_when_the_data_comes(const Options& options) {
     clock.advance(std::chrono::milliseconds(10));
     world.tick();
     std::vector<world::Entity*> made;
-    world.for_each_near(at(1006.0F, 1003.0F), 20.0F, [&](world::Entity& entity) {
+    world.for_each_near(world::kMainSpace, at(1006.0F, 1003.0F), 20.0F, [&](world::Entity& entity) {
         if (entity.kind == world::EntityKind::creature) {
             made.push_back(&entity);
         }

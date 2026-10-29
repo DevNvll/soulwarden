@@ -113,6 +113,11 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
   and attacks in its reach. Without the height files and with no navigation data no
   creature leaves its place.
 
+### Instances (stage DG1)
+
+- Stage DG1 ([Instances](instances.md)): the navigation data is the data of the main world: the tiles that the backend keeps are the
+  tiles near the characters of the main world; a character in an instance needs none [agent].
+
 ## Commands
 
 ```sh

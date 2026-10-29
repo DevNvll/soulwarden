@@ -51,6 +51,11 @@ protocol notes (sections 2.1, 2.2, and 3.4).
   0 is not known]. Thus the menu shows no weapon, no shield, no jewelry, no tool, and no item of the bag [client code
   0x673EE40]. A character of the creation shows the armor of its archetype that it has, and no helmet: the backstory gives
   the head item with the quantity 0 (before stage U4 the menu showed the helmet of the stored creation data).
+- The world entry (stage DG1, [Instances](instances.md)): the level information of a session has the level of the space of the entity of
+  its character (the main world, or the instance of a session that took the entity of a character in an instance), and the version and
+  the context instance of the account rule of the game server (the first entry of an account in a backend process: the values of the
+  session id, the stored bytes of case T2). A character whose session ended in an instance enters at its return place in the main world
+  (decision D9), and a backend stop ends each instance (the next start puts each character of a member row at its return place).
 - More than one player and the cost (MP-1, MP-8): the route reads the store only (the inventory system writes the rows of a
   change before it changes the entity, thus the rows are the equipment of the entity, also while the character is in the
   world): for each character of the account one level query and one item query (the slots 0 to 4 of the paperdoll, on the
