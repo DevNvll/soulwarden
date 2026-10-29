@@ -37,6 +37,11 @@ compares the status and the output file of each case:
     slice; the mode of a swap person is its state child (Healthy hideWhen, Depleted showWhen, another state: a cause); of two
     controllers the one of the NPC entity decides; a person below a nested spawner, of a dungeon level script, of a spawner with no init,
     and of another world is no object and is in personsApart with its cause.
+  - stage QG6a (format 5): the town project board of the settlement (a PrefabSpawner child with an ObjectiveProvider whose
+    m_isCommunityGoalBoard is 1, a PositionInTheWorld component, a TerritoryInterface component, and a bound with OpenMissionBoardOption)
+    is an object that the client makes: the client id of its place (the rule of a person child), the actor G and 8 zero bytes, the XOR
+    rule for its bound, and the member board (the slot of its TerritoryInterface, its provider flags, the spawner); it is not in
+    "spawned". A board whose provider is not a community board and a board of a client-authoritative spawner are no board object.
 The test program of the backend runs it (cases IT10, IR5, RY6 to RY8, NC1).
 
 Usage: check_interactions_tool.py [WORK_FOLDER] [--review | --review-stations | --persons]
@@ -95,6 +100,11 @@ BAG_ASSET = (uuid.UUID("0a0b0c0d-0000-4000-8000-0000000000e4").bytes, 2)
 BAG_ROOT, BAG_KILL_DELAY, BAG_FAST_DELAY, BAG_HIDE_DELAY, BAG_KILL_SELF, BAG_MESH, BAG_STORAGE, BAG_INTERACT_ENTITY = (
     0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007)
 BAG_INTERACT = 0x8100
+# Stage QG6a: the town project board of the settlement (the parts of slices/pois/signage/town_project_board: research mission-boards.md 2.1).
+BOARD_SLICE = "slices/test/town_project_board.dynamicslice"
+BOARD_ASSET = (uuid.UUID("0a0b0c0d-0000-4000-8000-0000000000e5").bytes, 2)
+BOARD_SPAWNER_ENTITY, BOARD_ROOT, BOARD_INTERACTION, BOARD_INTERACT, BOARD_TERRITORY, BOARD_PROVIDER = (
+    0x2002, 0x3100, 0x3101, 0x6201, 0x6202, 0x6203)
 
 
 def element(name: str | int | None, value: bytes | None = None, children: list | None = None,
@@ -192,6 +202,22 @@ def station_slice(key: str) -> list[Element]:
         entity(STATION_BOUND, "InteractBound", [transform(FUNCTIONAL, (1.0, 0.0, 0.25)),
                                                 interact(["OpenCraftingOption"], slot=4, identifier=STATION_INTERACT, option_entity=FUNCTIONAL)]),
         entity(FORGE_SPAWNER, "Forge", [transform(STATION_ROOT, (0.0, 0.0, 0.0)), spawner(VISUAL_ASSET, False, True)]),
+    ])]
+
+
+def board_slice(community: bool) -> list[Element]:
+    """The town board (stage QG6a): Position slot 1 on the root; the Interaction entity with the bound (slot 2), the TerritoryInterface
+    (slot 3), and the ObjectiveProvider (no slot) with m_isCommunityGoalBoard."""
+    return [element(None, children=[
+        entity(BOARD_ROOT, "Town_Project_Board", [transform(NO_ENTITY, (0.0, 0.0, 0.0)),
+                                                  component(getattr(tool, "POSITION_CLASS", uuid.UUID(int=3)), 0x6200, 1, [])]),
+        entity(BOARD_INTERACTION, "Interaction", [
+            transform(BOARD_ROOT, (0.0, -0.9, 0.0)),
+            interact(["OpenMissionBoardOption"], slot=2, identifier=BOARD_INTERACT, option_entity=BOARD_INTERACTION),
+            component(getattr(tool, "TERRITORY_INTERFACE_CLASS", uuid.UUID(int=7)), BOARD_TERRITORY, 3, []),
+            component(getattr(tool, "PROVIDER_CLASS", uuid.UUID(int=8)), BOARD_PROVIDER, 0, [
+                element("m_isCommunityGoalBoard", b"\x01" if community else b"\x00"), element("m_useTerritoryId", b"\x01"),
+                element("m_editorProvidedMissionTypes", children=[]), element("m_disablePvpMissions", b"\x00")])]),
     ])]
 
 
@@ -310,7 +336,11 @@ class MadeUpSources:
                 entity(ROOT, "Settlement", [transform(NO_ENTITY, (0.0, 0.0, 0.0))]),
                 entity(SPAWNER_ENTITY, "Public_Blacksmith", [transform(ROOT, (5.0, 0.0, 0.0)),
                                                               spawner(STATION_ASSET, mode == "spawner-client", False)]),
+                # Stage QG6a: the town board at (0, 5, 0) of the settlement, at (1035, 2000, 50) in the world.
+                entity(BOARD_SPAWNER_ENTITY, "Town_Project_Board", [transform(ROOT, (0.0, 5.0, 0.0)),
+                                                                     spawner(BOARD_ASSET, mode == "board-client", True)]),
             ])],
+            BOARD_SLICE: board_slice(mode != "board-not-community"),
             STATION_SLICE: station_slice("Carpentry2" if mode == "station-no-row" else "Blacksmith5"),
             VISUAL_SLICE: [element(None, children=[entity(0x5000, "Forge", [transform(NO_ENTITY, (0.0, 0.0, 0.0)),
                                                                            component(getattr(tool, "POSITION_CLASS", uuid.UUID(int=3)), 0x5100, 1, [])])])],
@@ -355,7 +385,7 @@ class MadeUpSources:
             return [element(None, children=[option_row("ReadLore", 47, True), option_row("AddLoreToJournal", 50, False),
                                             option_row("OpenConversation", 63, True), option_row("OpenCraftingOption", 20, True),
                                             option_row("Trigger", 33, True, 5.0), option_row("TakeAllOption", 28, True),
-                                            option_row("OpenStorageOption", 26, True)])]
+                                            option_row("OpenStorageOption", 26, True), option_row("OpenMissionBoardOption", 51, True)])]
         if path == getattr(tool, "CRAFTING_STATIONS", None):
             # The crafting station database: one row (its name and its crafting types).
             return [element(None, children=[element(None, children=[text("Name", "Blacksmith5"),
@@ -395,6 +425,8 @@ CASES = [
     ("bag-missing", False, "a loot container slice with no source (stage 3.5b.2)"),
     ("bag-no-lifetime", False, "a loot container with no delayed event that starts at the init (stage 3.5b.2)"),
     ("bag-shared", False, "a loot container with no player-unique Storage: not a personal bag (stage 3.5b.2)"),
+    ("board-not-community", True, "a board whose ObjectiveProvider is not a community board: no board object (stage QG6a)"),
+    ("board-client", True, "a board of a client-authoritative spawner: no board object (stage QG6a)"),
 ]
 # The cases of the code review of stage 2.5a (--review, case IR5).
 REVIEW_CASES = [
@@ -407,11 +439,17 @@ REVIEW_CASES = [
 ]
 
 
+def stage_25a_objects(document: dict) -> list[dict]:
+    """@return The objects of the file that are not a mission board (stage QG6a): the objects of the checks of stage 2.5a."""
+    return [entry for entry in document["objects"] if entry["kind"] != "missionBoard"]
+
+
 def check_valid(document: dict) -> bool:
     objects = {entry["key"]: entry for entry in document["objects"]}
     page = objects.get(PAGE_ID)
     person = objects.get(PERSON_ID)
-    if page is None or person is None or len(objects) != 2:
+    # Stage QG6a: the third object is the town board of the settlement (check_board).
+    if page is None or person is None or len(objects) != 3:
         return False
     bound = page["bounds"][0]
     k = ROOT ^ PAGE_GROUP
@@ -425,9 +463,40 @@ def check_valid(document: dict) -> bool:
             and bound["rangeSq"] == 25.0 and abs(x - 999.0) < 1e-3 and abs(y - 2000.0) < 1e-3 and abs(z - 50.5) < 1e-3
             and document["achievements"][bound["lore"]] == ["Lore_unlock_00_Test_Title_01", 2032]
             and document["options"][names.index("AddLoreToJournal")]["committed"] is False
-            and document["counts"]["placements"] == 5 and document["counts"]["objects"] == 2
+            and document["counts"]["placements"] == 5 and document["counts"]["objects"] == 3
             and any("PLOT" in cause for cause in document["excluded"]) and not document["unresolved"] and check_station(document)
-            and check_bag(document))
+            and check_bag(document) and check_board(document))
+
+
+def check_board(document: dict, present: bool = True) -> bool:
+    """@return True when the town board of the settlement is an object that the client makes, with the client id of its place and its
+    member board (stage QG6a, format 5), or (present False) when the file has no board object. A board is never in "spawned"."""
+    boards = [entry for entry in document.get("objects", []) if entry["kind"] == "missionBoard"]
+    spawned = [child for child in document.get("spawned", []) if document["templates"][child["template"]]["kind"] == "missionBoard"]
+    if document.get("format") != tool.FORMAT or spawned:
+        return False
+    if not present:
+        return not boards and document["counts"].get("boards") is None
+    if len(boards) != 1:
+        return False
+    board = boards[0]
+    # The settlement placement turns by 90 degrees: the spawner at (0, 5, 0) is at (1035, 2000, 50) with the yaw 90.
+    group = tool.child_groups(1035.0, 2000.0, 50.0, 90.0, BOARD_ASSET[0])[0]
+    k = BOARD_ROOT ^ group
+    x, y, z = board["position"]
+    bound = board["bounds"][0] if len(board["bounds"]) == 1 else {}
+    names = [document["options"][index]["name"] for index, _ in bound.get("options", [])]
+    target = ((BOARD_INTERACTION ^ k) + BOARD_INTERACT) & 0xFFFFFFFFFFFFFFFF
+    return (board["key"] == f"{SETTLEMENT_ID}/{BOARD_SPAWNER_ENTITY:016x}" and board["slice"] == BOARD_SLICE
+            and board["asset"] == BOARD_ASSET[0].hex() and board["actor"] == (group.to_bytes(8, "little") + bytes(8)).hex()
+            and abs(x - 1035.0) < 1e-3 and abs(y - 2000.0) < 1e-3 and abs(z - 50.0) < 1e-3 and board["assembly"] is None
+            and board.get("board") == {"territory": 3, "provider": {"communityGoal": True, "useTerritoryId": True, "missionTypes": [],
+                                                                   "pvpDisabled": False}, "spawner": SETTLEMENT_ID}
+            and bound.get("slot") == 2 and bound.get("target") == f"{target:016x}" and names == ["OpenMissionBoardOption"]
+            and bound["options"][0][1] == f"{BOARD_INTERACTION ^ k:016x}" and document["counts"].get("boards") == 1
+            and document["counts"]["spawnedByKey"].get("missionBoard") is None
+            # The made-up sources have no region file: the board has no landmark, thus no territory and no claim (counted).
+            and document["counts"].get("boardsWithNoClaim") == 1)
 
 
 def check_bag(document: dict) -> bool:
@@ -447,9 +516,10 @@ def check_bag(document: dict) -> bool:
 
 def check_station(document: dict, resolved: bool = True) -> bool:
     """@return True when the station of the settlement, its template, the forge child, and the keg fixture are correct (stage 2.5b)."""
-    if document.get("format") != tool.FORMAT or len(document.get("spawned", [])) != 1:
+    stations = [child for child in document.get("spawned", []) if document["templates"][child["template"]]["kind"] != "missionBoard"]
+    if document.get("format") != tool.FORMAT or len(stations) != 1:
         return False
-    child = document["spawned"][0]
+    child = stations[0]
     station = document["templates"][child["template"]]
     x, y, z = child["position"]
     qx, qy, qz, qw = child["rotation"]
@@ -464,7 +534,7 @@ def check_station(document: dict, resolved: bool = True) -> bool:
             and abs(x - 1040.0) < 1e-3 and abs(y - 2005.0) < 1e-3 and abs(z - 50.0) < 1e-3
             and abs(qz - math.sqrt(0.5)) < 1e-4 and abs(qw - math.sqrt(0.5)) < 1e-4 and abs(qx) < 1e-6 and abs(qy) < 1e-6
             and station["slice"] == STATION_SLICE and station["asset"] == STATION_ASSET[0].hex() and station["kind"] == "craftingStation"
-            and station["root"] == f"{STATION_ROOT:016x}" and station["slots"] == {"position": 2, "buildable": 1, "ownership": 0, "vitals": 0}
+            and station["root"] == f"{STATION_ROOT:016x}" and station["slots"] == {"position": 2, "buildable": 1, "ownership": 0, "vitals": 0, "territory": 0}
             and station["buildableState"] == 5 and station["permissionRule"] == -1
             and station["assembly"] == {"key": "Blacksmith5" if resolved else "Carpentry2", "fee": True, "entity": f"{FUNCTIONAL:016x}",
                                         "component": f"{ASSEMBLY_COMPONENT:016x}", "resolved": resolved}
@@ -787,7 +857,7 @@ def main() -> int:
         tool.LOOT_CONTAINERS = {"personal": BAG_SLICE}
         return 0 if run_person_cases(work) == 0 else 1
     tool.Sources = MadeUpSources
-    every = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE, BAG_ASSET: BAG_SLICE}
+    every = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE, BAG_ASSET: BAG_SLICE, BOARD_ASSET: BOARD_SLICE}
     assets = dict(every)
     tool.Catalog = lambda data: SimpleNamespace(path=lambda asset: assets.get(asset), paths=assets)
     tool.FIXTURES = {"powderKeg": KEG_SLICE}
@@ -814,8 +884,10 @@ def main() -> int:
         document = json.loads(target.read_text(encoding="utf-8")) if written else {}
         correct = (status == 0 and written) if writes else (status == 1 and not written)
         if correct and mode == "valid":
-            # The control of --review needs only the objects of stage 2.5a: the same check runs on the tree of stage 2.5a.
-            correct = len(document["objects"]) == 2 if review else check_station(document) if stations else check_valid(document)
+            # The control of --review needs only the objects of stage 2.5a: the same check runs on the tree of stage 2.5a (stage QG6a: the
+            # town board of the settlement is not an object of stage 2.5a).
+            correct = (len(stage_25a_objects(document)) == 2 if review else check_station(document) if stations
+                       else check_valid(document))
         elif correct and mode == "unknown-option":
             bound = next(entry for entry in document["objects"] if entry["key"] == PAGE_ID)["bounds"][0]
             correct = bound.get("unknownOptions") == ["NoSuchOption"] and len(bound["options"]) == 2 and "option NoSuchOption" in document["unresolved"]
@@ -828,9 +900,11 @@ def main() -> int:
         elif correct and mode == "station-no-row":
             correct = check_station(document, resolved=False)
         elif correct and mode == "spawner-client":
-            correct = document.get("spawned") == [] and len(document["fixtures"]) == 1
+            correct = (not document.get("spawned") and check_board(document) and len(document["fixtures"]) == 1)
+        elif correct and mode in ("board-not-community", "board-client"):
+            correct = check_station(document) and check_board(document, present=False)
         elif correct and mode == "equal-placement":
-            correct = len(document["objects"]) == 2 and document["counts"]["placements"] == 6
+            correct = len(stage_25a_objects(document)) == 2 and document["counts"]["placements"] == 6
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""
         print(f"{'ok  ' if correct else 'FAIL'} {what}: status {status}, " + ("a file" if exists else "no file")
               + (f" ({message[:120]})" if not writes and message else ""))

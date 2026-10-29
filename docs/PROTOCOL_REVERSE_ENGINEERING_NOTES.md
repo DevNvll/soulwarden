@@ -7798,6 +7798,121 @@ bytes with the slot and the type (31): 37 90 41 03 07 00000000 00 00000000 71 00
 **What is not proved**: the message 467 (the client validation after a faction change) has no send site [static]; the PvP fields of
 the Faction state (group 1 other fields, group 3); the request 3817 (`RequestPurchaseRankIncrease`, the faction shops).
 
+### 4.64 The town mission board: the TerritoryInterface state, the open, the provider state, the accept 3819, the mission fields of the Objectives state, the hand-in 2461 (live proof of stage QG6a; static proof for the client code and the game data; the expiration, the projects of a town, the destination argument, and the projects of a seed are project rules)
+
+Research: the research of the boards (`~/Games/soulwarden/work/research/mission-boards.md`), the static read of the offers of stage QG6a
+(`~/Games/soulwarden/work/evidence/quests/qg6a/implement/static/offers/OFFERS.md`), the live runs of stage QG6a
+(`~/Games/soulwarden/work/evidence/quests/qg6a/implement/RESULT.md`). The addresses are image-relative (client build
+1.400.6031.6004151). The rules of the backend: [Mission boards](systems/mission-boards.md).
+
+**The board** is a child that the client makes itself (the spawner `Town_Project_Board` of the settlement, m_isClientAuthoratative
+false, m_spawnOnInitialize true): the client id of its place (client 0x6160B60, the rule of a person child) and the actor G and 8 zero
+bytes [data; live: the open 1589 of the board of Windsward names the object 95f0af0ac1092587 and the target 8750122fcacd363c, the values
+of this rule; a second board of the backend with an id of the allocator was not the board that the client opened]. The backend sends the
+board a record with that actor (the metadata state, the Interact state, the TerritoryInterface state). Its option `OpenMissionBoardOption`
+is the interaction action 51 (committed); the answer of the open is 3743 with result 1 [live].
+
+**The TerritoryInterface state** (slot 3 of `town_project_board`, type 1746, `MB::TerritoryInterfaceReplicatedState`) [static: the
+constructor 0x29E3F00, the apply 0x29FBEC0, the reader 0x2A0BB00 -> 0x29D5CC0; OFFERS.md section 5]. Three groups: group 0 the bools
+territoryFunctionalityDown and territoryRefsSet, group 1 field 0 territoryProgressionData,
+group 2 field 0 territoryGovernanceData. The backend writes group 1 field 0 only:
+
+```text
+activeCount:size { key:u8 projectId:u32 timeProjectEnds:u64 currentProgress:u32 }*
+completedCount:size  defaultProject: projectId:u32 end:u64 progress:u32  statusCount:size
+one always available project (key 6, CommunityProjectId, CRC-32 of the lower-case id):
+01 06 PPPPPPPP 0000000000000000 00000000 00 00000000 0000000000000000 00000000 00   (38 bytes)
+```
+
+- The town getter GetCurrentCommunityGoals 0x4955A90 asks the TerritoryInterface of the provider for this data (the ready predicate
+  +0x2AA, set by the apply when group 1 field 0 arrives) and runs the generator for each nonzero project of the active map. With no
+  state the board has no offer [static].
+- The town screen (`townprojects.luac`) lists a project only when `LandClaimRequestBus.GetTerritoryProgressionData(ClaimKey)` has it
+  in `activeProjects` (not cancelled), and it reads the details from the TerritoryInterface of the entity of the data node
+  `Hud.TerritoryGovernance.EntityId`: the board that the player opened (the writer 0x49592C0) [static: the scripts, LANDCLAIM.md]. With
+  the board states alone the screen opens and lists nothing [live].
+
+**The LandClaimManager state** (slot 2 of the world entity `slices/globalgde.dynamicslice`, asset F1855F94-8894-55D7-A6B0-D003EC278126
+sub id 2, type 3086, `MB::LandClaimManagerComponentReplicatedState`) [static: the constructor 0x2F75790, the readers of
+`static/landclaim/LANDCLAIM.md` and `static/landclaim-owner/OWNER.md` of the evidence of stage QG6a; live: the town screen lists the
+offers, and a travel into a territory with a claim has no fault]. One group of 18 fields. The fields of the claims are parallel full
+vectors (`00 hasVersion [version:size64] count:size` and one element for each claim). The backend writes these fields:
+
+| Field | Name | Element |
+| ---: | --- | --- |
+| 2 | replicatedClaimKeys | u16, the territory id |
+| 3 | replicatedConflictFaction | u8 (0) |
+| 4, 5, 7, 13 | the conflict lottery end, the conflict start, the darkness cycle end, the influence race start | u64 time point (0) |
+| 6 | replicatedDarknessThreshold | u32 (0) |
+| 9, 10, 11 | the influence of the three factions | u8 (0) |
+| 12 | replicatedGovernance | four f32 fees, isValid u8, failedToPayUpkeep u8 (18 zero bytes) |
+| 15 | replicatedProgression | `upgradeCount:size {category:u32 level:u8}* projectCount:size {projectId:u32 progressionType:u8 activeState:u32}* territoryLevel:u8` |
+| 16 | replicatedOwnerData | company id (16 raw bytes; 0: no company), company name (text), crest background u16 and color (4 f32), foreground u16 and color (4 f32), player name (text), faction u8, last claimed time u64 (63 zero bytes) |
+| 17 | replicatedWarDecThresholdMetFaction | u8 (0) |
+
+- The values of the enums: progressionType 6 AlwaysAvailable (1 Fortress, 2 Settlement, 3 Lifestyle, 4 WarPrep, 5 WeakenInvasion, 7
+  Event); activeState 0 Active (-1 None, 1 Completed, 2 Expired, 3 Cancelled, 4 Blocking) [static: LANDCLAIM.md section 1].
+- The getters find a claim by its key in field 2 and read the element of that index of another field with no length check (the owner
+  0x2F81310, the copy 0x2831BCF). A territory entry reads the owner at once (0x2A09BA0 -> 0x29FF700) [static: OWNER.md; live: with
+  fields 2 and 15 alone the client stopped at a territory entry, an access at 0x10 + index × 0xD0].
+- The backend sends no field 14 (the positions): a position makes the manager "available" (`Hud.LocalPlayer.IsLandClaimManagerAvailable`)
+  in the apply before the other fields are copied, and the map and HUD code then read more [static: 0x2F848A0; live: a fault].
+
+**The provider state** (slot 10 of the player slice, type 3829, `MB::ObjectiveInteractorReplicatedState`) [static: the constructor
+0x3A1B9E0]. One group, four fields:
+
+| Field | Name | Value | Reader |
+| ---: | --- | --- | --- |
+| 0 | objectiveProviderId | 16 raw bytes: the provider identity of the board, the actor id of the Claim landmark of its territory (Windsward: `4b657e1a68e06c9f0000000000000000`; not the actor of the board) | 0x279E260 |
+| 1 | expirationTime | u64 big-endian, the server clock in nanoseconds (the clock of 335): the start of the next seed [agent] | 0x279E480 |
+| 2 | missionParams | a full vector of ObjectiveCreationParams: `00 01 sequence:size64 count:size`; a town board: count 0 | 0x3A68000 |
+| 3 | m_communityGoals | `count:size`, then for each territory `territory:u16 missionSeed:u32 unavailable:size u32* previousProjects:size u32*` (no container header) | 0x3A68C60 -> 0x495DDA0 -> 0x494F320 |
+
+- The owner gets the state after its first open of a board in a world entry. An observer gets no fragment (the remote player slice has
+  no ObjectiveInteractor component) [data; test case QG6AI].
+- The client marks an offer unavailable only when the stored missionSeed of the territory is the current seed and the mission is in the
+  list (0x3A3684C) [static; test case QG6AF].
+
+**The town offers** are computed by the client (GetCurrentCommunityGoals 0x4955A90 -> 0x3A34C70 -> 0x3A362A0) [static: OFFERS.md;
+live: in five seeds the town screen listed the offers that the backend computed for the same character, territory, and minute]:
+
+- seed = low 32 bits of (FNV-1a 64 of the characterId text + territory + the server clock minute rounded to the interval with the
+  half-interval phase, signed i32 + the seed addition 0) [0x3A36220, 0x39D2A70, 0x3A1C52A]. The interval is the CVar default 30.0
+  minutes (`javelin.territory-progression-mission-cooldown-min`, 0x61743A9). The characterId is the text of the Player state 3935
+  group 2 field 0.
+- For each active project: r = ((projectCrc + seed) mod 2^32) xor 0x5DEECE66D; for each bucket with candidates (Kill 4, Gather 1,
+  Explore 5) one step r = (r × 0x5DEECE66D + 11) mod 2^48, the offer is candidate (r >> 16) mod count [0x3A36539, 0x3A36809 to
+  0x3A3683D]. The order of the candidates is the hash order of the client (`townBuckets` of the mission data, OFFERS.md section 6).
+- The countdown is GetSecondsToNextSeed 0x4957F20: 60 × (P − ((m + P/2) mod P)) − s.
+
+**The requests** (the component ObjectiveInteractor `RootPlayer/006554ad-a98d-48e4-a5d6-f8a0ab3e7933`, slot 10) [static: the research of
+the boards 2.2]:
+
+| Type | Name | Body | Answer |
+| ---: | --- | --- | --- |
+| 3819 | `ObjectiveInteractorComponentServerFacet_OnCommunityGoalSelectionRequest` | `target:u64 entity:u64 missionId:u32 projectId:u32` (the name of the writer: destinationOverride) | no message: the Objectives state and the provider state |
+| 2461 | `ObjectiveInteractorComponentServerFacet_OnObjectiveCompletionRequest` | `target:u64 entity:u64 instance:u64` | no message: the Objectives state, the rewards, the provider state |
+
+- 3819: the sender 0x494E700, the writer 0x3274450 (the mission at +0x24 first), the caller 0x495C7F0. The second u32 is the project of
+  the card: the card of the town screen sends the project id (`townproject_activeproject.luac` OnTaskStart), the detail popup 0
+  (`townprojects.luac` OnTaskDetailCallback) [static: the scripts; live: a click of a card sends `07 04 f9 91` (Bison_10) then
+  `25 91 c4 12` (CommunityProjectId)]. A refusal of the backend marks the provider state and the Objectives state.
+- 2461: the sender 0x494E910, the caller 0x495CCE0, the reader 0x39E8A10. The client sends one for each ready mission at the board
+  [live: a click on the card "COMPLETED"]. The client offers it only while the return task is pending and the container has its child
+  count minus one (the ready check 0x3A3CC50), and while the destination of the return task is objectiveProviderId (CanCompleteMission
+  0x4954180) [static: DESTINATION.md]. The backend completes the return task at the request, then hands in.
+
+**The mission fields of the Objectives state** (slot 22, type 3857, group 1 field 3, the element reader 0x5B52F60, section 4.53): a
+mission instance has missionId (the CRC-32 of the lower-case MissionID), destinationOverride (the claim of the board: the town screen
+keeps a community goal only when its destination is a claim or an outpost of the map whose settlement is the territory, and
+CanCompleteMission 0x4954180 compares the destination of the return task with objectiveProviderId), originTerritory (the territory of
+the board), and isCommunityGoal 1 [static: `static/destination/DESTINATION.md`]. The objectiveId is the template objective of the mission
+row. The client joins the mission row by missionId and builds the effective tree with its override cells (the factory 0x4461150; case
+13 the kill override, case 23 the destination of TaskInteract `ReturnToGiver`) [static].
+
+**What is not proved**: the positions of the claims (field 14) and the map data; the explicit offers of field 2 of state 3829 (the
+faction boards, stage QG6b); the TerritoryInterface groups 0 and 2; the other project types of a town.
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

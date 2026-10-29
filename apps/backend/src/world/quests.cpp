@@ -8,6 +8,7 @@
 #include <iterator>
 
 #include "core/logging/log.h"
+#include "gamedata/mission_data.h"
 #include "gamedata/crafting_data.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/progression_tables.h"
@@ -33,6 +34,8 @@ constexpr int kSettleRounds = 64;
 constexpr int kNpaDepth = 8;
 /** The auto-pin flag of the type CommunityGoal (6) is 0 in the default options of the client (research quests.md 3.4, run r056). */
 constexpr std::uint8_t kCommunityGoalType = 6;
+/** Code review of stage QG7, finding QG7R-R2: the wait of a self hand-in after a store failure (world clock) [agent: no write at each tick]. */
+constexpr std::chrono::milliseconds kSelfHandInRetry{250};
 /** The number of result ids that the quest system keeps (a repeated delivery of a result counts one time; the store has a bound). */
 constexpr std::size_t kResultWindow = 4096;
 /**
@@ -508,6 +511,8 @@ struct Quests::Plan {
     /** Stage 1.8d: the repeat rows that the plan writes (a completion of a repeatable objective with a schedule) and removes (a reset). */
     std::vector<state::QuestRepeatRow> repeatWrites;
     std::vector<std::string> repeatDeletes;
+    /** Stage QG6a: the rows and the change of another system in the transaction of the plan (null: none). */
+    const QuestCommitHook* hook{nullptr};
     std::uint64_t nowNs;
     std::uint64_t steps{0};
     bool overflow{false};
@@ -553,7 +558,7 @@ struct Quests::Plan {
     }
 
     const QuestObjective* objective_of(const QuestInstance& quest) const {
-        return data.objective_by_crc(quest.objectiveCrc);
+        return data.objective_by_crc(quest.objectiveCrc, quest.mission);
     }
     const QuestTask* task_of(const QuestInstance& quest, std::uint8_t index) const {
         const QuestObjective* objective = objective_of(quest);
@@ -1224,8 +1229,15 @@ struct Quests::Plan {
 
     /** Adds a new instance of an objective and activates its root. */
     QuestInstance& add(const QuestObjective& objective, std::uint64_t instance, const std::string& source, std::uint16_t territory,
-                       std::uint64_t parent = 0) {
+                       std::uint64_t parent = 0, const MissionGrant* mission = nullptr) {
         QuestInstance quest;
+        if (mission != nullptr) {
+            // Stage QG6a: the mission of a board (the effective objective of the binding is `objective`).
+            quest.mission = mission->mission;
+            quest.communityGoal = mission->communityGoal;
+            quest.provider = mission->provider;
+            quest.destination = mission->destination;
+        }
         quest.instance = instance;
         quest.objective = objective.id;
         quest.objectiveCrc = objective.crc;
@@ -1386,7 +1398,7 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
     }
     for (const QuestInstance* entry : list) {
         const QuestInstance& quest = *entry;
-        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
+        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc, quest.mission);
         for (std::size_t index = 0; objective != nullptr && index < quest.tasks.size(); ++index) {
             const gamedata::QuestNode& node = objective->nodes[index];
             const std::uint8_t state = quest.tasks[index].state;
@@ -1624,6 +1636,9 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
         row.originTerritory = quest->originTerritory;
         row.parent = quest->parent;
         row.source = quest->source;
+        row.mission = quest->mission;
+        row.communityGoal = quest->communityGoal;
+        row.provider = quest->provider;
         for (std::size_t index = 0; index < quest->tasks.size(); ++index) {
             const gamedata::QuestNode& node = objective->nodes[index];
             if (node.task == gamedata::kNoTask) {
@@ -1682,6 +1697,9 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     }
     for (const std::string& objective : plan.repeatDeletes) {
         ok = ok && m_store.delete_quest_repeat(entity.characterId, objective);
+    }
+    if (ok && plan.hook != nullptr && plan.hook->write) {
+        ok = plan.hook->write();
     }
     ok = ok && batch.commit();
     if (!ok) {
@@ -1805,12 +1823,15 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
             if (quest.instance != instance) {
                 continue;
             }
-            const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
+            const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc, quest.mission);
             if (objective != nullptr && self_completes(*objective) && ready(quest)) {
                 m_selfHandIns[entity.id].insert(instance);
             }
             break;
         }
+    }
+    if (plan.hook != nullptr && plan.hook->apply) {
+        plan.hook->apply();
     }
     return QuestError::none;
 }
@@ -1885,6 +1906,9 @@ void Quests::entered(Entity& entity) {
             ++skipped; // The data has no such objective now: the rows stay, and the client gets no element.
             continue;
         }
+        // Stage QG6a: a mission runs the effective objective of its mission (the same template; the variant of the binding). A mission that
+        // the data does not have now keeps the template: its tasks with the values of the template (a trap of docs/systems/mission-boards.md).
+        objective = m_data->objective_by_crc(objective->crc, row.mission);
         QuestInstance quest;
         quest.instance = row.instance;
         quest.objective = objective->id;
@@ -1893,6 +1917,9 @@ void Quests::entered(Entity& entity) {
         quest.originTerritory = static_cast<std::uint16_t>(row.originTerritory);
         quest.parent = row.parent;
         quest.source = row.source;
+        quest.mission = row.mission;
+        quest.communityGoal = row.communityGoal;
+        quest.provider = row.provider;
         quest.tasks.resize(objective->nodes.size());
         for (const state::QuestTaskRow& task : row.tasks) {
             if (task.index >= objective->nodes.size() || objective->nodes[task.index].task == gamedata::kNoTask
@@ -1931,7 +1958,7 @@ void Quests::entered(Entity& entity) {
     // The timers that run (Active, and a failure timer CompleteActive: finding QR8A-R2): their end on the world clock from the saved start
     // (the time while the character was away counts: the client shows start + Duration against the synced wall clock; decision D4).
     for (const QuestInstance& quest : entity.quests.active) {
-        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
+        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc, quest.mission);
         for (std::size_t index = 0; objective != nullptr && index < quest.tasks.size(); ++index) {
             const gamedata::QuestNode& node = objective->nodes[index];
             if (node.task != gamedata::kNoTask && running(quest.tasks[index].state) && quest.tasks[index].startNs != 0
@@ -1963,7 +1990,7 @@ void Quests::entered(Entity& entity) {
         m_rankUpsDirty.insert(entity.id);
     }
     for (const QuestInstance& quest : entity.quests.active) {
-        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
+        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc, quest.mission);
         if (objective != nullptr && self_completes(*objective) && ready(quest)) {
             m_selfHandIns[entity.id].insert(quest.instance);
         }
@@ -1984,6 +2011,8 @@ void Quests::left(const Entity& entity) {
     m_progressionsDirty.erase(entity.id);
     m_rankUpsDirty.erase(entity.id);
     m_selfHandIns.erase(entity.id);
+    m_selfHandInRetries.erase(entity.id);
+    m_selfHandInWaits.erase(entity.id);
     m_pushWatch.erase(entity.id);
     m_equips.erase(entity.id);
 }
@@ -2392,7 +2421,10 @@ std::optional<QuestView> Quests::view(const std::string& characterId) {
         row.originTerritory = quest.originTerritory;
         row.parent = quest.parent;
         row.source = quest.source;
-        const QuestObjective* objective = m_data != nullptr ? m_data->objective_by_crc(quest.objectiveCrc) : nullptr;
+        row.mission = quest.mission;
+        row.communityGoal = quest.communityGoal;
+        row.provider = quest.provider;
+        const QuestObjective* objective = m_data != nullptr ? m_data->objective_by_crc(quest.objectiveCrc, quest.mission) : nullptr;
         for (std::size_t index = 0; objective != nullptr && index < quest.tasks.size(); ++index) {
             if (objective->nodes[index].task == gamedata::kNoTask) {
                 continue;
@@ -2584,7 +2616,7 @@ std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> Quests::matc
             const Subscriber entry{instance, index};
             ++m_counts.subscribersVisited;
             const QuestInstance* quest = instance_of(entity, instance);
-            const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
+            const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc, quest->mission) : nullptr;
             if (objective == nullptr || index >= quest->tasks.size() || quest->tasks[index].state != quest_state::kActive) {
                 continue; // The quest of the first delivery ended (a reset gives a new instance): no credit for the replacement.
             }
@@ -2600,7 +2632,7 @@ std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> Quests::matc
                 continue;
             }
             const QuestInstance* quest = instance_of(entity, entry.instance);
-            const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
+            const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc, quest->mission) : nullptr;
             if (objective == nullptr || entry.index >= quest->tasks.size() || quest->tasks[entry.index].state != quest_state::kActive) {
                 continue;
             }
@@ -2738,7 +2770,7 @@ std::vector<QuestDrop> Quests::plan_drops(Entity& entity, bool gather, const std
             }
             seen.push_back(entry);
             const QuestInstance* quest = instance_of(entity, entry.instance);
-            const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
+            const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc, quest->mission) : nullptr;
             if (objective == nullptr) {
                 continue;
             }
@@ -2762,7 +2794,7 @@ std::vector<QuestDrop> Quests::plan_chest_drops(Entity& entity, const state::Wor
         const Subscriber entry = (*list)[position];
         ++m_counts.subscribersVisited;
         const QuestInstance* quest = instance_of(entity, entry.instance);
-        const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
+        const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc, quest->mission) : nullptr;
         if (objective == nullptr) {
             continue;
         }
@@ -2781,7 +2813,7 @@ std::vector<QuestDrop> Quests::plan_chest_drops(Entity& entity, const state::Wor
 
 std::optional<QuestDrop> Quests::roll_drop(Entity& entity, std::uint64_t instance, std::uint8_t index, double chance, bool chest) {
     const QuestInstance* quest = instance_of(entity, instance);
-    const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
+    const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc, quest->mission) : nullptr;
     if (objective == nullptr || index >= quest->tasks.size() || quest->tasks[index].state != quest_state::kActive) {
         return std::nullopt;
     }
@@ -2850,6 +2882,11 @@ bool Quests::quest_object_open(const Entity& entity, const std::string& interact
 }
 
 void Quests::items_touched(const Entity& entity) {
+    // Code review of stage QG7, finding QG7R-R2: a self hand-in that waits for the items (a full bag) tries again at the next tick.
+    if (const auto waits = m_selfHandInWaits.find(entity.id); waits != m_selfHandInWaits.end()) {
+        m_selfHandIns[entity.id].insert(waits->second.begin(), waits->second.end());
+        m_selfHandInWaits.erase(waits);
+    }
     const auto found = m_subscriptions.find(entity.id);
     if (found != m_subscriptions.end() && found->second && found->second->find("items") != nullptr) {
         m_itemsDirty.insert(entity.id);
@@ -2925,6 +2962,11 @@ void Quests::progression_changed(const Entity& entity) {
     if (data() != nullptr && entity.quests.loaded) {
         m_progressionsDirty.insert(entity.id);
     }
+    // Code review of stage QG7, finding QG7R-R2: a self hand-in that waits for a change of the progressions tries again at the next tick.
+    if (const auto waits = m_selfHandInWaits.find(entity.id); waits != m_selfHandInWaits.end()) {
+        m_selfHandIns[entity.id].insert(waits->second.begin(), waits->second.end());
+        m_selfHandInWaits.erase(waits);
+    }
 }
 
 bool Quests::self_completes(const QuestObjective& objective) {
@@ -2940,7 +2982,7 @@ bool Quests::choose_faction_active(const Entity& entity, std::uint8_t faction) c
     const std::string achievement = lower_text(row->achievement);
     // The active quests of one character (MP-8), each tree 255 nodes at most.
     for (const QuestInstance& quest : entity.quests.active) {
-        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
+        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc, quest.mission);
         if (objective == nullptr || lower_text(objective->achievement) != achievement) {
             continue;
         }
@@ -2980,35 +3022,44 @@ void Quests::grant_rank_up(Entity& entity) {
                result.ok() ? "granted" : quest_error_text(result.error));
 }
 
-void Quests::faction_changed(Entity& entity, std::uint8_t before) {
+std::optional<QuestError> Quests::faction_ends(Entity& entity, std::uint8_t after, const QuestCommitHook& hook) {
     if (data() == nullptr || !entity.quests.loaded) {
-        return;
+        return std::nullopt;
     }
     // The faction callback of the client (0x3A571A0): each active objective of the set of ShouldResetOnFactionChange (the loader 0x445E890,
     // the set +0xAE0) and each active objective whose RequiredFaction does not pass now is removed (the reason changed_faction, 0x3A60C60).
     // The server ends them with the abandon rules (the undo of their unlocks, no reward); their completion achievements stay
-    // [client; agent for the end rules: docs/systems/factions.md].
-    {
-        (void)before;
-        Plan plan(*this, entity, now_ns());
-        std::vector<std::uint64_t> ends;
-        for (const QuestInstance& quest : entity.quests.active) {
-            const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
-            if (objective != nullptr && (objective->resetOnFactionChange || !faction_allowed(objective->factionMask, entity.faction.faction))) {
-                ends.push_back(quest.instance);
-            }
-        }
-        for (const std::uint64_t instance : ends) {
-            end_instance(plan, instance, false, "a faction change");
-        }
-        if (!ends.empty()) {
-            const auto found = m_subscriptions.find(entity.id);
-            plan.settle(found != m_subscriptions.end() ? found->second.get() : nullptr);
-            const QuestError error = commit(entity, plan, {});
-            log::write("quests: the faction change of character %s ends %zu objective(s) with ShouldResetOnFactionChange: %s",
-                       entity.characterId.c_str(), ends.size(), error == QuestError::none ? "done" : quest_error_text(error));
+    // [client; agent for the end rules: docs/systems/factions.md]. Code review of stage QG7, finding QG7R-R1: in the transaction of the
+    // faction row and its cost (`hook`).
+    std::vector<std::uint64_t> ends;
+    for (const QuestInstance& quest : entity.quests.active) {
+        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc, quest.mission);
+        if (objective != nullptr && (objective->resetOnFactionChange || !faction_allowed(objective->factionMask, after))) {
+            ends.push_back(quest.instance);
         }
     }
+    if (ends.empty()) {
+        return std::nullopt;
+    }
+    Plan plan(*this, entity, now_ns());
+    for (const std::uint64_t instance : ends) {
+        end_instance(plan, instance, false, "a faction change");
+    }
+    const auto found = m_subscriptions.find(entity.id);
+    plan.settle(found != m_subscriptions.end() ? found->second.get() : nullptr);
+    plan.hook = &hook;
+    const QuestError error = commit(entity, plan, {});
+    log::write("quests: the faction change of character %s ends %zu objective(s) with ShouldResetOnFactionChange or a faction gate: %s",
+               entity.characterId.c_str(), ends.size(), error == QuestError::none ? "done" : quest_error_text(error));
+    return error;
+}
+
+void Quests::faction_changed(Entity& entity, std::uint8_t before) {
+    (void)before;
+    if (data() == nullptr || !entity.quests.loaded) {
+        return;
+    }
+    // The ends of the objectives of the change are in its transaction (faction_ends, finding QG7R-R1).
     m_progressionsDirty.insert(entity.id);
     m_pushDirty.insert(entity.id);
     if (entity.faction.faction != 0) {
@@ -3077,6 +3128,7 @@ void Quests::push_changed(Entity& entity, bool all, const char* cause) {
     // The watched bits of the character now, against its last check (MP-8: the watched bits and the rows of the changed ones, not each row).
     PushWatch now;
     now.level = entity.progression.level;
+    now.faction = entity.faction.faction;
     for (const std::uint32_t bit : index.bits) {
         if (std::binary_search(entity.achievements.begin(), entity.achievements.end(), bit)) {
             now.bits.push_back(bit);
@@ -3084,7 +3136,8 @@ void Quests::push_changed(Entity& entity, bool all, const char* cause) {
     }
     PushWatch& before = m_pushWatch[entity.id];
     std::set<std::uint32_t> candidates;
-    if (all) {
+    // Code review of stage QG7, finding QG7R-R6: a change of the faction alone is a change of the RequiredFaction gate of each push row.
+    if (all || now.faction != before.faction) {
         candidates.insert(index.rows.begin(), index.rows.end());
     } else {
         std::vector<std::uint32_t> changed;
@@ -3199,8 +3252,21 @@ void Quests::died(Entity& entity) {
 
 void Quests::tick() {
     if (m_itemsDirty.empty() && m_placesDirty.empty() && m_levelsDirty.empty() && m_pushDirty.empty() && m_equips.empty()
-        && m_progressionsDirty.empty() && m_rankUpsDirty.empty() && m_selfHandIns.empty()) {
+        && m_progressionsDirty.empty() && m_rankUpsDirty.empty() && m_selfHandIns.empty() && m_selfHandInRetries.empty()) {
         return;
+    }
+    // Code review of stage QG7, finding QG7R-R2: the self hand-ins whose retry time of a store failure passed.
+    const WorldClock::time_point clockNow = m_world.clock().now();
+    for (auto character = m_selfHandInRetries.begin(); character != m_selfHandInRetries.end();) {
+        for (auto entry = character->second.begin(); entry != character->second.end();) {
+            if (entry->second <= clockNow) {
+                m_selfHandIns[character->first].insert(entry->first);
+                entry = character->second.erase(entry);
+            } else {
+                ++entry;
+            }
+        }
+        character = character->second.empty() ? m_selfHandInRetries.erase(character) : std::next(character);
     }
     // Stage QG7: the predicates of the categorical progressions and of the faction, then the self completing rows, then the next rank-up
     // row (a completion of this tick can make it due: the next tick grants it).
@@ -3221,6 +3287,17 @@ void Quests::tick() {
                 const HandInResult done = hand_in(*entity, instance);
                 log::write("quests: the self completing instance %016llx of character %s: %s", static_cast<unsigned long long>(instance),
                            entity->characterId.c_str(), done.ok() ? "completed" : quest_error_text(done.error));
+                // Code review of stage QG7, finding QG7R-R2: a refused self hand-in is not lost. A store failure tries again on the world
+                // clock; a full bag, a missing item, or a reward that cannot be paid waits for a change of the items or of the
+                // progressions of the character; an instance that went away, or that is not ready, goes.
+                if (done.error == QuestError::storeFailed) {
+                    m_selfHandInRetries[id][instance] = m_world.clock().now() + kSelfHandInRetry;
+                    ++m_counts.selfHandInRetries;
+                } else if (done.error == QuestError::bagFull || done.error == QuestError::missingReturnItems
+                           || done.error == QuestError::cannotPay) {
+                    m_selfHandInWaits[id].insert(instance);
+                    ++m_counts.selfHandInRetries;
+                }
             }
         }
     }
@@ -3432,7 +3509,7 @@ QuestError Quests::available(const Entity& entity, const QuestObjective& objecti
         // Another active objective with the same completion achievement (HasObjectiveWithCompletionAchievement 0x3A47310: the variants).
         const std::string achievement = lower_text(objective.achievement);
         for (const QuestInstance& quest : entity.quests.active) {
-            const QuestObjective* other = m_data->objective_by_crc(quest.objectiveCrc);
+            const QuestObjective* other = m_data->objective_by_crc(quest.objectiveCrc, quest.mission);
             if (other != nullptr && !other->achievement.empty() && lower_text(other->achievement) == achievement) {
                 return QuestError::alreadyActive;
             }
@@ -3490,6 +3567,46 @@ QuestResult Quests::accept(Entity& entity, const QuestObjective& objective, std:
     return result;
 }
 
+QuestResult Quests::grant_mission(Entity& entity, const gamedata::MissionBinding& binding, std::uint16_t territory, const MissionGrant& mission) {
+    QuestResult result;
+    if (data() == nullptr || !entity.quests.loaded) {
+        result.error = QuestError::noData;
+        return result;
+    }
+    if (binding.objective == nullptr || binding.row == nullptr || mission.mission != binding.row->crc) {
+        result.error = QuestError::unknownObjective;
+        return result;
+    }
+    for (const QuestInstance& quest : entity.quests.active) {
+        if (quest.mission == mission.mission) {
+            result.error = QuestError::alreadyActive;
+            result.instance = quest.instance;
+            return result;
+        }
+    }
+    const QuestObjective& objective = *binding.objective;
+    Plan plan(*this, entity, now_ns());
+    const std::uint64_t instance = next_instance();
+    plan.add(objective, instance, "board", territory, 0, &mission);
+    const std::optional<bool> flag = objective.typeIndex ? m_world.auto_pin(entity, *objective.typeIndex) : std::nullopt;
+    const bool pin = flag.value_or(!objective.typeIndex || *objective.typeIndex != kCommunityGoalType);
+    if (pin && plan.tracked.size() < kMaxTracked) {
+        plan.tracked.push_back(instance);
+        plan.trackedChanged = true;
+    }
+    const auto found = m_subscriptions.find(entity.id);
+    plan.settle(found != m_subscriptions.end() ? found->second.get() : nullptr);
+    result.error = commit(entity, plan, {});
+    if (result.ok()) {
+        result.instance = instance;
+        ++m_counts.missionGrants;
+        log::write("quests: character %s got the mission %s (template %s, instance %016llx, provider %s, territory %u)%s", entity.characterId.c_str(),
+                   binding.row->id.c_str(), objective.id.c_str(), static_cast<unsigned long long>(instance), mission.provider.c_str(),
+                   static_cast<unsigned>(territory), pin ? ", pinned" : "");
+    }
+    return result;
+}
+
 const QuestInstance* Quests::active_of(const Entity& entity, std::uint32_t objectiveCrc) const {
     // The active quests of one character (MP-8).
     for (const QuestInstance& quest : entity.quests.active) {
@@ -3501,12 +3618,25 @@ const QuestInstance* Quests::active_of(const Entity& entity, std::uint32_t objec
 }
 
 bool Quests::ready(const QuestInstance& quest) const {
-    const QuestObjective* objective = m_data != nullptr ? m_data->objective_by_crc(quest.objectiveCrc) : nullptr;
+    const QuestObjective* objective = m_data != nullptr ? m_data->objective_by_crc(quest.objectiveCrc, quest.mission) : nullptr;
     return objective != nullptr && objective->root < quest.tasks.size() && done(quest.tasks[objective->root].state);
 }
 
 QuestError Quests::reward_join(const Entity& entity, const QuestObjective& objective, std::uint16_t originTerritory, RewardJoin& join,
-                               std::string& detail) const {
+                               std::string& detail, std::uint32_t mission) const {
+    // Stage QG6a (docs/systems/mission-boards.md): a mission pays the success event of its row (SuccessGameEventIdOverride, row +0x50: the
+    // loader 0x39C5A2A; the UI reward helper T.GetRewardData makes the same choice), and GrantRewardsToOriginTerritory gives the standing to
+    // the origin territory of the instance (0x39C609E).
+    const gamedata::MissionBinding* binding = mission != 0 && m_data != nullptr ? m_data->mission(mission) : nullptr;
+    if (binding != nullptr && binding->row != nullptr) {
+        QuestObjective effective = objective;
+        if (!binding->row->successEvent.empty()) {
+            effective.successEvent = binding->row->successEvent;
+        }
+        const std::uint16_t territory = binding->row->rewardsToOrigin ? originTerritory
+                                                                       : standing_territory(m_world.territory_of(entity), originTerritory);
+        return reward_join_of(entity.characterId, nullptr, effective, territory, join, detail, entity.faction.faction);
+    }
     // Stage QG1: the standing goes to the territory of the character at the hand-in (World::territory_of). The grant of a game event of the
     // client takes the territory of its context, and with no context territory the detected territory of the player (0x31F6D2B to
     // 0x31F6D63, GetDetectedTerritoryId); the writer of the context of an objective completion is not known (static read of stage QG1,
@@ -3713,7 +3843,7 @@ QuestError Quests::reward_join_of(const std::string& characterId, const SkillSet
     return QuestError::none;
 }
 
-HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
+HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance, const QuestCommitHook* hook) {
     HandInResult result;
     result.instance = instance;
     const auto refuse = [&](QuestError error, std::string detail) {
@@ -3766,7 +3896,7 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
     // a range, the perks of the items) in its plan.
     RewardJoin join;
     std::string detail;
-    if (const QuestError error = reward_join(entity, *objective, quest->originTerritory, join, detail); error != QuestError::none) {
+    if (const QuestError error = reward_join(entity, *objective, quest->originTerritory, join, detail, quest->mission); error != QuestError::none) {
         return refuse(error, detail);
     }
     const QuestObjective* next = join.next;
@@ -3874,6 +4004,7 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
     }
     const auto found = m_subscriptions.find(entity.id);
     plan.settle(found != m_subscriptions.end() ? found->second.get() : nullptr);
+    plan.hook = hook;
     const QuestError error = commit(entity, plan, {});
     if (error != QuestError::none) {
         return refuse(error, "the transaction of the hand-in");

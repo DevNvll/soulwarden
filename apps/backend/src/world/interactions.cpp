@@ -1120,6 +1120,9 @@ void Interactions::tick() {
 
 void Interactions::scan() {
     const gamedata::InteractionData* catalog = data();
+    if (catalog != nullptr && !m_boardsMade) {
+        make_boards();
+    }
     if (catalog == nullptr || catalog->spawned().empty()) {
         return;
     }
@@ -1198,6 +1201,55 @@ FixtureResult Interactions::make_fixture(const std::string& characterId, const s
     }
     m_instances.at(result.entity->id).fixture = name;
     return result;
+}
+
+void Interactions::make_boards() {
+    // Stage QG6a (docs/systems/mission-boards.md): the board of a settlement is a child that the client makes at the load of the level (the
+    // spawner Town_Project_Board: m_spawnOnInitialize true, m_isClientAuthoratative false; the client id of its place, live: the open 1589
+    // names that id). Its TerritoryInterface state is a state of the server: the entity of the level object carries it to each session near
+    // it, with the actor of the client child. One time, for the boards of the data (not a scan of the world: MP-8).
+    m_boardsMade = true;
+    const gamedata::InteractionData* catalog = data();
+    for (const std::uint32_t index : catalog->boards()) {
+        const gamedata::InteractionObject& object = catalog->objects()[index];
+        publish(index);
+        Entity* entity = m_world.find(state_of(index).entity);
+        if (entity == nullptr) {
+            continue;
+        }
+        entity->object.territorySlot = object.territorySlot;
+        entity->object.territory = m_world.territory_of(*entity);
+        entity->object.providerIdentity = object.claim ? *object.claim : entity->actor.bytes;
+        m_world.touch(entity->id, ComponentKey::territoryInterface);
+        m_boards[object.key] = entity->id;
+        if (m_spawnObserver != nullptr) {
+            m_spawnObserver->child_spawned(object.key, *entity);
+        }
+    }
+    if (!m_boards.empty()) {
+        log::write("world: %zu mission board(s) of the interaction data have their entity (the actor of the client child)", m_boards.size());
+    }
+}
+
+EntityId Interactions::board_entity(const std::string& key) const {
+    const auto found = m_boards.find(key);
+    return found != m_boards.end() ? found->second : 0;
+}
+
+Entity* Interactions::source_entity(const InteractionContext& context) const {
+    if (context.instance != 0) {
+        return m_world.find(context.instance);
+    }
+    const auto found = m_objects.find(context.objectIndex);
+    return found != m_objects.end() && found->second.entity != 0 ? m_world.find(found->second.entity) : nullptr;
+}
+
+EntityId Interactions::grant_source(const ServiceGrant& grant) const {
+    if (grant.instance != 0) {
+        return grant.instance;
+    }
+    const auto found = m_objects.find(grant.object);
+    return found != m_objects.end() ? found->second.entity : 0;
 }
 
 EntityId Interactions::spawned_entity(const std::string& key) const {
@@ -1352,7 +1404,15 @@ bool Interactions::grant_service(Entity& character, const std::string& kind, std
     return true;
 }
 
+ServiceError Interactions::require_source(const std::string& characterId, const std::string& kind) {
+    return require_service(characterId, kind, 0, true);
+}
+
 ServiceError Interactions::require_service(const std::string& characterId, const std::string& kind, std::uint32_t id) {
+    return require_service(characterId, kind, id, false);
+}
+
+ServiceError Interactions::require_service(const std::string& characterId, const std::string& kind, std::uint32_t id, bool anyId) {
     Entity* character = m_world.find_character(characterId);
     if (character == nullptr) {
         return ServiceError::notInWorld;
@@ -1381,7 +1441,7 @@ ServiceError Interactions::require_service(const std::string& characterId, const
         error = ServiceError::tooFar;
     } else if (grant.deadline && m_world.clock().now() > *grant.deadline) {
         error = ServiceError::expired;
-    } else if (!std::binary_search(grant.ids.begin(), grant.ids.end(), id)) {
+    } else if (!anyId && !std::binary_search(grant.ids.begin(), grant.ids.end(), id)) {
         return ServiceError::notOffered; // The grant stays: a different id of the offer can pass.
     }
     if (error != ServiceError::none) {

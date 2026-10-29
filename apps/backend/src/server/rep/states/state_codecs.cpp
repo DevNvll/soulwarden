@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 32> codecs{{
+    static constexpr std::array<StateCodec, 33> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -76,6 +76,9 @@ std::span<const StateCodec> player_codecs() {
         // The empty Social state (stage QG7): owner only, after the first 2709 (the friend list of the client: the faction poster of a
         // conversation reads it).
         {world::ComponentKey::social, kSocialSlot, kTypeSocialState, encode_social_state, nullptr, true, nullptr, nullptr, true},
+        // The provider state of a mission board (stage QG6a): owner only, after the first open of a board in this world entry.
+        {world::ComponentKey::objectiveInteractor, kObjectiveInteractorSlot, kTypeObjectiveInteractorState, encode_objective_interactor_state,
+         nullptr, true},
     }};
     return codecs;
 }
@@ -155,11 +158,24 @@ std::uint32_t object_variation_slot(const world::Entity& entity) {
     return entity.object.variationSlot;
 }
 
+std::uint32_t object_territory_slot(const world::Entity& entity) {
+    return entity.object.territorySlot;
+}
+
+std::uint32_t object_land_claim_slot(const world::Entity& entity) {
+    return entity.object.world ? kLandClaimManagerSlot : 0;
+}
+
 std::span<const StateCodec> object_codecs() {
     // The slot of each state is a value of the slice of the object (game data): one Interact fragment for each bound. A level object
     // has no place state, no BuildableController state, and no Ownership state (slot 0): the client has them from its level data.
-    static constexpr std::array<StateCodec, 8> codecs{{
+    static constexpr std::array<StateCodec, 10> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
+        // The LandClaimManager state of the world entity (stage QG6a): the claims of the towns (slot 2 of slices/globalgde; 0: not it).
+        {world::ComponentKey::landClaims, 0, kTypeLandClaimManagerState, encode_land_claim_state, nullptr, false, object_land_claim_slot},
+        // The TerritoryInterface state of a mission board (stage QG6a): the projects of its town (the slot of its slice; 0: not a board).
+        {world::ComponentKey::territoryInterface, 0, kTypeTerritoryInterfaceState, encode_territory_interface_state, nullptr, false,
+         object_territory_slot},
         // The variant of a start object of an encounter (stage QG5c2): the slot of its VariationData component (0: none).
         {world::ComponentKey::variation, 0, kTypeVariationState, encode_variation_state, nullptr, false, object_variation_slot},
         {world::ComponentKey::buildable, 0, kTypeBuildableState, encode_buildable_state, nullptr, false, object_buildable_slot},

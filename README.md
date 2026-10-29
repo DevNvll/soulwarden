@@ -96,6 +96,16 @@ This is an independent project with no connection to Amazon Games. The repositor
   rank" work. Other players see your faction on your name plate. A restart keeps the faction, the wait, the reputation, and the
   tokens. The support list has 573 quests now (548 before): the rank-up quests and the trials of the three factions. Not yet: the
   faction board, the faction shops, PvP, and the wars.
+- Town boards (stage QG6a). The town project board of a settlement (for example the board of Windsward) opens with E ("View
+  Missions"): its "Town Upkeep" part shows the missions of the town that the game gives your character now (one of each kind of the
+  always available project) and "Missions refresh in" (the offers change each 30 minutes, as in the game). Click a card to start a mission:
+  the card shows "IN PROGRESS", and the journal (Town Projects) and the HUD show it with its count (for example "Wolves Hunters Needed":
+  "Cull Wolves", 0 / 5). After the kills go back to the board: the card shows "COMPLETED"; click it. It pays the experience, the coin, and
+  the territory standing of the mission, one time (the wolf mission: 110 experience, 1.35 coin, 350 Windsward standing). A completed
+  mission is not offered again until the next offers. Abandon a mission in the journal; a restart keeps the missions and their counts. The
+  support list has 574 quests now (573 before). Not yet: the faction boards, the projects of a town, the missions that deliver an item or
+  that have a place or a timer, and the missions of the open world. If the board shows no "View Missions" after a world entry next to it,
+  travel away and back once.
 - Territory standing (stage QG1). The standing of a territory goes up to rank 300: the points above a rank go to the next rank, and each new rank gives character experience (for example 125 at rank 1 of Windsward) and one standing point ("token"). A quest gives its standing to the territory where you hand it in (the notice shows "+100 Windsward Standing"). Open the map (M), the second tab "Territories": a territory with a free token shows a badge; click it to "Claim your reward" and choose a card (Standing Gain, XP Gain, Gather, Station Fee, Trading Fee, Storage, House Ownership; the house card keeps the token). Standing Gain, XP Gain, and Gather act now while you are in that territory; the other cards are kept for their later systems. The standing, the tokens, and the cards stay after a restart. The Windsward main story goes on after "Feast to Famine" (Marcel Dupont, then Saatvik Agrawal).
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.

@@ -47,6 +47,8 @@ The test program of the backend runs it (case QG5C2I; QG5C2A and QG5C3A have the
   complete           finding QG5C2R-R2: build() stops when a read found no source of a file (no smaller document, no file)
   removed-earlier    finding QG5C5R-R3 (stage QG7): a later count whose only earlier start object a DestroySliceAction between removes is
                      a cause; with no removal, none
+  removed-by-child   finding QG7R-R4 (stage QG6a): a count of a child whose only earlier start object a preceding child of the same parent
+                     removes at its start is a cause; with no removal, none
 
 Usage: python3 -B check_encounters_tool.py [WORK_FOLDER] [CASE...]    (status 0: each case passed; the folder is not used)
 """
@@ -554,6 +556,26 @@ def case_removed_earlier() -> bool:
     return tool.refusals(made(False), members()) == [] and has(tool.refusals(made(True), members()), "its spawns can give only 0")
 
 
+def case_removed_by_child() -> bool:
+    """Code review of stage QG7, finding QG7R-R4: a timed top stage spawns the only start object; the next top stage has two required
+    children; the first child destroys the object at its start, and the second needs one destruction of it: refused. With no removal: no
+    cause."""
+    def made(remove: bool) -> dict:
+        value = recipe()
+        value["stages"] = [
+            stage("Earlier object", tool.TIMED, [spawn(START)], objective={"timeLimit": 3}),
+            stage("Consumer parent", tool.DESTROYED, [], children=[2, 3], childrenOptional=False,
+                  objective={"requiredCount": 1, "trackedSlice": START}),
+            stage("Cleanup child", tool.TIMED, [], objective={"timeLimit": 1},
+                  startActions=[{"type": "DestroySliceAction", "slice": START, "alias": None, "aliasSlices": [], "localOnly": False}]
+                  if remove else []),
+            stage("Consumer child", tool.DESTROYED, [], objective={"requiredCount": 1, "trackedSlice": START}),
+            stage("Final cleanup", tool.TIMED, [], objective={"timeLimit": 100})]
+        value["stageOrder"] = [0, 1, 4]
+        return value
+    return tool.refusals(made(False), members()) == [] and bool(tool.refusals(made(True), members()))
+
+
 def case_shape() -> bool:
     sphere_node = Node(None, None, [Node("m_Radius", struct.pack(">f", 20.0))], reader.SPHERE_CLASS)
     component = Node(None, None, [Node("m_shape", None, [sphere_node]),
@@ -570,7 +592,8 @@ CASES = {"taken": case_taken, "manager": case_manager, "parent": case_parent, "o
          "lifetime": case_lifetime, "shapes": case_shapes, "alias": case_alias, "later": case_later, "counts": case_counts,
          "complete": case_complete, "state": case_state, "senders": case_senders, "several": case_several, "nested": case_nested,
          "group": case_group, "shape": case_shape, "wait": case_wait, "destroy": case_destroy, "season": case_season,
-         "earlier": case_earlier, "ancestor": case_ancestor, "removed-earlier": case_removed_earlier}
+         "earlier": case_earlier, "ancestor": case_ancestor, "removed-earlier": case_removed_earlier,
+         "removed-by-child": case_removed_by_child}
 
 
 def main() -> int:

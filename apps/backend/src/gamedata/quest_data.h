@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -338,6 +339,25 @@ struct QuestBackstory {
     bool archetype{false};
 };
 
+class MissionData;
+struct MissionRow;
+
+/**
+ * Stage QG6a (docs/systems/mission-boards.md): the binding of one mission row to its template (QuestData::bind_missions). The client builds
+ * the tree of the template with the values of the row (factory 0x4461150; only for a valid row with IsCustomObjective false: row +0x143,
+ * +0x144): TaskKillContribution gets TaskKillContributionOverride as its category and TaskKillContributionQtyOverride as its TargetQty
+ * (case 13). The server builds the same effective objective.
+ */
+struct MissionBinding {
+    const MissionRow* row{nullptr};
+    /** The template of the row (ObjectiveID). Null: the quest data has no such objective. */
+    const QuestObjective* templateObjective{nullptr};
+    /** The effective objective: a variant with the values of the row, or the template when no value of the row changes its tasks. */
+    const QuestObjective* objective{nullptr};
+    /** The causes why the backend cannot run the mission (an override with no rule, a missing template). Empty: it can. */
+    std::vector<std::string> refusals;
+};
+
 class QuestData {
 public:
     /**
@@ -370,6 +390,26 @@ public:
     [[nodiscard]] const QuestObjective* objective(std::string_view id) const;
     /** @return The objective of a CRC-32, or null. */
     [[nodiscard]] const QuestObjective* objective_by_crc(std::uint32_t crc) const;
+    /**
+     * Stage QG6a: @return The objective of an instance: the effective objective of its mission (`mission`, a missionId) when the binding of
+     *         the mission has a variant of this template, else the template of the CRC-32 (a quest that is not a mission: `mission` 0).
+     */
+    [[nodiscard]] const QuestObjective* objective_by_crc(std::uint32_t crc, std::uint32_t mission) const;
+    /**
+     * Stage QG6a: binds the mission rows to their templates (after load; a second call replaces the bindings): the effective objective of
+     * each row (a variant for a row whose kill override changes a TaskKillContribution leaf; its task rows are copies with the values of the
+     * row), the refusals of the overrides with no rule, and the game events of the missions that the quest data does not have.
+     */
+    void bind_missions(const MissionData& missions);
+    /** Stage QG6a: @return The binding of a missionId, or null (no mission data, or no such mission). */
+    [[nodiscard]] const MissionBinding* mission(std::uint32_t missionCrc) const;
+    /** Stage QG6a: @return The number of the bound missions and of the variants (a log line). */
+    [[nodiscard]] std::size_t mission_count() const {
+        return m_missions.size();
+    }
+    [[nodiscard]] std::size_t variant_count() const {
+        return m_variants.size();
+    }
     /** @return The bit (AchievementIndex) of an achievement id (any case), or no value. */
     [[nodiscard]] std::optional<std::uint32_t> achievement_index(std::string_view id) const;
     /** @return The id of the achievement of a bit, or an empty text. */
@@ -416,6 +456,12 @@ private:
     std::unordered_map<std::string, std::size_t> m_whisperById;
     std::unordered_map<std::string, std::size_t> m_whisperByEvent;
     std::unordered_map<std::string, ScheduleKind> m_schedules;
+    /** Stage QG6a: the bindings of the missions, the variants (stable addresses), the variant of each (mission, template), and the number
+     *  of the task rows of the file (the copies of the variants come after them). */
+    std::unordered_map<std::uint32_t, MissionBinding> m_missions;
+    std::deque<QuestObjective> m_variants;
+    std::size_t m_fileTasks{0};
+    std::vector<std::string> m_missionEvents;
 };
 
 /** @return The CRC-32 of the lower-case text: the id of an objective or of a task on the wire. */

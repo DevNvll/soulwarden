@@ -396,6 +396,14 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         break;
     case kTypeRequestSetFaction:
         check_route(route, type, body, firstOfType);
+        // Code review of stage QG7, finding QG7R-R7 (MP-5): the route of the frame is the actor of the character of the session (the facet
+        // of RootPlayer); a request to another actor changes nothing, and the owner gets its faction again.
+        if (const world::Entity* own = m_world.find(m_observer.own());
+            own != nullptr && (route.size() != own->actor.bytes.size() || !std::equal(route.begin(), route.end(), own->actor.bytes.begin()))) {
+            log::write("rep: faction request (type %u) on a route that is not the actor of the character of the session: no change", type);
+            m_world.touch(own->id, world::ComponentKey::faction);
+            break;
+        }
         handle_set_faction(body);
         break;
     case kTypeApplyAbilityPoints:
@@ -485,6 +493,11 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
     case kTypeCompleteObjective:
         check_route(route, type, body, firstOfType);
         handle_objective_request(body, type);
+        break;
+    case kTypeCommunityGoalSelection:
+    case kTypeObjectiveCompletion:
+        check_route(route, type, body, firstOfType);
+        handle_board_request(body, type);
         break;
     default:
         check_route(route, type, body, firstOfType);
@@ -1002,6 +1015,10 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
             if (id == own.id || entity == nullptr) {
                 continue;
             }
+            // Stage QG6a: the world entity stays at each distance.
+            if (entity->kind == world::EntityKind::object && entity->object.world) {
+                continue;
+            }
             // An object: the distance of its nearest bound (code review of stage 2.5a, finding INT-R3).
             const float distance = entity->kind == world::EntityKind::object ? m_world.interactions().distance_to(*entity, own.position)
                                                                             : world::horizontal_distance(own.position, entity->position);
@@ -1165,6 +1182,14 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
                        interest, static_cast<double>(distance));
         }
     });
+    // Stage QG6a: the world entity (slices/globalgde: the LandClaimManager state of the town screens) at each distance.
+    if (const world::EntityId id = m_world.world_entity_id(); id != 0 && m_observer.find(id) == nullptr) {
+        const std::uint32_t interest = m_observer.add(id);
+        if (interest != 0) {
+            log::write("rep: the world entity %016llx comes into the interest table (interest %u)", static_cast<unsigned long long>(id),
+                       interest);
+        }
+    }
     // The nearest creatures first, and not more than some of them in one scan.
     std::sort(creatures.begin(), creatures.end(), [](const auto& left, const auto& right) {
         return left.first != right.first ? left.first < right.first : left.second->id < right.second->id;
@@ -2757,6 +2782,46 @@ void RepSession::handle_objective_call(std::span<const std::uint8_t> body, std::
     log::write("rep: the client asks for the %s of the quest %016llx (message %u): %s%s", type == kTypeAbandonObjective ? "abandon" : "reset",
                static_cast<unsigned long long>(message->value), type, world::quest_error_text(result.error),
                result.ok() && type == kTypeResetObjective ? (", new instance " + std::to_string(result.instance)).c_str() : "");
+}
+
+void RepSession::handle_board_request(std::span<const std::uint8_t> body, std::uint32_t type) {
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    // Stage QG6a (docs/systems/mission-boards.md): the character from the session (MP-5); the board system checks the provider, the
+    // offer, and the instance. A refusal sends the provider state and the Objectives state again (the client shows the state of the server).
+    if (type == kTypeCommunityGoalSelection) {
+        const std::optional<CommunityGoalSelection> message = read_community_goal_selection(body);
+        if (!message) {
+            log::write("rep: mission accept (type %u, %zu bytes) does not have the form of the message: no change", type, body.size());
+            return;
+        }
+        if (!own_facet(*own, message->target, message->entity, kObjectiveInteractorComponentName, type, "mission accept")) {
+            return;
+        }
+        const world::MissionResult result = m_world.missions().accept(*own, message->mission, message->destination);
+        log::write("rep: the client accepts the mission %08x (destination %u, message %u): %s%s", message->mission, message->destination, type,
+                   world::mission_error_text(result.error), result.ok() ? (", instance " + std::to_string(result.instance)).c_str() : "");
+        if (!result.ok()) {
+            m_world.touch(own->id, world::ComponentKey::objectiveInteractor);
+        }
+        return;
+    }
+    const std::optional<ObjectiveCall> message = read_objective_call(body, true);
+    if (!message) {
+        log::write("rep: mission hand-in (type %u, %zu bytes) does not have the form of the message: no change", type, body.size());
+        return;
+    }
+    if (!own_facet(*own, message->target, message->entity, kObjectiveInteractorComponentName, type, "mission hand-in")) {
+        return;
+    }
+    const world::MissionResult result = m_world.missions().complete(*own, message->value);
+    log::write("rep: the client hands in the mission instance %016llx (message %u): %s", static_cast<unsigned long long>(message->value), type,
+               world::mission_error_text(result.error));
+    if (!result.ok()) {
+        m_world.touch(own->id, world::ComponentKey::objectives);
+    }
 }
 
 void RepSession::handle_conversation_topics(std::span<const std::uint8_t> body, std::uint32_t type) {

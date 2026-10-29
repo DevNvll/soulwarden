@@ -240,6 +240,14 @@ struct ExternalObject {
     EntityId body{0};
 };
 
+/** Stage QG6a: an observer of the entities of the mission boards (the mission system: the projects of a board, the missions of a board). */
+class SpawnObserver {
+public:
+    virtual ~SpawnObserver() = default;
+    /** The interaction system made the entity of the board of a key ("UUID/ENTITY": the placement and its spawner entity). */
+    virtual void child_spawned(const std::string& key, Entity& entity) = 0;
+};
+
 /** A resolver of the objects that the interaction data does not have (stage 3.6a: the gathering system). */
 class ObjectResolver {
 public:
@@ -437,6 +445,10 @@ public:
     void register_resolver(ObjectResolver& resolver) {
         m_resolver = &resolver;
     }
+    /** Stage QG6a: registers the observer of the entities of the mission boards. It must live as long as the world. */
+    void register_spawn_observer(SpawnObserver& observer) {
+        m_spawnObserver = &observer;
+    }
     /**
      * @return The entity of a level object of the data (stage 3.6a: the node state of a capital gathering node): the base makes it when
      *         it has none (as for a state that differs from the level data). Null: no such object.
@@ -545,6 +557,11 @@ public:
      *         any more ends.
      */
     [[nodiscard]] ServiceError require_service(const std::string& characterId, const std::string& kind, std::uint32_t id);
+    /**
+     * Stage QG6a: the checks of require_service with no id of the offer (the hand-in of a mission at its board: the mission is not an
+     * offer of the board any more). @return `none`, or the cause; a grant that is not valid any more ends.
+     */
+    [[nodiscard]] ServiceError require_source(const std::string& characterId, const std::string& kind);
     /** Ends the service grant of a character (an authenticated close of a later stage). @return False: no grant. */
     bool close_service(const std::string& characterId);
     /**
@@ -583,6 +600,15 @@ public:
     [[nodiscard]] std::uint32_t completions_of(EntityId entity) const;
     /** @return The entity of the live server child of a placement child key ("UUID/ENTITY"), or 0. */
     [[nodiscard]] EntityId spawned_entity(const std::string& key) const;
+    /**
+     * Stage QG6a: @return The entity of a mission board by its key (the board of a settlement that the client makes: a level object of
+     * the data with the client id of its place), or 0 before the first scan.
+     */
+    [[nodiscard]] EntityId board_entity(const std::string& key) const;
+    /** Stage QG6a: @return The entity of the source of a use: the server child, or the entity of the level object (null: it has none). */
+    [[nodiscard]] Entity* source_entity(const InteractionContext& context) const;
+    /** Stage QG6a: @return The entity of the source of a service grant: the server child, or the entity of the level object (0: none). */
+    [[nodiscard]] EntityId grant_source(const ServiceGrant& grant) const;
     /** @return The object of a key: a level object of the data (its placement UUID) or a live server child (its key). Null: none. */
     [[nodiscard]] const gamedata::InteractionObject* object_of_key(const std::string& key) const;
 
@@ -632,6 +658,7 @@ private:
     [[nodiscard]] InteractionVerdict check(Entity& character, const InteractionRequest& request, InteractionContext& context,
                                            InteractionHandler*& handler);
     [[nodiscard]] InteractionVerdict refuse(InteractionVerdict verdict, const Entity& character, const InteractionRequest& request);
+    [[nodiscard]] ServiceError require_service(const std::string& characterId, const std::string& kind, std::uint32_t id, bool anyId);
     /** Ends the committed interaction of a character. @param notify True: the session of the character sends 3746. */
     void end(Entity& character, InteractionEnd cause, bool notify);
     /** @return The usable object of an active use or of a grant (null object: it went away, or a new generation). */
@@ -642,6 +669,8 @@ private:
     void publish(std::uint32_t objectIndex);
     void publish(Instance& instance);
     void publish(External& external);
+    /** Stage QG6a: makes the entity of each mission board of the data (one time, at the first scan). */
+    void make_boards();
     /** Publishes the state of the source of a site (a level object, a server child, or an external object). */
     void publish(const Site& site);
     [[nodiscard]] InteractionHandler* handler_of(gamedata::InteractionKind kind, std::uint32_t optionId) const;
@@ -677,10 +706,17 @@ private:
     /** The objects that the data does not have (stage 3.6a), by their G; the resolver of the gathering system. */
     std::map<EntityId, External> m_externals;
     ObjectResolver* m_resolver{nullptr};
+    SpawnObserver* m_spawnObserver{nullptr};
     /** The object entities of the external objects (their G), for the interest of a session. */
     std::set<EntityId> m_externalEntities;
     /** The placement children that live: the index into the data to the entity. */
     std::map<std::uint32_t, EntityId> m_spawnedLive;
+    /**
+     * Stage QG6a: the entities of the mission boards (level objects that the client makes) by their key. The first scan makes them, and
+     * they stay while the backend runs (as a level object with a state of the server): 13 boards in the data of the supported build.
+     */
+    std::map<std::string, EntityId> m_boards;
+    bool m_boardsMade{false};
     /** The object entities by the cells of their interest points (64 m; finding INT-R3), for for_each_entity_near. */
     std::unordered_map<std::int64_t, std::vector<EntityId>> m_entityCells;
     /** The interest points of each level object entity (its bounds). */

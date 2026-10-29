@@ -31,8 +31,11 @@ stage QG7, [agent] a rule of the project that an agent chose.
   of the client or a command of the development and admin routes. The delete of a character removes the row.
 - The faction numbers are the enum of the client: 0 None, 1 Syndicate, 2 Marauder, 3 Covenant (4 Any is not a faction of a player)
   [client: the enum validator 0x2E6A8A0 accepts 0 to 4].
-- A change writes its rows in one transaction: the faction row and, with a cost, the Azoth of the skills rows. Then the system changes
-  the entity, marks the Faction state (`World::touch`), and gives the change to the quest system (`Quests::faction_changed`).
+- A change writes its rows in one transaction: the faction row, with a cost the Azoth of the skills rows, and the end of each quest that
+  the change ends (`Quests::faction_ends` with a commit hook of the quest system; code review of stage QG7, finding QG7R-R1, case QGR7A).
+  A refused row changes nothing: the faction, the Azoth, and the quests stay. Then the system changes the entity, marks the Faction
+  state (`World::touch`), and gives the change to the quest system (`Quests::faction_changed`: the gates of the pushed rows and the
+  rank-up rows; finding QG7R-R6, case QGR7D).
 - The Faction state goes to the owner and to each observer. The owner gets the time of the last change, the count, and the faction.
   An observer gets only the faction (the public group): the name plate of a different player uses it [client: `marker.luac`
   callback 0.6.18, the setter 0x30C0A40]. An observer gets no fragment for a character with no faction.
@@ -42,6 +45,8 @@ stage QG7, [agent] a rule of the project that an agent chose.
 
 ### The join and the change (3161)
 
+- The route of a 3161 frame must be the actor of the character of the session. A request on the route of another actor changes
+  nothing, and the owner gets its Faction state again (code review of stage QG7, finding QG7R-R7, case QGR7E; MP-5) [agent].
 - The request 3161 (`RequestSetFaction`) asks for a faction. The checks, in this order; the first refusal wins:
   1. The backend has the faction data (`noData`).
   2. The faction is 1, 2, or 3 (`badFaction`).
@@ -182,8 +187,8 @@ tools/world tokens NAME syndicate 0 100           # the rank and the points of t
   open it again. In the wait its tooltip is "Cannot change factions while on cooldown. 30d", and its panel greys out each other
   faction; the client sends no 3161 [live]. The panel also greys out a faction whose recruitment achievement the character does not
   have (the achievement check of CanSetFactionWithResults).
-- The Faction Board of a recruiter does not open (the missions of the boards are stage QG6; the client log has errors of
-  `UpdateInfluenceWarInfo`).
+- The Faction Board of a recruiter does not open (the faction boards are stage QG6b; the client log has errors of
+  `UpdateInfluenceWarInfo`). Stage QG6a made the town board of a settlement ([Mission boards](mission-boards.md)).
 - A backend of schema 17 refuses a database of schema 18. For a comparison with an earlier backend, use a copy of the data folder.
 - The progression ticker of the HUD shows a faction gain only with an experience event (`eXpEventType_Reputation`,
   `eXpEventType_ProgressionCurrency`). The backend sends none: a command changes the points with no ticker. The reward notice of a
@@ -194,7 +199,7 @@ tools/world tokens NAME syndicate 0 100           # the rank and the points of t
 - The faction shops (stage 5.1): the token balances are categorical progressions of slot 65. A purchase is a negative change with
   `Skills::add_faction_points` (it refuses a balance that is too low). The rank gate of a shop row is
   RequiredCategoricalProgressionRank against the rank of the reputation.
-- The faction missions of the boards (stage QG6): the hand-in already pays FactionReputation and FactionTokens of an event with the
+- The faction missions of the boards (stage QG6b): the hand-in already pays FactionReputation and FactionTokens of an event with the
   GainFactionRep card. The mission bonus (RewardModifierData FactionMissionBonus: token modifier 4, reputation modifier 0) and the
   request 3817 (`RequestPurchaseRankIncrease`) are not done.
 - PvP, the wars, and the territory owner need the public faction of the Faction state and the checks of 0x30AD140 that the backend does

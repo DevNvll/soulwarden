@@ -243,6 +243,22 @@ struct QuestRow {
     std::uint64_t parent{0};
     std::string source;
     std::vector<QuestTaskRow> tasks;
+    /** Stage QG6a (schema 19): the mission of a board (its missionId; 0: not a mission), isCommunityGoal, and the key of its provider. */
+    std::uint32_t mission{0};
+    bool communityGoal{false};
+    std::string provider;
+};
+
+/**
+ * Stage QG6a (table `character_mission_offers`, schema 19; docs/systems/mission-boards.md): the town entry of a character for a territory
+ * (MissionOptionData of the ObjectiveInteractor state): the stored seed, the missions that are not available for that seed (a hand-in),
+ * and the projects of that seed.
+ */
+struct MissionOfferRow {
+    std::uint16_t territory{0};
+    std::uint32_t seed{0};
+    std::vector<std::uint32_t> unavailable;
+    std::vector<std::uint32_t> previousProjects;
 };
 
 /**
@@ -589,6 +605,10 @@ public:
     [[nodiscard]] bool remove_achievements(const std::string& characterId, const std::vector<std::string>& ids,
                                            std::vector<std::string>* removed = nullptr);
 
+    /** Stage QG6a: @return The town entries of a character (its mission offers), in the order of their territories. */
+    [[nodiscard]] std::vector<MissionOfferRow> list_mission_offers(const std::string& characterId);
+    /** Stage QG6a: writes (inserts or replaces) the town entry of a character for its territory. In a batch: a savepoint of its transaction. */
+    [[nodiscard]] bool write_mission_offer(const std::string& characterId, const MissionOfferRow& row);
     /** Stage QG7: @return The faction row of a character (a character with no row: faction 0, no change). */
     [[nodiscard]] CharacterFactionRow faction(const std::string& characterId);
     /** Stage QG7: writes (inserts or replaces) the faction row of a character. In a batch: a savepoint of its transaction. */

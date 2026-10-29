@@ -1042,6 +1042,42 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   rows, 527 supported, 0 row differences, 0 of 6,759 own facts differ, 306 histories with 0 differences, 25 groups, the new Soldier completes
   66; on the manifest of before with the new data it finds 5 row differences and 10 own fact differences.
 
+### The missions of the boards (stage QG6a)
+
+The rules of the boards, the offers, the accept, and the hand-in are in [Mission boards](mission-boards.md). The rules of the quest system:
+
+- A mission instance is a quest instance (`QuestInstance`) with the mission values: `mission` (the CRC-32 of the MissionID), `communityGoal`,
+  `provider` (the key of the board placement), and `destination` (the 16 bytes of the actor id of the live board: a world value, not
+  stored). The Objectives state writes them into the element of the instance (protocol notes 4.64). The rows of `character_quests` have
+  the first three (schema 19).
+- The tree of a mission instance is the effective objective of its mission (`QuestData::objective_by_crc(crc, mission)`): the template
+  with the kill override of the row. Each lookup of the tree of an instance (the tasks, the Objectives state, the refresh, the hand-in)
+  gives the mission [data; client: the factory 0x4461150].
+- `Quests::grant_mission` makes the instance (the grant `board`): the checks of a grant, a new instance id, the origin territory of the
+  board. The rewards of the hand-in are the success event of the mission row (SuccessGameEventIdOverride), else the event of the template
+  [data].
+- The return task (CM_ReturnToGiver: TaskInteract with the tag `returntogiver`) stays Active until the hand-in 2461 at the provider
+  board of the instance, which completes it and then hands in [client: the ready check 0x3A3CC50 needs the return pending; agent: the
+  request at the provider is the return].
+- A commit hook (`QuestCommitHook`: `write` in the transaction, `apply` after the commit) puts the rows of another system into the
+  transaction of a quest change: the town entry of the hand-in of a mission, and the faction row and the cost of a faction change
+  (finding QG7R-R1). A refused row of the hook changes nothing (MP-7).
+
+### The corrections of the code review of stage QG7 (in stage QG6a)
+
+The findings QG7R-R1 to QG7R-R7 (`~/Games/soulwarden/work/evidence/quests/qg7/code-review/FINDINGS.md`) are corrected in stage QG6a;
+each case fails on the tree of stage QG7 and passes now (`tests/review_qg7_tests.cpp`; QGR7G is a control that passes on both). The
+rules of R1 and R7 are in [Factions](factions.md), the rules of R3 and R4 in [Encounters](encounters.md).
+
+- QG7R-R1 (QGR7A): a faction change writes the faction row, the cost, and the end of each quest that the change ends in one transaction
+  (`Quests::faction_ends` with the commit hook). A refused quest row changes nothing: the faction, the Azoth, and the old trial stay.
+- QG7R-R2 (QGR7B, QGR7C): a refused automatic hand-in (a row with no destination person) stays pending. A store failure tries again
+  after 250 ms of the world clock (`kSelfHandInRetry`); a full bag or a balance that is too low waits for a change of the items or of the
+  progression (`m_selfHandInWaits`). The count `selfHandInRetries` is in the counts of the quest system.
+- QG7R-R5 (QGR7F): a history of the support manifest keeps its earned categorical progressions (the faction reputation and tokens) at
+  the RequiredProgression checks of a person offer. No count changes.
+- QG7R-R6 (QGR7D): a faction change alone (no other change) tests the pushed rows of the faction gates again (`PushWatch.faction`).
+
 ### The corrections of the code review of stage QG5c5 (in stage QG7)
 
 The findings QG5C5R-R1 to QG5C5R-R5 (`~/Games/soulwarden/work/evidence/quests/qg5c5/code-review/FINDINGS.md`) are corrected in stage QG7;

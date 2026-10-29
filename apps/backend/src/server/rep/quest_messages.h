@@ -60,6 +60,18 @@ inline constexpr std::uint32_t kTypeCinematicStarted = 6606;
 inline constexpr std::uint32_t kTypeCinematicEnded = 6542;
 inline constexpr std::uint32_t kTypeStartWhisper = 5070;
 inline constexpr std::uint32_t kTypeResetObjective = 5600;
+/**
+ * Stage QG6a (docs/systems/mission-boards.md; research mission-boards.md 2.2), the ObjectiveInteractor facet of RootPlayer (component
+ * 006554ad-..., slot 10):
+ *   3819 ObjectiveInteractorComponentServerFacet_OnCommunityGoalSelectionRequest (sender 0x494E700, writer 0x3274450, caller 0x495C7F0):
+ *        missionId:u32 destinationOverride:u32 (the writer sends the mission at +0x24 first). The accept of a town offer.
+ *   2461 ObjectiveInteractorComponentServerFacet_OnObjectiveCompletionRequest (sender 0x494E910, caller 0x495CCE0, reader 0x39E8A10):
+ *        instance:u64. The hand-in at a board (one for each ready mission; complete-all sends one each).
+ * No answer: the Objectives state and the provider state give the result.
+ */
+inline constexpr std::uint32_t kTypeCommunityGoalSelection = 3819;
+inline constexpr std::uint32_t kTypeObjectiveCompletion = 2461;
+inline constexpr const char* kObjectiveInteractorComponentName = "RootPlayer/006554ad-a98d-48e4-a5d6-f8a0ab3e7933";
 /** The TerritoryDetector component of the player slice (entity RootPlayer), by its name in slice-ids.json (live log of stage 1.8c). */
 inline constexpr const char* kTerritoryDetectorComponentName = "RootPlayer/efc5d83c-a790-6a1f-f6f2-150e05d4d093";
 
@@ -120,5 +132,15 @@ struct ObjectiveCall {
 };
 /** @return The body, or no value. `wide`: an instance (u64); else a screen CRC (u32). */
 [[nodiscard]] std::optional<ObjectiveCall> read_objective_call(std::span<const std::uint8_t> body, bool wide);
+
+/** Stage QG6a: the body of 3819: the facet, the entity, the missionId, and the destination argument of the client. */
+struct CommunityGoalSelection {
+    std::uint64_t target{0};
+    std::uint64_t entity{0};
+    std::uint32_t mission{0};
+    std::uint32_t destination{0};
+};
+
+[[nodiscard]] std::optional<CommunityGoalSelection> read_community_goal_selection(std::span<const std::uint8_t> body);
 
 } // namespace soulwarden::backend::server::rep

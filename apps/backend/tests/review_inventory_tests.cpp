@@ -7,6 +7,7 @@
 // The review finding for the item catalog tool (an input that is not complete) has no case
 // here: the tool is a Python program. tools/gamedata/item_catalog.py refuses such an input.
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 
@@ -399,12 +400,31 @@ void older_schemas(const Options& options) {
         const bool awarded = store.write_quest_award(kCharacterA, state::QuestAwardRow{"Test_Quest", 2, 1})
                              && store.write_quest_award(kCharacterA, state::QuestAwardRow{"Test_Quest", 2, 3})
                              && store.list_quest_awards(kCharacterA).size() == 1 && store.list_quest_awards(kCharacterA)[0].amount == 3
-                             && store.write_quest(kCharacterA, state::QuestRow{0xF000000000000002ULL, "Test_Other", 8, 0, 0, 0, "", {}})
+                             && store.write_quest(kCharacterA, state::QuestRow{0xF000000000000002ULL, "Test_Other", 8, 0, 0, 0, "", {}, 0, false, ""})
                              && store.delete_quest(kCharacterA, 0xF000000000000002ULL) && store.list_quests(kCharacterA).size() == 1;
         // Schema version 18 (stage QG7): the faction row of a character (the delete of the character removes it).
         const bool factioned = store.write_faction(kCharacterA, state::CharacterFactionRow{2, 1792619000000000000ULL, 3})
                                && store.faction(kCharacterA).faction == 2 && store.faction(kCharacterA).changedNs == 1792619000000000000ULL
                                && store.faction(kCharacterA).changes == 3;
+        // Schema version 19 (stage QG6a): the mission of a quest of a board and the town entry of a character (the delete removes them).
+        state::QuestRow mission;
+        mission.instance = 0xF000000000000009ULL;
+        mission.objective = "Test_Mission_Template";
+        mission.objectiveCrc = 9;
+        mission.source = "board";
+        mission.mission = 0xEE633DF7U;
+        mission.communityGoal = true;
+        mission.provider = "b0a4d000-0000-4000-8000-000000000001/0000000000000b01";
+        const bool missionWritten = store.write_quest(kCharacterA, mission)
+                                    && store.write_mission_offer(kCharacterA, state::MissionOfferRow{6, 77, {0xEE633DF7U}, {0x2591C412U}});
+        const std::vector<state::QuestRow> missionRows = store.list_quests(kCharacterA);
+        const bool missioned = missionWritten
+                               && std::any_of(missionRows.begin(), missionRows.end(),
+                                              [](const state::QuestRow& row) { return row.mission == 0xEE633DF7U && row.communityGoal
+                                                                                      && row.provider.size() == 53; })
+                               && store.list_mission_offers(kCharacterA).size() == 1 && store.list_mission_offers(kCharacterA)[0].seed == 77
+                               && store.list_mission_offers(kCharacterA)[0].unavailable == std::vector<std::uint32_t>{0xEE633DF7U}
+                               && store.list_mission_offers(kCharacterA)[0].previousProjects == std::vector<std::uint32_t>{0x2591C412U};
         // Schema version 17 (stage 1.8d): the repeat rows of the quests.
         const bool repeated = store.write_quest_repeat(kCharacterA, state::QuestRepeatRow{"Test_Quest", 1, 100, 200})
                               && store.write_quest_repeat(kCharacterA, state::QuestRepeatRow{"Test_Quest", 2, 300, 400})
@@ -420,16 +440,17 @@ void older_schemas(const Options& options) {
                              && store.list_craft_cooldowns(kCharacterA).empty() && store.list_quests(kCharacterA).empty()
                              && store.list_quest_pins(kCharacterA).empty() && store.list_quest_grants(kCharacterA).empty()
                              && store.list_quest_undo(kCharacterA).empty() && store.list_quest_awards(kCharacterA).empty()
-                             && store.list_quest_repeats(kCharacterA).empty() && store.faction(kCharacterA).faction == 0;
-        check(made && opened && schema_version(path) == 18 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
-                  && timed && gathered && cooled && quested && awarded && repeated && factioned && deleted,
+                             && store.list_quest_repeats(kCharacterA).empty() && store.faction(kCharacterA).faction == 0
+                             && store.list_mission_offers(kCharacterA).empty();
+        check(made && opened && schema_version(path) == 19 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
+                  && timed && gathered && cooled && quested && awarded && repeated && factioned && missioned && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 18: its character row and its item stay (the item with no perk), its persona has an account, "
+                  + " opens and gets version 19: its character row and its item stay (the item with no perk), its persona has an account, "
                     "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
                     "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, a loot "
                     "claim with a kept item (stage 3.5b.1), the part of a loot bag with a stored instance (stage 3.5b.2) and its fast end, the world time (stage 2.2), "
                     "the run clock and a depleted gathering node (stage 3.6a), the cooldown of a recipe (stage 3.7b), a quest with a full u64 "
-                    "instance, its pin, its grant, and its undo row (stage 1.8a), an award row and the delete of a quest (stage 1.8c), a repeat row (stage 1.8d), a faction row (stage QG7), and the delete of a "
+                    "instance, its pin, its grant, and its undo row (stage 1.8a), an award row and the delete of a quest (stage 1.8c), a repeat row (stage 1.8d), a faction row (stage QG7), a mission of a board and a town entry (stage QG6a), and the delete of a "
                     "character removes the rows of the character (the entitlement of the account stays)");
     }
 }

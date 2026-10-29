@@ -589,6 +589,29 @@ backend. The tool of each system is also in the document of that system.
   with the same name, and whose `bindings.jsonc` replaces the binding file of the program; a file that is not correct is refused with one
   log line, and the file of the program stays.
 
+- `mission-data.json` (stage QG6a, `tools/gamedata/missions.sh`, [Mission boards](../systems/mission-boards.md)): the mission rows
+  of the boards (each table of the type MissionData: the town project missions, 13,248 rows, and the open world missions, 3,046 rows;
+  the affinity table has no row), each with its id, its CRC-32 (the missionId of the wire), its table and row number, its template
+  objective, its territory rule (`territories`: the ids and the exclusion of AvailableTerritoryID), and its cells as source text; the
+  projects of the towns (TerritoryProgressionData: 50 rows with ProjectType and ProgressionLevel); the game events that a mission names
+  (203); the mission weights and the flexible boards (only their cells, for stage QG6b); and `townBuckets`, the goal buckets of the town
+  missions in the order of the client (Kill 3,959, Gather 3,418, Explore 5,871: the hash order of the client, OFFERS.md section 6). 18 MB,
+  about 10 s; needs an Oodle source. The tool stops with no file for a missing source, a missing column, two rows with one id or one
+  CRC-32, or a territory cell of a wrong form; a reference that does not resolve is a counted diagnostic. Without the file the backend
+  starts: the open of a board is refused (3743 result 2) and each accept is refused (test case QG6AK). `check_missions_tool.py` is the check (case QG6A-TOOL).
+- `interaction-data.json` format 5 (stage QG6a, [Mission boards](../systems/mission-boards.md)): the mission boards. The kind table has
+  `OpenMissionBoardOption` (kind `missionBoard`, action 51). The board of a settlement is a child that the client makes (the spawner
+  `Town_Project_Board`: m_spawnOnInitialize true), so it is an object of `objects` with the client id of its place (the rule of a
+  person child), the actor G and 8 zero bytes, and the member `board`: `territory` (the slot of its TerritoryInterface component, 3),
+  `provider` (the community flag, the territory flag, the types, the PvP rule), `spawner`, `territoryId` (the territory of the
+  CommunityGoalProvider landmark, type 8, at its place in `TerritoryLandmarks` of the region files), and `claim` (the ActorId of the
+  Claim landmark, type 4, of that territory: the provider identity of the board). It is not in `spawned`. Two Claim landmarks of one
+  territory with different actor ids stop the tool. The build: 13 boards, each with its claim (`counts.boardsWithNoClaim` absent). The slots of a
+  template have `territory` too (the stations and the camps have the component; the backend sends them no state). The build: 13 boards
+  (`counts.boards`); the other objects, the server children, and `encounterObjects` keep their values. The loader of the backend refuses
+  an object of the kind `missionBoard` with no member `board`, and a board slot at the slot of a bound. A backend of format 4 refuses
+  the file. The check is `check_interactions_tool.py` (the board object and the cases board-not-community and board-client).
+  `tools/release.sh` takes both files with the game data folder.
 ## Commands
 
 ```sh
@@ -614,6 +637,7 @@ tools/gamedata/pois.sh               # one time, after quests.sh: the shapes of 
 tools/gamedata/triggers.sh           # one time, after quests.sh: the trigger volumes of the quests (the chunks, the capitals, the instances apart; 0.35 MB, 74 s with the pak index of navigation.sh); needs an Oodle source
 tools/gamedata/quest-objects.sh      # one time: the destructible quest objects (0.1 MB); needs an Oodle source
 tools/gamedata/encounters.sh         # one time: the encounter recipes of the quests (0.9 MB, 20 s); needs an Oodle source; with creatures.sh, interactions.sh, and gathering.sh of stage QG5c2
+tools/gamedata/missions.sh           # one time: the mission data of the boards (mission rows, projects, events, town buckets; 18 MB, 10 s); needs an Oodle source
 tools/gamedata/conversations.sh      # one time: the conversation data of the persons (NPC rows, states, topics; 1.5 MB, 10 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
@@ -623,6 +647,11 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage QG6a adds `mission-data.json` and changes `interaction-data.json` (format 5: 13 board objects; the other objects, the server
+  children, and the encounter objects keep their values).
+  Write both from one game copy (`tools/gamedata/missions.sh`, `interactions.sh`). A backend of before stage QG6a refuses an
+  interaction file of format 5: put the backend and the files together (`tools/release.sh` takes both). The fix of the code review of
+  stage QG7 in `encounters.py` (finding R4, the order of the child stages) gives the same bytes of `encounter-data.json` for this build.
 - Stage QG5c2 adds `encounter-data.json` and changes `creatures.json` (still format 4: the member kinds and the list `members`; the kinds
   and the 33,023 spawn points of before keep their values), `interaction-data.json` (still format 4: the member `encounterObjects` and the
   templates of its 48 start objects), and `gathering-data.json` (still format 1: the member `encounterObjects`; its folder

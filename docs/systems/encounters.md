@@ -208,6 +208,12 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   consumer; else the recipe is refused (the runner and `tools/gamedata/encounters.py`, case `removed-earlier` of
   `check_encounters_tool.py`) [review QG5C5R-R3; case QGR5C5C; `encounter-data.json` does not change]. The end of a parent stage runs
   the end actions (killSpawnsAtEnd, destroyAtEnd) of each started child stage that it ends [review QG5C5R-R4; case QGR5C5D].
+- Code review of stage QG7 (corrected in stage QG6a; `tests/review_qg7_tests.cpp`): a DestroySliceAction removes a group part when
+  any name of the action (its slice, its alias, or a slice of its alias) names the selected body of the part [review QG7R-R3; case
+  QGR7H]. The check of an earlier count source walks the stages in the order of the run: the start actions of each stage on the path to
+  the consumer, and the start and the end actions of each earlier child (the end actions of a child after its own children). A child
+  that removes the source before the consumer starts refuses the count (the runner and `tools/gamedata/encounters.py`, case
+  `removed-by-child` of `check_encounters_tool.py`) [review QG7R-R4; case QGR7I; `encounter-data.json` of this build does not change].
 - Stage QG5c5 (live QG5c5 L2): a death counts only for the stages that ran when it came. The end of a sub-wave starts its next sibling (a
   transition that counts each death of a member) in the same step, and that stage does not count the same death.
 - Code review of stage QG5c4: a trigger meets only its own objective; the stage ends when each objective is met [review QG5C4R-R2]. The

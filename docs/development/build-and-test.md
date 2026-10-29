@@ -203,6 +203,13 @@ python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/
   a settings file; since the code review of stage 3.3b-S6), RK11 `check_projectile_tool.py`, RK12 `check_spell_tool.py`, and
   DL9 `tools/gamedata/check_progression_tool.py` (stage 1.1b): with no Python 3 these cases fail. `check_dev_sound.py TREE`
   checks a different tree (the proof of finding S6-R1 on the tree of stage 3.3b-S6: status 1).
+- Stage QG6a adds the cases QG6A-TOOL and QG6AA to QG6AL (`tests/mission_board_tests.cpp`: the mission boards; [Mission
+  boards](../systems/mission-boards.md)) and QGR7A to QGR7I (`tests/review_qg7_tests.cpp`: the corrections of the code review of stage
+  QG7, findings QG7R-R1 to R7, and one control case, QGR7G; each correction case fails on the tree of stage QG7). QG6A-TOOL runs
+  `check_missions_tool.py`. The state decoder knows the states 3829 (ObjectiveInteractor) and 1746 (TerritoryInterface). B11 checks the
+  schema version 19 (the mission columns of `character_quests` and the table `character_mission_offers`); the migration adds a column
+  only when the table does not have it (a test database of an older schema can have it). The test fixture `ServerHost` takes a mission
+  data file (`with_missions`).
 - Stage QG7 adds the cases QG7A to QG7J (`tests/faction_tests.cpp`: the factions; [Factions](../systems/factions.md)) and QGR5C5A to
   QGR5C5F (`tests/review_qg5c5_tests.cpp`: the corrections of the code review of stage QG5c5, findings QG5C5R-R1 to R5, and one control
   case; each correction case fails on the tree of stage QG5c5). QG7I runs `check_progression_tool.py` (the faction cases), and QG7J

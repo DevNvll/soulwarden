@@ -53,6 +53,8 @@ enum class InteractionKind : std::uint8_t {
     door,
     restFurniture,
     other,
+    /** Stage QG6a: a mission board (the town project board of a settlement: a server child; docs/systems/mission-boards.md). */
+    missionBoard,
 };
 
 [[nodiscard]] const char* interaction_kind_text(InteractionKind kind);
@@ -205,6 +207,14 @@ struct PersonApart {
 };
 
 /** One object: a placement of a layer whose slice has Interact components. */
+/** Stage QG6a: the ObjectiveProvider component of a mission board (research mission-boards.md 2.1). */
+struct MissionProvider {
+    bool communityGoal{false};
+    bool useTerritoryId{false};
+    std::vector<std::string> missionTypes;
+    bool pvpDisabled{false};
+};
+
 struct InteractionObject {
     /** The placement UUID: the durable key of the object. */
     std::string key;
@@ -223,6 +233,18 @@ struct InteractionObject {
     std::optional<InteractionAssembly> assembly;
     /** A person (stage 2.5c, a file of format 4): its NPC row and its presence. No value: not a person, or a file of an older format. */
     std::optional<PersonBinding> person;
+    /**
+     * Stage QG6a (format 5, member "board"): a mission board. The client makes the board of a settlement itself (the child of the spawner
+     * Town_Project_Board with m_spawnOnInitialize true, the client id of its place: the rule of a person child), and the backend gives the
+     * states of the server to its actor. The slot of its TerritoryInterface component (type 1746) and its ObjectiveProvider component.
+     */
+    std::uint32_t territorySlot{0};
+    std::optional<MissionProvider> provider;
+    /**
+     * Stage QG6a: the actor id of the Claim landmark of the territory of the board (the member board.claim; the static read DESTINATION.md):
+     * the provider identity of the board and the destination of its town missions. No value: the data has none (the actor of the board).
+     */
+    std::optional<std::array<std::uint8_t, 16>> claim;
 };
 
 /** A unit quaternion (x, y, z, w): the rotation of a server child. */
@@ -260,6 +282,13 @@ struct InteractionTemplate {
     std::optional<InteractionAssembly> assembly;
     std::vector<InteractionBound> bounds;
     std::vector<TemplateChild> children;
+    /** Stage QG6a (format 5): the slot of the TerritoryInterface component (type 1746; 3 on the town board). 0: none. */
+    std::uint32_t territorySlot{0};
+    /**
+     * Stage QG6a (format 5): the ObjectiveProvider component of a mission board (no replicated slot): m_isCommunityGoalBoard,
+     * m_useTerritoryId, m_editorProvidedMissionTypes, m_disablePvpMissions (slices/pois/signage/town_project_board.dynamicslice).
+     */
+    std::optional<MissionProvider> provider;
 };
 
 /**
@@ -375,6 +404,10 @@ public:
     [[nodiscard]] const std::vector<InteractionObject>& objects() const {
         return m_objects;
     }
+    /** Stage QG6a: the indexes of the objects of the kind missionBoard (the boards that the client makes), in the order of the file. */
+    [[nodiscard]] const std::vector<std::uint32_t>& boards() const {
+        return m_boards;
+    }
     [[nodiscard]] const std::vector<InteractionOption>& options() const {
         return m_options;
     }
@@ -462,6 +495,7 @@ private:
     std::vector<InteractionOption> m_options;
     std::vector<InteractionAchievement> m_achievements;
     std::vector<InteractionObject> m_objects;
+    std::vector<std::uint32_t> m_boards;
     std::unordered_map<std::string, std::uint32_t> m_byKey;
     std::unordered_map<std::uint64_t, std::uint32_t> m_byGroup;
     std::unordered_map<std::string, std::uint32_t> m_achievementByLowerId;

@@ -54,6 +54,7 @@
 #include "world/skills.h"
 #include "world/factions.h"
 #include "world/projectiles.h"
+#include "world/missions.h"
 #include "world/persons.h"
 #include "world/quest_objects.h"
 #include "world/quests.h"
@@ -311,6 +312,11 @@ struct WorldOptions {
     const gamedata::CraftingData* craftingData{nullptr};
     /** The quest data (game data, stage 1.8a). Null or not loaded: no quest, and the states of a character do not change (rule A5a). */
     const gamedata::QuestData* questData{nullptr};
+    /**
+     * Stage QG6a: the mission data of the boards (game data mission-data.json; docs/systems/mission-boards.md), or null: a board offers
+     * nothing, and each accept is refused. The quest data must have its bindings (QuestData::bind_missions).
+     */
+    const gamedata::MissionData* missionData{nullptr};
     /** Stage 1.8c: the points of interest of the world (game data poi-data.json), or null: no task of a place progresses. */
     const gamedata::PoiData* poiData{nullptr};
     /** Stage 1.8b: the trigger volumes of the quests (game data trigger-data.json), or null: a task of a trigger area waits. */
@@ -686,6 +692,16 @@ public:
      * PositionInTheWorld state of its slice: live check L4). The caller checks the position (valid_position).
      */
     Entity& spawn_object(const ObjectBody& body, const state::WorldPosition& position);
+    /**
+     * Stage QG6a (docs/systems/mission-boards.md): @return The world entity (slices/globalgde.dynamicslice, sub id 2): an object entity
+     * with an actor of the id allocator, its metadata state, and the LandClaimManager state (slot 2, type 3086). The first call makes
+     * it; it stays while the backend runs, and each session observes it at each distance.
+     */
+    Entity& world_entity();
+    /** @return The id of the world entity, or 0 when nothing made it. */
+    [[nodiscard]] EntityId world_entity_id() const {
+        return m_worldEntity;
+    }
     /** Removes the entity of a server child: each session that observes it sends the stop. Only the interaction system calls it. */
     void remove_object(EntityId id);
 
@@ -933,6 +949,13 @@ public:
     [[nodiscard]] Persons& persons() {
         return m_persons;
     }
+    /** @return The mission boards (stage QG6a): the offers, the accept, the hand-in, the provider state of a character. */
+    [[nodiscard]] Missions& missions() {
+        return m_missions;
+    }
+    [[nodiscard]] const Missions& missions() const {
+        return m_missions;
+    }
     [[nodiscard]] const Quests& quests() const {
         return m_quests;
     }
@@ -1047,6 +1070,7 @@ private:
     // World thread only.
     IdAllocator m_ids;
     Revision m_revision{0};
+    EntityId m_worldEntity{0};
     Revision m_lastTravel{0};
     /** The state of the random numbers (random_unit). */
     std::uint64_t m_random{0};
@@ -1110,6 +1134,7 @@ private:
     Encounters m_encounters;
     /** The persons (stage 2.5c): after the interactions (its handler of OpenConversation) and the quests (the conditionals, the tasks). */
     Persons m_persons;
+    Missions m_missions;
     /** The build presets (stage B0): they use the inventory, the progress, the skill, and the ownership systems. */
     BuildPresets m_presets;
 };

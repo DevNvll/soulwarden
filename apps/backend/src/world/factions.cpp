@@ -292,11 +292,22 @@ FactionResult Factions::apply(Entity* character, const std::string& characterId,
             return refuse(error == ProgressError::notEnoughBalance ? FactionError::notEnoughAzoth : FactionError::storeFailed);
         }
     }
-    {
+    // Code review of stage QG7, finding QG7R-R1 (MP-7): the quest ends of the change go into the same transaction (the quest plan with the
+    // faction row and the cost as its hook); a refused part changes nothing.
+    QuestCommitHook hook;
+    hook.write = [&]() {
+        return m_store.write_faction(characterId, state::CharacterFactionRow{after.faction, after.changedNs, after.changes})
+               && (cost == 0 || m_world.skills().write(pay));
+    };
+    const std::optional<QuestError> ended =
+        character != nullptr && before.faction != after.faction ? m_world.quests().faction_ends(*character, after.faction, hook) : std::nullopt;
+    if (ended) {
+        if (*ended != QuestError::none) {
+            return refuse(FactionError::storeFailed);
+        }
+    } else {
         state::Store::Batch batch(m_store);
-        const bool written = batch.open()
-                             && m_store.write_faction(characterId, state::CharacterFactionRow{after.faction, after.changedNs, after.changes})
-                             && (cost == 0 || m_world.skills().write(pay)) && batch.commit();
+        const bool written = batch.open() && hook.write() && batch.commit();
         if (!written) {
             return refuse(FactionError::storeFailed);
         }

@@ -21,6 +21,11 @@ constexpr std::uint64_t kFormat = 2;
 constexpr std::uint64_t kFormatContainers = 3;
 /** Format 4 (stage 2.5c): format 3 and the persons (the person children that the client makes, the member person of an object). */
 constexpr std::uint64_t kFormatPersons = 4;
+/**
+ * Format 5 (stage QG6a): format 4, the kind missionBoard and the member board of an object (a board that the client makes: the slot of its
+ * TerritoryInterface component and its ObjectiveProvider), and the slot territory of a template (the stations and the camps have it).
+ */
+constexpr std::uint64_t kFormatBoards = 5;
 
 constexpr std::pair<const char*, InteractionKind> kKindTexts[] = {
     {"lorePage", InteractionKind::lorePage},
@@ -35,6 +40,7 @@ constexpr std::pair<const char*, InteractionKind> kKindTexts[] = {
     {"door", InteractionKind::door},
     {"restFurniture", InteractionKind::restFurniture},
     {"other", InteractionKind::other},
+    {"missionBoard", InteractionKind::missionBoard},
 };
 
 std::string lower_ascii(std::string_view text) {
@@ -351,7 +357,55 @@ public:
                 return fail("a bound of the object " + object.key + " is not correct");
             }
         }
-        return assembly(entry, object.assembly) && person(entry, object);
+        return assembly(entry, object.assembly) && person(entry, object) && board(entry, object);
+    }
+
+    /** The ObjectiveProvider of a mission board (stage QG6a): {communityGoal, useTerritoryId, missionTypes, pvpDisabled}. */
+    bool provider(const json& value, const std::string& what, std::optional<MissionProvider>& out) {
+        MissionProvider parsed;
+        if (!value.is_object() || !flag(value, "communityGoal", parsed.communityGoal) || !flag(value, "useTerritoryId", parsed.useTerritoryId)
+            || !flag(value, "pvpDisabled", parsed.pvpDisabled) || !value.contains("missionTypes") || !value["missionTypes"].is_array()) {
+            return fail("the provider of " + what + " is not {communityGoal, useTerritoryId, missionTypes, pvpDisabled}");
+        }
+        for (const json& type : value["missionTypes"]) {
+            if (!type.is_string()) {
+                return fail("a mission type of " + what + " is not a text");
+            }
+            parsed.missionTypes.push_back(type.get<std::string>());
+        }
+        out = std::move(parsed);
+        return true;
+    }
+
+    /**
+     * The member board of an object (stage QG6a, format 5): the slot of the TerritoryInterface component and the ObjectiveProvider. An
+     * object of the kind missionBoard must have it; its slot is not the slot of a bound.
+     */
+    bool board(const json& entry, InteractionObject& object) {
+        if (!entry.contains("board")) {
+            if (object.kind == InteractionKind::missionBoard) {
+                return fail("the mission board " + object.key + " has no member board");
+            }
+            return true;
+        }
+        const json& value = entry["board"];
+        if (!value.is_object() || !slot(value, "territory", object.territorySlot) || !value.contains("provider")
+            || !provider(value["provider"], "the board " + object.key, object.provider)) {
+            return fail("the board of the object " + object.key + " is not {territory, provider}");
+        }
+        for (const InteractionBound& bound : object.bounds) {
+            if (object.territorySlot != 0 && bound.slot == object.territorySlot) {
+                return fail("the board " + object.key + " has its TerritoryInterface slot at the slot of a bound");
+            }
+        }
+        if (value.contains("claim")) {
+            std::array<std::uint8_t, 16> claim{};
+            if (!hex128(value, "claim", claim)) {
+                return fail("the claim of the board " + object.key + " is not 32 hexadecimal digits");
+            }
+            object.claim = claim;
+        }
+        return true;
     }
 
     /** The member person of an object (stage 2.5c): the NPC row and the presence rule. */
@@ -427,6 +481,13 @@ public:
         const json& slots = entry["slots"];
         if (!slot(slots, "position", value.positionSlot) || !slot(slots, "buildable", value.buildableSlot)
             || !slot(slots, "ownership", value.ownershipSlot) || !slot(slots, "vitals", value.vitalsSlot)) {
+            return false;
+        }
+        // Stage QG6a (format 5): the TerritoryInterface slot and the ObjectiveProvider (optional members: a file of format 4 has none).
+        if (slots.contains("territory") && !slot(slots, "territory", value.territorySlot)) {
+            return false;
+        }
+        if (entry.contains("provider") && !provider(entry["provider"], "the template " + value.slice, value.provider)) {
             return false;
         }
         if (!signed_number(entry, "buildableState", -1, 255, whole)) {
@@ -530,7 +591,7 @@ bool InteractionData::load(const std::string& path) {
         return false;
     }
     const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kFormatLevel && format != kFormat && format != kFormatContainers && format != kFormatPersons) {
+    if (format != kFormatLevel && format != kFormat && format != kFormatContainers && format != kFormatPersons && format != kFormatBoards) {
         m_error = "the file does not have the format 1, 2, 3, or 4";
         return false;
     }
@@ -884,10 +945,15 @@ bool InteractionData::set(std::vector<InteractionOption> options,
             }
             spread = std::max(spread, std::hypot(bound.position.x, bound.position.y));
         }
+        // Stage QG6a: a mission board has its ObjectiveProvider (the rules of the board read it).
+        if (entry.kind == InteractionKind::missionBoard && !entry.provider) {
+            m_error = "the template " + entry.slice + " of the kind missionBoard has no provider";
+            return false;
+        }
         // One component for each slot of a slice (code review of stage 2.5b, finding ST-R5): the PositionInTheWorld, BuildableController,
-        // Ownership, and Vitals slots and the slot of each Interact bound are different (0: the slice has no such component).
+        // Ownership, Vitals, and TerritoryInterface (stage QG6a) slots and the slot of each Interact bound are different (0: the slice has no such component).
         std::vector<std::uint32_t> used;
-        for (const std::uint32_t slot : {entry.positionSlot, entry.buildableSlot, entry.ownershipSlot, entry.vitalsSlot}) {
+        for (const std::uint32_t slot : {entry.positionSlot, entry.buildableSlot, entry.ownershipSlot, entry.vitalsSlot, entry.territorySlot}) {
             if (slot != 0) {
                 used.push_back(slot);
             }
@@ -956,6 +1022,11 @@ bool InteractionData::set(std::vector<InteractionOption> options,
     }
     data.m_options = std::move(options);
     data.m_achievements = std::move(achievements);
+    for (std::uint32_t index = 0; index < objects.size(); ++index) {
+        if (objects[index].kind == InteractionKind::missionBoard) {
+            data.m_boards.push_back(index);
+        }
+    }
     data.m_objects = std::move(objects);
     data.m_templates = std::move(templates);
     data.m_spawned = std::move(spawned);

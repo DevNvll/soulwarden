@@ -35,6 +35,7 @@
 #include "gamedata/encounter_data.h"
 #include "gamedata/trigger_data.h"
 #include "gamedata/conversation_data.h"
+#include "gamedata/mission_data.h"
 #include "gamedata/quest_data.h"
 #include "gamedata/slice_ids.h"
 #include "gamedata/chest_data.h"
@@ -675,6 +676,21 @@ int main(int argc, char** argv) {
         log::write("backend: no quest data at %s (%s): no quest. Make the file with tools/gamedata/quests.sh", questDataPath.c_str(),
                    questData.error().c_str());
     }
+    // The mission data of the boards (stage QG6a, docs/systems/mission-boards.md): the mission rows, the projects, the events of the
+    // missions, and the goal buckets of the town offers. The quest data binds each mission to its template (the effective objective). With no
+    // file a board offers nothing.
+    const std::string missionDataPath = (gameDataDirectory / gamedata::kMissionDataFile).string();
+    gamedata::MissionData missionData;
+    if (missionData.load(missionDataPath)) {
+        questData.bind_missions(missionData);
+        log::write("backend: mission data %s: %zu missions, %zu projects, %zu events, %zu town buckets; %zu missions bound to the quest data "
+                   "(%zu effective objectives)",
+                   missionDataPath.c_str(), missionData.missions().size(), missionData.projects().size(), missionData.events().size(),
+                   missionData.town_buckets().size(), questData.mission_count(), questData.variant_count());
+    } else {
+        log::write("backend: no mission data at %s (%s): a board offers nothing. Make the file with tools/gamedata/missions.sh",
+                   missionDataPath.c_str(), missionData.error().c_str());
+    }
     // The points of interest (stage 1.8c): the shapes of the quest tasks of a place. Without the file no task of a place progresses.
     const std::string poiDataPath = (gameDataDirectory / gamedata::kPoiDataFile).string();
     gamedata::PoiData poiData;
@@ -807,6 +823,7 @@ int main(int argc, char** argv) {
     worldOptions.interactionData = &interactionData;
     worldOptions.craftingData = &craftingData;
     worldOptions.questData = &questData;
+    worldOptions.missionData = &missionData;
     worldOptions.poiData = &poiData;
     worldOptions.questObjectData = &questObjectData;
     worldOptions.encounterData = &encounterData;

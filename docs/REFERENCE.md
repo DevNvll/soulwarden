@@ -212,7 +212,11 @@ is left, the cost of a change, and the reputation and the tokens of each faction
 [--changes N]` (set the faction with no check: `none`, `syndicate`, `marauder`, `covenant`; route `POST /v1/dev/progress/faction`, admin
 command `set_faction`), and `reputation|tokens CHARACTER FACTION RANK POINTS` (the rank and the points of a faction progression, at most
 the cap of the rank; route `POST /v1/dev/progress/faction-progress`, admin command `set_faction_progress`); the changes are harness
-commands too. A
+commands too; stage QG6a ([Mission boards](systems/mission-boards.md)): `missions CHARACTER [MISSION [WINDOWS]]` (the board state of a
+character: the board of its last open, the expiration, the town entries with their seed and their unavailable missions; the town offers
+of now with the seed and the seconds to the next seed; the missions of the character with their tasks; with MISSION, a MissionID: the
+next seed windows, of WINDOWS, default 100, in which the mission is an offer of the character; route `GET /v1/dev/missions`, admin
+command `mission_board`; it changes nothing). A
 command for a character that is not in the world changes its rows in the database. For the objects of the world (stage 2.5a):
 `interactions CHARACTER [METERS]`, `object CHARACTER KEY on|off`, and `interaction cancel
 CHARACTER`; stage 2.5b: `fixture CHARACTER NAME [DX DY DZ] [--yaw D] [--permission N]` (a
@@ -509,6 +513,15 @@ button on "Confirm").
   with two components at one slot (code review of stage 2.5b). From stage QG5c2 the file has the member
   `encounterObjects`: the template of each start object of the encounter recipes (48), with the slot of its VariationData
   component and the row index of its variant (42 have one; [Encounters](systems/encounters.md)). A backend of before does not read it.
+  From stage QG6a the file has format 5: the mission boards of the settlements (13 objects of the kind `missionBoard` that the client
+  makes, with the client id of their place, their provider component, and the slot of their TerritoryInterface component; [Mission
+  boards](systems/mission-boards.md)). A backend of before stage QG6a refuses a file of format 5.
+- `tools/gamedata/missions.sh` makes the mission data (stage QG6a; `~/.local/share/soulwarden/gamedata/mission-data.json`, format 1,
+  18 MB): the mission rows of the boards (13,248 town missions, 3,046 open world missions) with their template objective, their
+  territory rule, and their cells; the 50 projects of the towns; the 203 game events of the missions; the mission weights and the
+  flexible boards; and the goal buckets of the town missions in the order of the client. `--mission ID` prints missions and writes no
+  file. Without the file the backend starts: the open of a board is refused (3743 result 2), and each accept is refused
+  ([Mission boards](systems/mission-boards.md)).
 - `tools/gamedata/gathering.sh` makes the gathering data (stage 3.6a; `~/.local/share/soulwarden/gamedata/gathering-data.json` and
   the folder `gathering/` with one file for each region): the gatherable rows, the trade skill ranks, the events, the tools, the
   gathering slices, the capital nodes, the skinning of the creature slices (from `creatures.json`), and the natural nodes of each

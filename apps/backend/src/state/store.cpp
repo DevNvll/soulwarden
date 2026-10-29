@@ -15,7 +15,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 18;
+constexpr int kSchemaVersion = 19;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -417,13 +417,32 @@ CREATE TABLE IF NOT EXISTS character_factions(
 );
 )sql";
 
+/**
+ * Version 19 (stage QG6a: the mission boards, docs/systems/mission-boards.md). The mission of a quest of a board (`character_quests`:
+ * the missionId, isCommunityGoal, the durable key of the provider board), and the town entries of a character (`character_mission_offers`:
+ * the territory, the stored seed, the unavailable missions and the projects of that seed as lists of hexadecimal CRC-32 values).
+ */
+constexpr const char* kMigration19Columns[][2] = {{"mission_crc", "ALTER TABLE character_quests ADD COLUMN mission_crc INTEGER NOT NULL DEFAULT 0"},
+                                                  {"community_goal", "ALTER TABLE character_quests ADD COLUMN community_goal INTEGER NOT NULL DEFAULT 0"},
+                                                  {"provider", "ALTER TABLE character_quests ADD COLUMN provider TEXT NOT NULL DEFAULT ''"}};
+constexpr const char* kMigration19Missions = R"sql(
+CREATE TABLE IF NOT EXISTS character_mission_offers(
+    character_id TEXT NOT NULL,
+    territory INTEGER NOT NULL,
+    seed INTEGER NOT NULL,
+    unavailable TEXT NOT NULL DEFAULT '',
+    previous_projects TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(character_id, territory)
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
                                             "loot_claims",   "loot_claim_items",    "loot_bags",          "loot_bag_items",
                                             "craft_cooldowns", "character_quests",  "character_quest_tasks", "character_quest_pins",
                                             "character_quest_grants", "character_quest_undo", "character_quest_awards",
-                                            "character_quest_repeats", "character_factions"};
+                                            "character_quest_repeats", "character_factions", "character_mission_offers"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -721,6 +740,23 @@ bool Store::migrate() {
     if (version < 18) {
         // Stage QG7: the factions of the characters.
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration18Factions) || !execute("PRAGMA user_version=18") || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 19) {
+        // Stage QG6a: the missions of the boards. A column that the table has already (a database that a test made older) is not added again.
+        bool ok = execute("BEGIN IMMEDIATE");
+        for (const auto& [column, sql] : kMigration19Columns) {
+            if (!ok) {
+                break;
+            }
+            Statement statement(m_database, "SELECT COUNT(*) FROM pragma_table_info('character_quests') WHERE name=?1");
+            statement.bind(1, column);
+            const bool present = sqlite3_step(statement.handle) == SQLITE_ROW && sqlite3_column_int(statement.handle, 0) == 1;
+            ok = present || execute(sql);
+        }
+        if (!ok || !execute(kMigration19Missions) || !execute("PRAGMA user_version=19") || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
         }
@@ -1642,8 +1678,8 @@ std::vector<QuestRow> Store::list_quests(const std::string& characterId) {
     std::vector<QuestRow> quests;
     {
         Statement statement(m_database,
-                            "SELECT instance_id, objective, objective_crc, accept_ns, origin_territory, parent_instance, source FROM "
-                            "character_quests WHERE character_id=?1 ORDER BY instance_id");
+                            "SELECT instance_id, objective, objective_crc, accept_ns, origin_territory, parent_instance, source, mission_crc, "
+                            "community_goal, provider FROM character_quests WHERE character_id=?1 ORDER BY instance_id");
         statement.bind(1, characterId);
         while (sqlite3_step(statement.handle) == SQLITE_ROW) {
             QuestRow quest;
@@ -1654,6 +1690,9 @@ std::vector<QuestRow> Store::list_quests(const std::string& characterId) {
             quest.originTerritory = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 4), 0, 65535));
             quest.parent = column_instance(statement.handle, 5);
             quest.source = column_text(statement.handle, 6);
+            quest.mission = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 7));
+            quest.communityGoal = sqlite3_column_int64(statement.handle, 8) != 0;
+            quest.provider = column_text(statement.handle, 9);
             if (quest.instance != 0) {
                 quests.push_back(std::move(quest));
             }
@@ -1690,9 +1729,11 @@ bool Store::write_quest(const std::string& characterId, const QuestRow& quest) {
     {
         Statement statement(m_database,
                             "INSERT INTO character_quests(character_id, instance_id, objective, objective_crc, accept_ns, origin_territory, "
-                            "parent_instance, source) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(character_id, instance_id) DO UPDATE SET "
-                            "objective=excluded.objective, objective_crc=excluded.objective_crc, accept_ns=excluded.accept_ns, "
-                            "origin_territory=excluded.origin_territory, parent_instance=excluded.parent_instance, source=excluded.source");
+                            "parent_instance, source, mission_crc, community_goal, provider) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON "
+                            "CONFLICT(character_id, instance_id) DO UPDATE SET objective=excluded.objective, objective_crc=excluded.objective_crc, "
+                            "accept_ns=excluded.accept_ns, origin_territory=excluded.origin_territory, parent_instance=excluded.parent_instance, "
+                            "source=excluded.source, mission_crc=excluded.mission_crc, community_goal=excluded.community_goal, "
+                            "provider=excluded.provider");
         statement.bind(1, characterId);
         bind_instance(statement.handle, 2, quest.instance);
         statement.bind(3, quest.objective);
@@ -1705,6 +1746,9 @@ bool Store::write_quest(const std::string& characterId, const QuestRow& quest) {
             sqlite3_bind_null(statement.handle, 7);
         }
         statement.bind(8, quest.source);
+        sqlite3_bind_int64(statement.handle, 9, static_cast<sqlite3_int64>(quest.mission));
+        sqlite3_bind_int64(statement.handle, 10, quest.communityGoal ? 1 : 0);
+        statement.bind(11, quest.provider);
         ok = sqlite3_step(statement.handle) == SQLITE_DONE;
     }
     if (ok) {
@@ -2027,6 +2071,80 @@ std::vector<CraftCooldownRow> Store::list_craft_cooldowns(const std::string& cha
         rows.push_back(std::move(row));
     }
     return rows;
+}
+
+namespace {
+
+/** @return The text of a list of CRC-32 values (stage QG6a): eight lower-case hexadecimal digits each, separated by commas. */
+std::string crc_list_text(const std::vector<std::uint32_t>& values) {
+    std::string text;
+    char digits[9];
+    for (const std::uint32_t value : values) {
+        std::snprintf(digits, sizeof digits, "%08x", value);
+        text += (text.empty() ? "" : ",") + std::string(digits);
+    }
+    return text;
+}
+
+/** @return The CRC-32 values of a list text; a part that is not eight hexadecimal digits is left out (a database that a person changed). */
+std::vector<std::uint32_t> crc_list_of(const std::string& text) {
+    std::vector<std::uint32_t> values;
+    std::size_t start = 0;
+    while (start < text.size()) {
+        std::size_t end = text.find(',', start);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        const std::string part = text.substr(start, end - start);
+        if (part.size() == 8 && part.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos) {
+            values.push_back(static_cast<std::uint32_t>(std::stoul(part, nullptr, 16)));
+        }
+        start = end + 1;
+    }
+    return values;
+}
+
+} // namespace
+
+std::vector<MissionOfferRow> Store::list_mission_offers(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<MissionOfferRow> rows;
+    Statement statement(m_database, "SELECT territory, seed, unavailable, previous_projects FROM character_mission_offers WHERE character_id=?1 "
+                                    "ORDER BY territory");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        const sqlite3_int64 territory = sqlite3_column_int64(statement.handle, 0);
+        if (territory <= 0 || territory > 0xFFFF) {
+            continue;
+        }
+        MissionOfferRow row;
+        row.territory = static_cast<std::uint16_t>(territory);
+        row.seed = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 1));
+        row.unavailable = crc_list_of(column_text(statement.handle, 2));
+        row.previousProjects = crc_list_of(column_text(statement.handle, 3));
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+bool Store::write_mission_offer(const std::string& characterId, const MissionOfferRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "INSERT INTO character_mission_offers(character_id, territory, seed, unavailable, previous_projects) "
+                                    "VALUES(?1, ?2, ?3, ?4, ?5) ON CONFLICT(character_id, territory) DO UPDATE SET seed=excluded.seed, "
+                                    "unavailable=excluded.unavailable, previous_projects=excluded.previous_projects");
+    statement.bind(1, characterId);
+    sqlite3_bind_int64(statement.handle, 2, static_cast<sqlite3_int64>(row.territory));
+    sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(row.seed));
+    statement.bind(4, crc_list_text(row.unavailable));
+    statement.bind(5, crc_list_text(row.previousProjects));
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of the mission offers of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
 }
 
 CharacterFactionRow Store::faction(const std::string& characterId) {

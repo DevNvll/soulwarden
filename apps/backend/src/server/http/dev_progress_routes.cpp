@@ -177,6 +177,8 @@ void register_dev_progress_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/quests/reset", "dev.quest_reset", command_route(services, commands::reset_quest));
     router.add("GET", "", "/v1/dev/quests/rewards", "dev.quest_rewards", command_route(services, commands::quest_rewards));
     router.add("GET", "", "/v1/dev/quests/places", "dev.quest_places", command_route(services, commands::quest_places));
+    // Stage QG6a: the board state, the town offers, the missions, and the next windows of a mission of a character.
+    router.add("GET", "", "/v1/dev/missions", "dev.missions", command_route(services, commands::mission_board));
     router.add("GET", "", "/v1/dev/quests/support", "dev.quest_support", [&services](const RouteContext& context) {
         if (!context.request.host.empty()) {
             return message(403, "forbidden");

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -56,6 +58,27 @@
 namespace soulwarden::backend::world {
 
 class World;
+
+/**
+ * Stage QG6a (docs/systems/mission-boards.md): the mission values of a new instance that a board gives (Quests::grant_mission): the
+ * missionId, isCommunityGoal, the durable key of the provider board, and the actor id of the live board (destinationOverride).
+ */
+struct MissionGrant {
+    std::uint32_t mission{0};
+    bool communityGoal{false};
+    std::string provider;
+    std::array<std::uint8_t, 16> destination{};
+};
+
+/**
+ * Stage QG6a (MP-7): the rows of another system that go into the one transaction of a quest change, and the change of that system after the
+ * commit: the town entry of a mission hand-in (world/missions.h); the faction and its cost of a faction change (code review of stage QG7,
+ * finding QG7R-R1). `write` runs in the batch (false: nothing commits); `apply` runs only after the commit.
+ */
+struct QuestCommitHook {
+    std::function<bool()> write;
+    std::function<void()> apply;
+};
 
 /** The start territory of a new character: Windsward (decision D1 of the user; TerritoryDefinition row 06 names 06_getoffbeach). */
 inline constexpr std::uint16_t kStartTerritory = 6;
@@ -178,6 +201,10 @@ struct QuestCounts {
     std::uint64_t eventRetries{0};
     /** Stage 1.8b: the offers that the character accepted, the hand-ins, and the hand-ins that the system refused. */
     std::uint64_t accepts{0};
+    /** Stage QG6a: the missions that a board gave. */
+    std::uint64_t missionGrants{0};
+    /** Code review of stage QG7, finding QG7R-R2: the self hand-ins that a refusal kept (a retry or a wait for a change). */
+    std::uint64_t selfHandInRetries{0};
     std::uint64_t handIns{0};
     std::uint64_t handInRefusals{0};
     /** Stage 1.8b: the cutscene requests (6703) that got the grant 6707, the refused ones, and the cutscene ends that completed a task. */
@@ -597,6 +624,13 @@ public:
      */
     void faction_changed(Entity& entity, std::uint8_t before);
     /**
+     * Code review of stage QG7, finding QG7R-R1 (MP-7): the quest ends of a change of the faction of a character to `after` (each active
+     * objective with ShouldResetOnFactionChange, and each active objective whose RequiredFaction does not pass with `after`: the client
+     * callback 0x3A571A0) in one transaction with the rows of the faction system (`hook`: the faction row and the cost). @return No value:
+     * the change ends no quest (the faction system writes its own batch); else the result of the commit (an error: nothing changed).
+     */
+    [[nodiscard]] std::optional<QuestError> faction_ends(Entity& entity, std::uint8_t after, const QuestCommitHook& hook);
+    /**
      * Stage QG7: @return True when the character has the recruitment objective of a faction active (its completion achievement is the
      *         RequiredAchievementId of the faction) with its TaskChooseFaction task Active or CompleteActive (the rule of the states
      *         98xx_Rep*_01: RequiredActiveObjectiveId and RequiredActiveTaskId, IsTaskActiveById 0x3A49520).
@@ -647,6 +681,14 @@ public:
     [[nodiscard]] QuestError available(const Entity& entity, const gamedata::QuestObjective& objective) const;
     /** The character accepts an offer (the person system checked the source): a new instance with the source "offer". */
     [[nodiscard]] QuestResult accept(Entity& entity, const gamedata::QuestObjective& objective, std::uint16_t territory);
+    /**
+     * Stage QG6a: the character accepts a mission of a board (the mission system checked the provider, the offer, and the mission): a new
+     * instance of the effective objective of the mission (QuestData::mission) with the source "board", the origin territory, and the
+     * mission values. Two missions of one template are two instances (the client keys a mission by its instance; a second instance of the
+     * same mission is refused: alreadyActive). The pin: the flag of the type CommunityGoal of 2709, as at a grant.
+     */
+    [[nodiscard]] QuestResult grant_mission(Entity& entity, const gamedata::MissionBinding& binding, std::uint16_t territory,
+                                            const MissionGrant& mission);
     /** @return The active instance of an objective CRC of a character, or null. */
     [[nodiscard]] const QuestInstance* active_of(const Entity& entity, std::uint32_t objectiveCrc) const;
     /** @return True when the root of an instance is satisfied (Complete or CompleteActive): the quest waits for its hand-in. */
@@ -657,7 +699,7 @@ public:
      * coin, and the reward items; then the entity, the bits, the items, the level, and the completed notice of the Objectives state. A
      * reward that the backend cannot pay, a full bag (decision D5 option A), or a refused write changes nothing: the quest stays ready.
      */
-    [[nodiscard]] HandInResult hand_in(Entity& entity, std::uint64_t instance);
+    [[nodiscard]] HandInResult hand_in(Entity& entity, std::uint64_t instance, const QuestCommitHook* hook = nullptr);
     /**
      * Stage 1.8d: the one reward join of an objective for a character and an origin territory (the hand-in and the command `quest rewards`).
      * Stage QG1: the standing goes to the territory at the position of the character (World::territory_of; the fallback of the grant of the
@@ -665,7 +707,7 @@ public:
      * @return `none`, or the cause of a refusal (a reward with no owner: `detail` names it).
      */
     [[nodiscard]] QuestError reward_join(const Entity& entity, const gamedata::QuestObjective& objective, std::uint16_t originTerritory,
-                                         RewardJoin& join, std::string& detail) const;
+                                         RewardJoin& join, std::string& detail, std::uint32_t mission = 0) const;
     /**
      * Stage 1.8e: the same join with the standing of a skill set (the support manifest: the history of a profile, no character). Stage QG1:
      * `originTerritory` is the territory of the standing (the manifest gives the territory of the hand-in person, else the origin).
@@ -721,6 +763,8 @@ private:
     struct PushWatch {
         std::vector<std::uint32_t> bits;
         std::uint32_t level{0};
+        /** Code review of stage QG7, finding QG7R-R6: the faction of the character (a change visits each push row: the faction gate). */
+        std::uint8_t faction{0};
     };
     /** Stage QG2a: the index of the push rows (built at the first use, from the quest data). */
     const PushIndex& push_index();
@@ -797,6 +841,12 @@ private:
     std::set<EntityId> m_progressionsDirty;
     std::set<EntityId> m_rankUpsDirty;
     std::map<EntityId, std::set<std::uint64_t>> m_selfHandIns;
+    /**
+     * Code review of stage QG7, finding QG7R-R2: the refused self hand-ins: a store failure tries again on the world clock (250 ms); a full bag
+     * or a missing item waits for a change of the items or of the progressions of the character (no write at each tick).
+     */
+    std::map<EntityId, std::map<std::uint64_t, WorldClock::time_point>> m_selfHandInRetries;
+    std::map<EntityId, std::set<std::uint64_t>> m_selfHandInWaits;
     /** Stage QG4: the equips of an artifact of each character since the last tick (the item id and its gear score), in their order. */
     std::map<EntityId, std::vector<std::pair<std::string, std::uint32_t>>> m_equips;
     std::unique_ptr<PushIndex> m_push;

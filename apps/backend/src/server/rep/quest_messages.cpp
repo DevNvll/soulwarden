@@ -105,4 +105,17 @@ std::optional<ObjectiveCall> read_objective_call(std::span<const std::uint8_t> b
     return message;
 }
 
+std::optional<CommunityGoalSelection> read_community_goal_selection(std::span<const std::uint8_t> body) {
+    hub::Reader reader(body);
+    CommunityGoalSelection message;
+    message.target = reader.u64();
+    message.entity = reader.u64();
+    message.mission = reader.u32();
+    message.destination = reader.u32();
+    if (!reader.ok() || reader.left() != 0) {
+        return std::nullopt;
+    }
+    return message;
+}
+
 } // namespace soulwarden::backend::server::rep

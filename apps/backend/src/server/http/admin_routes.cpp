@@ -84,6 +84,8 @@
 //          quest_rewards       objective, territory: the reward join and the availability of an objective (stage 1.8d; a reader)
 //          quest_places        no argument: the points of interest, the areas, and the trigger volumes at the position of the
 //                              character, and its territory (stage QG3; a reader)
+//          mission_board       mission, windows, territory (all optional): the board state, the town offers of now, and the missions of
+//                              the character; with mission the next windows in which it is an offer (stage QG6a; a reader)
 //          apply_preset        preset (the name of a build preset, bow-boltcaster), variant (pve or pvp; no value: the
 //                              first variant): the whole build of the preset (stage B0): the equipment (the old items go
 //                              into the bag), the level, the attributes, the masteries, the trees, the bars, and the
@@ -215,6 +217,8 @@ constexpr NamedCommand kCommands[] = {
     // Stage QG7: the faction of the character and the rank and the points of its reputation and tokens.
     {"set_faction", commands::set_faction},
     {"set_faction_progress", commands::set_faction_progress},
+    // Stage QG6a: the board state, the offers, and the missions of the character (a reader).
+    {"mission_board", commands::mission_board},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */

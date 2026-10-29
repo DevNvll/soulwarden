@@ -298,8 +298,8 @@ def earlier_stages(recipe: dict, index: int) -> list[dict]:
 def survives(recipe: dict, owner: int, spawn: dict, consumer: int) -> bool:
     """Code review of stage QG5c5, finding QG5C5R-R3: @return True when a member of an earlier stage can still wait when the stage `consumer`
     starts: no KillSpawnsAction and no DestroySliceAction that names it (its slice or its alias) in the end actions of the top stage of its
-    owner and of its child stages, in the start and the end actions of each top stage between (with its child stages), and in the start
-    actions of the top stage of the consumer."""
+    owner and of its child stages, in the start and the end actions of each top stage between (with its child stages), and in the actions
+    of the top stage of the consumer that run before the consumer starts (finding QG7R-R4: the earlier children of its path)."""
     order = manager_order(recipe)
     first = top_of(recipe, owner)
     last = top_of(recipe, consumer)
@@ -319,7 +319,20 @@ def survives(recipe: dict, owner: int, spawn: dict, consumer: int) -> bool:
         return True
     for top in order[order.index(first) + 1:]:
         if top == last:
-            return not removes(recipe["stages"][top]["startActions"])
+            # Code review of stage QG7, finding QG7R-R4: the actions before the consumer in its own top stage, in the order of the run: the
+            # start actions of each stage on the path, and the start and the end actions of each earlier child (its end after its children).
+            pending = [(top, False)]
+            while pending:
+                at, ending = pending.pop()
+                stage = recipe["stages"][at]
+                if removes(stage["endActions"] if ending else stage["startActions"]):
+                    return False
+                if not ending:
+                    if at == consumer:
+                        return True
+                    pending.append((at, True))
+                    pending.extend((child, False) for child in reversed(stage["children"]))
+            return True
         if any(removes(recipe["stages"][at]["startActions"] + recipe["stages"][at]["endActions"]) for at in descendants(recipe, top)):
             return False
     return True

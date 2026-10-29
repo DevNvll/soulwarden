@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "gamedata/mission_data.h"
 #include "server/hub/wire.h"
 
 namespace soulwarden::backend::gamedata {
@@ -600,6 +601,128 @@ const QuestObjective* QuestData::objective(std::string_view id) const {
 const QuestObjective* QuestData::objective_by_crc(std::uint32_t crc) const {
     const auto found = m_objectiveByCrc.find(crc);
     return found != m_objectiveByCrc.end() ? &m_objectives[found->second] : nullptr;
+}
+
+const QuestObjective* QuestData::objective_by_crc(std::uint32_t crc, std::uint32_t mission) const {
+    if (mission != 0) {
+        const auto found = m_missions.find(mission);
+        if (found != m_missions.end() && found->second.objective != nullptr && found->second.objective->crc == crc) {
+            return found->second.objective;
+        }
+    }
+    return objective_by_crc(crc);
+}
+
+const MissionBinding* QuestData::mission(std::uint32_t missionCrc) const {
+    const auto found = m_missions.find(missionCrc);
+    return found != m_missions.end() ? &found->second : nullptr;
+}
+
+void QuestData::bind_missions(const MissionData& missions) {
+    // A second call drops the variants and the events of the first one.
+    if (!m_missions.empty() || !m_variants.empty()) {
+        m_tasks.resize(m_fileTasks);
+        for (const std::string& event : m_missionEvents) {
+            m_events.erase(event);
+        }
+    }
+    m_fileTasks = m_tasks.size();
+    m_missions.clear();
+    m_variants.clear();
+    m_missionEvents.clear();
+    if (!m_loaded || !missions.loaded()) {
+        return;
+    }
+    // The events of the missions (SuccessGameEventIdOverride, FailureGameEventIdOverride) that the quest data does not have.
+    for (const auto& [key, event] : missions.events()) {
+        if (m_events.emplace(key, event).second) {
+            m_missionEvents.push_back(key);
+        }
+    }
+    // The override columns whose rule the backend does not have (stage QG6a), by the tasks that they change (research mission-boards.md
+    // 4.2): the common task values change any task; the item values the item tasks; the pause of the loot the possession tasks; the patrol
+    // the PatrolTask leaves. Each other override column has no rule.
+    const auto item_task = [](std::uint8_t type) {
+        return is_possession(type) || type == task_type::kRequireGatherItems || type == task_type::kGiveItem || type == task_type::kGiveAndTakeItem
+               || type == task_type::kRemoveItem || type == 27 || type == 28 || type == 35;
+    };
+    for (const MissionRow& row : missions.missions()) {
+        MissionBinding binding;
+        binding.row = &row;
+        binding.templateObjective = row.objective.empty() ? nullptr : objective(row.objective);
+        if (binding.templateObjective == nullptr) {
+            binding.refusals.push_back("the template " + (row.objective.empty() ? std::string("(blank)") : row.objective) +
+                                       " has no row of the quest data");
+            m_missions.emplace(row.crc, std::move(binding));
+            continue;
+        }
+        const QuestObjective& base = *binding.templateObjective;
+        bool hasItem = false;
+        bool hasPossession = false;
+        bool hasPatrol = false;
+        bool hasTimer = false;
+        bool hasKill = false;
+        for (const QuestNode& node : base.nodes) {
+            if (node.task == kNoTask) {
+                continue;
+            }
+            const std::uint8_t type = m_tasks[node.task].type;
+            hasItem = hasItem || item_task(type);
+            hasPossession = hasPossession || is_possession(type);
+            hasPatrol = hasPatrol || type == 66;
+            hasTimer = hasTimer || type == task_type::kTimer;
+            hasKill = hasKill || type == task_type::kKillContribution;
+        }
+        if (!row.enabled) {
+            binding.refusals.push_back("Enabled is 0");
+        }
+        if (row.pvp) {
+            binding.refusals.push_back("a PvP mission (IsPvpMission 1): stage QG6b");
+        }
+        if (row.outpostDestination) {
+            binding.refusals.push_back("IsOutpostValidDestination 1: the destination of an outpost has no rule (stage QG6b)");
+        }
+        // A custom objective keeps its own tasks (the factory takes the override path only with IsCustomObjective false, row +0x144).
+        if (!row.custom) {
+            for (const auto& [column, value] : row.overrides) {
+                const bool common = column == "POITagOverride" || column == "TerritoryIDOverride" || column == "LootTagOverride"
+                                    || column == "OverrideLocation";
+                const bool items = column.rfind("TaskGiveAndTakeItem", 0) == 0 || column.rfind("TaskHaveAndReturn", 0) == 0;
+                const bool pause = column == "PauseAndClearLootOnTaskCompleteOverride" || column == "PauseAndClearLootTagOnTaskCompleteOverride";
+                const bool patrol = column.rfind("Patrol", 0) == 0;
+                if (common || (items && hasItem) || (pause && hasPossession) || (patrol && hasPatrol) || (!items && !pause && !patrol)) {
+                    binding.refusals.push_back(column + " " + value + ": the backend has no rule of this override yet (stage QG6b)");
+                }
+            }
+            if (row.timerSeconds && hasTimer) {
+                binding.refusals.push_back("TaskTimerOverride on a TaskTimer leaf: no rule yet (stage QG6b)");
+            }
+        }
+        if (!row.custom && hasKill && (!row.killCategory.empty() || row.killQuantity)) {
+            // The variant: the template with copies of its TaskKillContribution leaves (case 13 of the factory 0x4461150).
+            QuestObjective variant = base;
+            for (QuestNode& node : variant.nodes) {
+                if (node.task == kNoTask || m_tasks[node.task].type != task_type::kKillContribution) {
+                    continue;
+                }
+                QuestTask task = m_tasks[node.task];
+                if (!row.killCategory.empty()) {
+                    task.targets = {lower_text(row.killCategory)};
+                }
+                if (row.killQuantity) {
+                    task.targetQty = static_cast<std::int64_t>(*row.killQuantity);
+                    node.target = *row.killQuantity;
+                }
+                node.task = static_cast<std::uint32_t>(m_tasks.size());
+                m_tasks.push_back(std::move(task));
+            }
+            m_variants.push_back(std::move(variant));
+            binding.objective = &m_variants.back();
+        } else {
+            binding.objective = &base;
+        }
+        m_missions.emplace(row.crc, std::move(binding));
+    }
 }
 
 std::optional<std::uint32_t> QuestData::achievement_index(std::string_view id) const {

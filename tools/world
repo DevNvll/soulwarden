@@ -111,6 +111,12 @@ Usage:
   tools/world tokens CHARACTER FACTION RANK POINTS
                                                 stage QG7: the rank and the points of the reputation or the tokens of a faction
                                                 (POINTS: at most the cap of the rank)
+  tools/world missions CHARACTER [MISSION [WINDOWS]]
+                                                stage QG6a: the board state of a character (the provider of its last open, the
+                                                expiration, its town entries), its town offers of now with the seed and the seconds
+                                                to the next seed, and its missions with their tasks; with MISSION (a MissionID): the
+                                                next WINDOWS seed windows (default 100, at most 400) in which it is an offer of the
+                                                character (the rule of the client: docs/systems/mission-boards.md)
   tools/world craft stop CHARACTER              the craft batch of a character stops (the completed jobs stay)
   tools/world craft cooldown CHARACTER RECIPE USED SECONDS
                                                 DEVELOPMENT AID (stage 3.7b): the cooldown window of a recipe: USED crafts, SECONDS
@@ -569,6 +575,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         print(f"{document['taken']} taken, {document['refused']} refused")
     elif isinstance(document, dict) and "batch" in document and "counts" in document and "station" in document:
         show_crafting(document)
+    elif isinstance(document, dict) and "offers" in document and "towns" in document and "secondsToNextSeed" in document:
+        show_missions(document)
     elif isinstance(document, dict) and "verdict" in document and "costs" in document and "output" in document:
         show_craft_preview(document)
     elif isinstance(document, dict) and "lootContainer" in document and "bags" in document:
@@ -1352,6 +1360,37 @@ def show_faction(document: dict) -> None:
               f"tokens rank {tokens['rank']}, {tokens['points']} of {tokens['cap']}")
 
 
+def show_missions(document: dict) -> None:
+    """Stage QG6a: the board state, the town offers of now, the missions, and the next windows of a mission of a character."""
+    seconds = document["secondsToNextSeed"]
+    print(f"territory {document['territory']}: seed {document['seed']:08x}, the next seed in {seconds // 60} min {seconds % 60} s")
+    for offer in document["offers"]:
+        state = "available" if offer["available"] else "unavailable (handed in for this seed)"
+        print(f"  offer {offer['mission']} ({offer['missionId']}): bucket {offer['bucket']}, candidate {offer['index']} of "
+              f"{offer['candidates']}, {state}")
+    board = document["board"]
+    if board["opened"]:
+        print(f"board {board['provider']} (actor {board['providerActor']}), territory {board['territory']}, expiration "
+              f"{board['expirationNs']} ns")
+    else:
+        print("no open of a board in this world entry")
+    for town in document["towns"]:
+        print(f"  town {town['territory']}: stored seed {town['seed']:08x}, unavailable {', '.join(town['unavailable']) or 'none'}")
+    for mission in document["missions"]:
+        tasks = " ".join(f"{task['state']}:{task['progress']}" for task in mission["tasks"])
+        print(f"  mission {mission['mission']} ({mission['template']}) instance {mission['instance']}: tasks [{tasks}], "
+              f"{'ready' if mission['ready'] else 'not ready'}, provider {mission['provider']}")
+    windows = document.get("windows")
+    if windows:
+        print(f"{windows['mission']}: offered in {len(windows['offered'])} of the next {windows['searched']} windows")
+        for entry in windows["offered"][:12]:
+            print(f"  window {entry['window']}: in {entry['inSeconds'] // 60} min (seed {entry['seed']:08x})"
+                  f"{'' if entry['available'] else ', unavailable'}")
+    counts = document["counts"]
+    print(f"counts: {counts['opens']} opens, {counts['accepts']} accepts ({counts['acceptRefusals']} refused), {counts['handIns']} "
+          f"hand-ins ({counts['handInRefusals']} refused), {counts['returns']} return task(s)")
+
+
 def show_ownership(document: dict) -> None:
     """The ownership of the DLC of a character (stage 1.1b): the expansion with its limits, the entitlements, the achievements."""
     place = "in the world" if document["inWorld"] else "not in the world"
@@ -1954,6 +1993,15 @@ def main() -> None:
             fail("CARD is the id text of a territory card (TB_GainStanding)")
         request(data_dir, "POST", f"/v1/dev/progress/card?character={character_id(data_dir, arguments[1])}"
                                   f"&territory={whole(arguments[2], 'the territory')}&card={arguments[3]}")
+    elif command == "missions" and len(arguments) in (2, 3, 4):
+        extra = ""
+        if len(arguments) >= 3:
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[2]):
+                fail("the mission must be a MissionID of the mission data")
+            extra = f"&mission={arguments[2]}"
+            if len(arguments) == 4:
+                extra += f"&windows={whole(arguments[3], 'the number of the windows')}"
+        request(data_dir, "GET", f"/v1/dev/missions?character={character_id(data_dir, arguments[1])}{extra}")
     elif command == "faction" and len(arguments) >= 2:
         words = list(arguments)
         extra = ""

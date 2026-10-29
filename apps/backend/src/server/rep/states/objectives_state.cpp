@@ -14,8 +14,10 @@
 //            entry (the apply 0x3A43530 calls 0x3A559B0 with the completion flag for a removed instance that the list names: the banner of a
 //            completion, not "Objective Failed"; live check L3 of stage 1.8b). Written only when the list has an instance.
 //   field 3  activeObjectives    full vector of 56-byte elements (reader 0x3A688F0, element 0x5B52F60):
-//              objectiveId:u32 (CRC-32 of the lower-case ObjectiveID) instanceId:u64 missionId:u32 (0) destinationOverride:16 bytes (0)
-//              acceptTime:u64 originTerritory:u16 available:u8 (1) isCommunityGoal:u8 isPoiObjective:u8 isDynamicPoiObjective:u8
+//              objectiveId:u32 (CRC-32 of the lower-case ObjectiveID) instanceId:u64 missionId:u32 (0; stage QG6a: the mission of a board)
+//              destinationOverride:16 bytes (0; stage QG6a: the actor id of the live provider board)
+//              acceptTime:u64 originTerritory:u16 available:u8 (1) isCommunityGoal:u8 (stage QG6a: 1 for a town mission) isPoiObjective:u8
+//              isDynamicPoiObjective:u8
 //              parentObjectiveId:u64 isResetObjective:u8 selectedIngredients:size (0)
 //   field 4  taskStates          full vector of 18-byte elements: instance:u64 index:u8 taskCRC:u32 progress:u32 state:u8 (reader 0x3ADDB50)
 //   field 5  objectivePoiEntityIds full vector of u64 (stage QG5c2, readers 0x396BB40, 0x37799A0; live I2 of stage QG5c1): the G of each
@@ -112,16 +114,19 @@ hub::Bytes encode_objectives_state(const world::Entity& entity, View view, const
     for (const world::QuestInstance& quest : log.active) {
         active.u32(quest.objectiveCrc);
         active.u64(quest.instance);
-        active.u32(0); // missionId
-        for (int part = 0; part < 16; ++part) {
-            active.u8(0); // destinationOverride
+        // Stage QG6a (docs/systems/mission-boards.md): the missionId of a mission of a board (the client joins the row of the mission data by
+        // it and builds the effective tree: factory 0x4461150), and destinationOverride, the actor id of the live provider board (the return
+        // task of the template goes to it: TaskInteract case 23). A quest: 0 and 16 zero bytes.
+        active.u32(quest.mission);
+        for (const std::uint8_t part : quest.destination) {
+            active.u8(part);
         }
         // acceptTime 0: the value of live check L1. The native TaskTimer of the client can take its start from the creation time of the
         // objective (research quest-display-18a.md Q4); the start of a timer goes in field 0. The stored grant time stays in the rows.
         active.u64(0);
         active.u16(quest.originTerritory);
-        active.boolean(true);  // available
-        active.boolean(false); // isCommunityGoal
+        active.boolean(true);               // available
+        active.boolean(quest.communityGoal); // isCommunityGoal (stage QG6a: a town mission)
         active.boolean(false); // isPoiObjective
         active.boolean(false); // isDynamicPoiObjective
         active.u64(quest.parent);
@@ -133,7 +138,7 @@ hub::Bytes encode_objectives_state(const world::Entity& entity, View view, const
     const gamedata::QuestData* data = log.data;
     std::size_t elements = 0;
     for (const world::QuestInstance& quest : log.active) {
-        const gamedata::QuestObjective* objective = data != nullptr ? data->objective_by_crc(quest.objectiveCrc) : nullptr;
+        const gamedata::QuestObjective* objective = data != nullptr ? data->objective_by_crc(quest.objectiveCrc, quest.mission) : nullptr;
         for (std::size_t index = 0; objective != nullptr && index < quest.tasks.size(); ++index) {
             elements += objective->nodes[index].task != gamedata::kNoTask ? 1 : 0;
         }
@@ -141,7 +146,7 @@ hub::Bytes encode_objectives_state(const world::Entity& entity, View view, const
     hub::Writer& tasks = state.field(kQuestGroup, kTaskStatesField);
     full_header(tasks, sequence, elements);
     for (const world::QuestInstance& quest : log.active) {
-        const gamedata::QuestObjective* objective = data != nullptr ? data->objective_by_crc(quest.objectiveCrc) : nullptr;
+        const gamedata::QuestObjective* objective = data != nullptr ? data->objective_by_crc(quest.objectiveCrc, quest.mission) : nullptr;
         for (std::size_t index = 0; objective != nullptr && index < quest.tasks.size(); ++index) {
             const gamedata::QuestNode& node = objective->nodes[index];
             if (node.task == gamedata::kNoTask) {

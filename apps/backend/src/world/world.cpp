@@ -95,6 +95,7 @@ World::World(const WorldClock& clock,
       m_questObjects(*this, options.questObjectData),
       m_encounters(*this, options.encounterData),
       m_persons(*this, options.conversationData),
+      m_missions(*this, store, options.missionData),
       m_presets(*this, project_presets()) {
     m_random = options.randomSeed;
     m_quests.set_pois(options.poiData);
@@ -301,6 +302,8 @@ Entity& World::make_entity(const state::Character& character) {
     // The quests of the character (stage 1.8a), after its achievement bits: its saved quests, its timers, its pending one-time grants
     // (the start objective of a new character). Their states go to the client after the first 2709 of its session.
     m_quests.entered(entity);
+    // Stage QG6a: the town entries of the character and the destinations of its missions (after its quests).
+    m_missions.entered(entity);
     log::write("world: entity %016llx (actor %s) of character %s (%s) at %.2f %.2f %.2f",
                static_cast<unsigned long long>(entity.id),
                actor_text(entity.actor).c_str(),
@@ -323,6 +326,7 @@ void World::remove_entity(EntityId id) {
     if (entity.kind == EntityKind::player) {
         m_interactions.left(entity);
         m_persons.left(entity);
+        m_missions.left(entity);
         // The open of a chest ends, and the claims leave the memory (stage 3.5b.1; the rows stay).
         m_chests.left(entity);
         m_lootBags.left(entity);
@@ -795,6 +799,25 @@ Entity& World::spawn_object(const ObjectBody& body, const state::WorldPosition& 
         entity.changed[key] = revision;
     }
     m_index.insert(entity.id, entity.position);
+    return entity;
+}
+
+Entity& World::world_entity() {
+    if (Entity* entity = find(m_worldEntity); entity != nullptr) {
+        return *entity;
+    }
+    // The asset of slices/globalgde.dynamicslice (the asset catalog of the supported build; research map.md 2.5, the static read
+    // evidence/quests/qg6a/implement/static/landclaim/LANDCLAIM.md section 4).
+    ObjectBody body;
+    body.asset = {0xF1, 0x85, 0x5F, 0x94, 0x88, 0x94, 0x55, 0xD7, 0xA6, 0xB0, 0xD0, 0x03, 0xEC, 0x27, 0x81, 0x26};
+    body.subId = 2;
+    body.spawned = true;
+    body.world = true;
+    Entity& entity = spawn_object(body, state::WorldPosition{0.0F, 0.0F, 0.0F});
+    entity.name = "world";
+    m_worldEntity = entity.id;
+    log::write("world: the world entity %016llx (actor %s, slices/globalgde)", static_cast<unsigned long long>(entity.id),
+               actor_text(entity.actor).c_str());
     return entity;
 }
 

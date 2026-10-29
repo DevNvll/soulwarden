@@ -442,7 +442,32 @@ void Encounters::resolve(EncounterPlacement& placement) {
         const auto from = std::find(recipe.stageOrder.begin(), recipe.stageOrder.end(), first);
         for (auto top = from == recipe.stageOrder.end() ? from : std::next(from); top != recipe.stageOrder.end(); ++top) {
             if (*top == last) {
-                return !(recipe.stages[*top].killSpawnsAtStart || names(recipe.stages[*top].destroyAtStart));
+                // Code review of stage QG7, finding QG7R-R4: the actions that run before the consumer starts in its own top stage, in the
+                // order of the run: the start actions of each stage on the path, and the start and the end actions of each earlier child (a
+                // child of a parent in the order of its children; its end actions after its own children).
+                std::vector<std::pair<std::uint32_t, bool>> pending{{*top, false}};
+                while (!pending.empty()) {
+                    const auto [at, ending] = pending.back();
+                    pending.pop_back();
+                    const gamedata::EncounterStage& step = recipe.stages[at];
+                    if (ending) {
+                        if (step.killSpawnsAtEnd || names(step.destroyAtEnd)) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (step.killSpawnsAtStart || names(step.destroyAtStart)) {
+                        return false;
+                    }
+                    if (at == consumer) {
+                        return true;
+                    }
+                    pending.emplace_back(at, true);
+                    for (auto child = step.children.rbegin(); child != step.children.rend(); ++child) {
+                        pending.emplace_back(*child, false);
+                    }
+                }
+                return true;
             }
             for (const std::uint32_t at : subtree(*top)) {
                 const gamedata::EncounterStage& between = recipe.stages[at];
@@ -1766,8 +1791,9 @@ void Encounters::destroy_slices(EncounterInstance& instance, const std::vector<g
                                          ? live->creature.body->path
                                          : std::string();
         const bool hit = std::any_of(actions.begin(), actions.end(), [&](const gamedata::EncounterDestroy& action) {
-            return named(action, spawn.member) || named(action, spawn.alias) || named(action, body)
-                   || (!selected.empty() && selected == action.slice);
+            // Code review of stage QG7, finding QG7R-R3: the selected body through each name of the action (its slice, its alias, and the
+            // slices of its alias), with the rule of the other names.
+            return named(action, spawn.member) || named(action, spawn.alias) || named(action, body) || (!selected.empty() && named(action, selected));
         });
         if (!hit) {
             continue;

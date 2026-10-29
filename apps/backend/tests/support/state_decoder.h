@@ -337,6 +337,80 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
     }
     case 5606: // SeasonsRewardsTrackedStat (stage 1.8a): group 0 field 0, initialized (one byte).
         return group == 0 && field == 0 ? 1 : -1;
+    case 3829: { // ObjectiveInteractor (stage QG6a): the provider (16), the expiration (u64), the mission vector (52-byte elements with
+                 // no ingredient), the town map (territory:u16 seed:u32 count:size u32* count:size u32*).
+        if (group != 0 || field > 3) {
+            return -1;
+        }
+        if (field == 0 || field == 1) {
+            return field == 0 ? 16 : 8;
+        }
+        server::hub::Reader reader(rest);
+        if (field == 2) {
+            if (reader.size() != 0) {
+                return -1;
+            }
+            if (reader.u8() == 1) {
+                reader.size64();
+            }
+            const std::uint32_t count = reader.size();
+            return reader.ok() ? static_cast<int>(reader.position() + 52U * count) : -1;
+        }
+        const std::uint32_t entries = reader.size();
+        for (std::uint32_t entry = 0; entry < entries && reader.ok(); ++entry) {
+            reader.u16();
+            reader.u32();
+            for (int list = 0; list < 2; ++list) {
+                const std::uint32_t values = reader.size();
+                reader.raw(4U * values);
+            }
+        }
+        return reader.ok() ? static_cast<int>(reader.position()) : -1;
+    }
+    case 1746: { // TerritoryInterface (stage QG6a): group 1 field 0, the progression data: the active map (17-byte entries), the completed
+                 // projects (12), the default project (16), the status effects (12).
+        if (group != 1 || field != 0) {
+            return -1;
+        }
+        server::hub::Reader reader(rest);
+        reader.raw(17U * reader.size());
+        reader.raw(12U * reader.size());
+        reader.raw(16);
+        reader.raw(12U * reader.size());
+        return reader.ok() ? static_cast<int>(reader.position()) : -1;
+    }
+    case 3086: { // LandClaimManager (stage QG6a): full vectors (00 hasVersion [version] count) of the claims: field 2 the keys (u16),
+                 // 3, 9, 10, 11, 17 one byte, 4, 5, 7, 13 a time point (u64), 6 a u32, 12 the governance (18 bytes), 15 the
+                 // progression summaries, 16 the owners (texts inside).
+        static constexpr int kElement[18] = {-1, -1, 2, 1, 8, 8, 4, 8, -1, 1, 1, 1, 18, 8, -1, 0, 0, 1};
+        if (group != 0 || field > 17 || kElement[field] < 0) {
+            return -1;
+        }
+        server::hub::Reader reader(rest);
+        if (reader.size() != 0) {
+            return -1;
+        }
+        if (reader.u8() == 1) {
+            reader.size64();
+        }
+        const std::uint32_t count = reader.size();
+        for (std::uint32_t element = 0; element < count && reader.ok(); ++element) {
+            if (field == 15) {
+                reader.raw(5U * reader.size());
+                reader.raw(9U * reader.size());
+                reader.u8();
+            } else if (field == 16) {
+                reader.raw(16);
+                reader.raw(reader.size());
+                reader.raw(2 + 16 + 2 + 16);
+                reader.raw(reader.size());
+                reader.raw(1 + 8);
+            } else {
+                reader.raw(static_cast<std::size_t>(kElement[field]));
+            }
+        }
+        return reader.ok() ? static_cast<int>(reader.position()) : -1;
+    }
     case 6786: // The manager state of an encounter root (stage QG5c2): group 0 field 0, the status (u32).
         return group == 0 && field == 0 ? 4 : -1;
     case 14: // VariationData (stage QG5c2): group 0 field 0, the variant index (u8); field 1, the variant index (u16).
@@ -496,6 +570,8 @@ inline unsigned group_count(std::uint32_t type) {
     case 6786:
     case 2133:
     case 14:
+    case 3829:
+    case 3086:
         return 1;
     case 3752:
     case 81:
@@ -508,6 +584,7 @@ inline unsigned group_count(std::uint32_t type) {
     case 3935:
     case 3183:
     case 1525:
+    case 1746:
         return 3;
     case 11:
     case 15:

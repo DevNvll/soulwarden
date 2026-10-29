@@ -19,6 +19,7 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
 | A crafting station or a camp: the facts of a use for stage 3.7 | `world/interactions.h` (`StationContext`, `Interactions::station`), test case SC2; the crafts: [Crafting](crafting.md) |
 | A timed use (Trigger of the powder keg), the ends of a use (the removal, the range, damage) | `world/interactions.h` (`timed_due`, `still_valid`, `damaged`, `moved`), test cases SC3, SC4 |
 | The persons (stage 2.5c): the person children that the client makes, the presence for one character, the conversation state, the topics | [Persons](persons.md), `world/persons.h`, cases NC1 to NC8 |
+| A mission board: the kind `missionBoard`, its entity, the spawn observer, `require_source` | [Mission boards](mission-boards.md), `world/interactions.h` (`make_boards`, `board_entity`, `SpawnObserver`, `require_source`), test cases QG6AC, QG6AF |
 | The service handoff for the shops (5.1) and the transmog (5.6) | `world/interactions.h` (`grant_service`, `require_service`, `close_service`), `world/entity.h` (`ServiceGrant`), test case SC5 |
 | The fixtures of a development run (the keg, the camps) | `tools/world fixture`, `server/http/interaction_commands.cpp` (`make_fixture`, `remove_object`), test case SC9 |
 | The research | `~/Games/soulwarden/work/research/interaction-stage.md`, `interaction.md`; the results of the stages: `~/Games/soulwarden/work/evidence/interaction/implement/RESULT.md` (2.5a), `~/Games/soulwarden/work/evidence/stations/implement/RESULT.md` (2.5b) |
@@ -195,6 +196,17 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   of the new use starts); a new person conversation with no service ends the old grant; a selection that the person system makes again
   sets the new ids and revision of the grant (`update_service`); and `require_service` for the kind `conversation` also needs the
   conversation of the grant (the same serial as the revision).
+- A mission board (stage QG6a, [Mission boards](mission-boards.md); `OpenMissionBoardOption`, action 51): the board of a settlement is a
+  child that the client makes (the client id of its place, the rule of a person child), an object of the kind `missionBoard` of the data
+  (format 5, the member `board`). The first scan makes the entity of each board (`make_boards`), with the actor of the client child; it
+  stays while the backend runs, and each session near it gets its record [agent; live: the open names the client id]. The mission system
+  is the handler of the kind; the open grants the service `missionBoard` (the revision is the seed of the town). `source_entity` and
+  `grant_source` give the entity of the source of a use and of a grant (a server child, or the entity of a level object). `require_source`
+  is the check of a request with no offer id (the hand-in 2461): the same rules as `require_service`, but no id of an offer [agent]. The
+  spawn observer (`register_spawn_observer`, `SpawnObserver::child_spawned`) gets each board entity at its start.
+- The TerritoryInterface state (type 1746) goes only to a board. The stations and the camps of a settlement have the component too (the
+  interaction data names its slot), but the backend sends them no state: they got none before stage QG6a, and the live checks of their
+  stages had none [agent].
 - The cost depends on the requests and on the objects near the players, not on the size of the world (rule MP-8; cases IT8, SC7): a
   request finds its bound in the reference map of the data (a hash) or in the map of the server children (by G), the list near a
   character looks only at the cells of 64 m near it, the spawn rule looks at the cells of the grid of the children near each

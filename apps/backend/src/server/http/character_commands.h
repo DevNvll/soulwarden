@@ -137,6 +137,13 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
  */
 [[nodiscard]] WorldCommand set_faction_progress(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /**
+ * Stage QG6a, mission_board (a reader; server/http/mission_commands.cpp, docs/systems/mission-boards.md): the board state of a character (the
+ * provider, the expiration, its town entries), its town offers of now (`territory`: default the territory of its board, else 6), its
+ * missions with their tasks, and with `mission` (a MissionID) the next `windows` seed windows (default 100) in which the mission is an
+ * offer of the character (the rule of the client).
+ */
+[[nodiscard]] WorldCommand mission_board(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
  * Stage QG1, choose_territory_card: `territory` and `card` (the id text of the card, TB_GainStanding): one card choice with the rules of
  * the client message 4040 (Skills::spend_territory_point). The reply has the level of the card and the free tokens.
  */

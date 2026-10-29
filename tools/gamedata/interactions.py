@@ -44,13 +44,17 @@ record of the server. The file has these children of a placement:
     decision D1 of the orchestrator: a station child whose authored key ends in 2 and has no row of the station database (the master
     slices of Smelting, Carpentry, Masonry, Tanning, and Weaving) gets the slice of the _t2 variant of its family (key ending in 3) as
     its "template"; "authoredTemplate" keeps the authored one and "override" names the change.
+    Format 5 (stage QG6a, docs/systems/mission-boards.md): the town project board of a settlement is not a server child: see the
+    member "board" of "objects".
   - "templates": the slice of each child (and of each fixture): the asset, the root entity, the slots of the replicated
     components that the backend sends (PositionInTheWorld, BuildableController, Ownership, Vitals), m_initialState and
     m_initialPermissionRule, the Assembly (m_craftingStationEntry, m_chargeCraftingFee, its entity and component, and "resolved":
     the key is a row of sharedassets/genericassets/craftingstations.craftstationdb), the Interact bounds in the frame of the slice
     (the backend makes the ids from G of the child: the XOR rule), and "children": the PrefabSpawner children of the slice with
     m_isClientAuthoratative false and m_spawnOnInitialize true (the forge of a station is such a child: live check L4), with the
-    transform of the spawner entity.
+    transform of the spawner entity. Format 5: "slots" also has "territory" (the TerritoryInterface component, e1d78b60-...: the
+    stations and the camps have it; 0: none), and a template with an ObjectiveProvider component has "provider" (as the member "board"
+    of a mission board).
   - "fixtures": the slices of the development fixtures (FIXTURES: the powder keg with the timed option Trigger, the player camp
     CampT5, the camp of a permanent camp): a development command of the backend makes them near a character (live checks L5, L6).
   - "lootContainers" (format 3, stage 3.5b.2): the slice of each loot container that the server makes (LOOT_CONTAINERS: "personal",
@@ -77,6 +81,17 @@ member "person":
   no init, an alias, a taken id. Stage QG5b: a presence that names an NPA with an ObjectiveFlow is resolved (the backend has the rule of
   the flow; the count personsObjectiveFlow), and a required achievement of a slice that is an expression is requires.conditional (the
   count sliceConditional; code review of stage QG5a, finding QG5AR-R1).
+The mission boards (format 5, stage QG6a; docs/systems/mission-boards.md). The town project board of a settlement is the child of a
+PrefabSpawner (Town_Project_Board of the settlement slices) with m_isClientAuthoratative false and m_spawnOnInitialize true whose slice has
+an ObjectiveProvider component (f05bf5b8-...) with m_isCommunityGoalBoard 1, a PositionInTheWorld component, and an Interact bound with
+OpenMissionBoardOption. The client makes it at the load, with the client id of its place (the rule of a person child; live check of stage
+QG6a: the open 1589 names this id), so it is an object of "objects" with the kind "missionBoard", the actor G and 8 zero bytes, and the
+member "board": "territory" (the slot of its TerritoryInterface component, e1d78b60-...: 3), "provider" ({"communityGoal"
+(m_isCommunityGoalBoard), "useTerritoryId" (m_useTerritoryId), "missionTypes" (m_editorProvidedMissionTypes, the texts), "pvpDisabled"
+(m_disablePvpMissions)}), "spawner" (the placement UUID), "territoryId" (the territory of the CommunityGoalProvider landmark, type 8,
+at its place in TerritoryLandmarks of the region files), and "claim" (the ActorId of the Claim landmark, type 4, of that territory: the
+provider identity of the board and the destination of its town missions; the count boardsWithNoClaim names a board with none). The
+backend gives the states of the server to the actor of the board.
 What the file does not have, with the count of each cause in "excluded" (a later stage reads them):
   - The other children of a PrefabSpawner (a trading post, a building), a person child with m_spawnOnInitialize false (the client does
     not make it), and the second slot of a client id that an earlier person slot has: a later stage.
@@ -111,12 +126,14 @@ names: a stop for them would give no file at all.
 tools/gamedata/check_interactions_tool.py is the check of these rules, with made-up sources.
 
 Output (one line of JSON):
-  {"format": 4, "world": TEXT, "counts": {...}, "excluded": {CAUSE: N, ...},
-   "templates": [{"slice", "asset", "sub", "kind", "root", "slots": {"position", "buildable", "ownership", "vitals"},
+  {"format": 5, "world": TEXT, "counts": {...}, "excluded": {CAUSE: N, ...},
+   "templates": [{"slice", "asset", "sub", "kind", "root", "slots": {"position", "buildable", "ownership", "vitals", "territory"},
                   "buildableState", "permissionRule", "assembly": {"key", "fee", "entity", "component", "resolved"} or null,
                   "bounds": [{as the bounds of an object, with "entity" (the Interact entity of the slice), "position" in the
                               frame of the slice, and an option entity of the slice}, ...],
-                  "children": [{"template", "position", "rotation"}, ...]}, ...],
+                  "children": [{"template", "position", "rotation"}, ...],
+                  "provider" (format 5, an ObjectiveProvider only): {"communityGoal", "useTerritoryId", "missionTypes", "pvpDisabled"}},
+                 ...],
    "spawned": [{"key", "parent", "parentActor", "parentSlice", "spawner", "template", "region", "position", "rotation",
                 "authoredTemplate" and "override": {"rule": "D1", "from": KEY, "to": KEY, "slice": PATH} for a station of decision D1},
                ...],
@@ -132,7 +149,8 @@ Output (one line of JSON):
                    "options": [[option index, option entity], ...], "lore": achievement index or -1,
                    "requires": {...}}, ...],
                 "person" (format 4, a person only): {"npc", "variant", "table", "row", "presence": {"mode", "condition"},
-                            "clientChild", "spawner", "unresolved", "template"} or {"npc", "direct"}}, ...],
+                            "clientChild", "spawner", "unresolved", "template"} or {"npc", "direct"},
+                "board" (format 5, a mission board only): {"territory", "provider", "spawner", "territoryId", "claim"}}, ...],
    "personsApart" (stage QG4): [{"npc", "cause", "world", "slice", "via": [SLICE, ...], "placement", "unresolved"}, ...],
    "encounterObjects" (stage QG5c2): {SLICE PATH: {"template", "variationSlot", "variant"}, ...}: the start object of each encounter
    recipe of the quests (encounter_recipes.py), a server child of the encounter system, with the slot of its VariationData component and
@@ -171,13 +189,13 @@ sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure, field_id  # noqa: E402
 from creature_data import (CATALOG_PATH, DEFAULT_CENTER, REGIONS_FOLDER, TABLES_FOLDER, WORLD, Catalog, Sources,  # noqa: E402
-                           asset_id, read_alias, region_names, spawner_path)
+                           asset_id, first, number, read_alias, region_names, spawner_path)
 from item_catalog import Sheet, sheet_type  # noqa: E402
 from slice_ids import (BASE_CLASS_FIELDS, COMPONENTS_FIELD, ENTITY_TYPE, ID_FIELD, NAME_FIELD, NO_ENTITY,  # noqa: E402
                        Element, component_id, find_field, id_value)
 
 OUTPUT_NAME = "interaction-data.json"
-FORMAT = 4
+FORMAT = 5
 UI_DATABASE = "sharedassets/genericassets/ui/uidatabase.uidb"
 CRAFTING_STATIONS = "sharedassets/genericassets/craftingstations.craftstationdb"
 # The station slices of the settlements (stage 3.7a, decision D1: the _t2 variant of a master slice whose key has no row).
@@ -212,6 +230,15 @@ BUILDABLE_CLASS = uuid.UUID("359f8468-0483-46ee-b1d4-beb75c1048fd")
 OWNERSHIP_CLASS = uuid.UUID("2a333c23-a549-bc11-1a9a-ae905170f2f6")
 POSITION_CLASS = uuid.UUID("6c2fc842-f451-4b45-9d7d-a6ee954df025")
 VITALS_CLASS = uuid.UUID("0c848755-1f41-4408-b2be-0a3627674f50")
+# Stage QG6a: the TerritoryInterface component (type 1746; slot 3 of town_project_board) and the ObjectiveProvider component of a mission
+# board (no replicated slot) with its fields (slices/pois/signage/town_project_board.dynamicslice; research mission-boards.md 2.1).
+TERRITORY_INTERFACE_CLASS = uuid.UUID("e1d78b60-b892-4d25-9e5e-5ac8c398fcab")
+PROVIDER_CLASS = uuid.UUID("f05bf5b8-aa6b-48f3-b5b6-179f353894b9")
+PROVIDER_COMMUNITY = field_id("m_isCommunityGoalBoard")
+PROVIDER_TERRITORY = field_id("m_useTerritoryId")
+PROVIDER_TYPES = field_id("m_editorProvidedMissionTypes")
+PROVIDER_NO_PVP = field_id("m_disablePvpMissions")
+BOARD_OPTION = "OpenMissionBoardOption"
 SPAWNER_CLASS = uuid.UUID("b52d0d52-99cd-41be-b6f7-d2519c15bf14")
 # Stage QG5a: the GatherableController (gathering.py CONTROLLER_CLASS) and its gatherable row, for a quest object child of a spawner.
 CONTROLLER_CLASS = uuid.UUID("0b382af4-7946-4698-9223-206d1187b612")
@@ -346,7 +373,9 @@ ROW_FIELDS = {name: field_id(name) for name in (
 # kind "other".
 KINDS = (
     ("ReadLore", "lorePage"), ("AddLoreToJournal", "lorePage"),
-    ("OpenConversation", "npc"), ("OpenMissionBoardOption", "npc"),
+    # Stage QG6a: a bound with OpenMissionBoardOption and no OpenConversation is a mission board (the town project board); a faction
+    # person has both options and stays a person.
+    ("OpenConversation", "npc"), ("OpenMissionBoardOption", "missionBoard"),
     ("TakeAllOption", "lootDrop"), ("OpenStorageOption", "storage"), ("OpenTradingPostOption", "tradingPost"),
     ("OpenMap", "shrine"),
     # A camp has OpenCraftingOption too (permanentcamp_master, CampT5): the camp option comes first (stage 2.5b).
@@ -381,6 +410,22 @@ CAUSE_PERSON_ID_TAKEN = ("a person child whose client id an earlier person slot 
 CAUSE_QUEST_CHILD_NO_INIT = ("a quest object child of a PrefabSpawner with m_spawnOnInitialize false: the client does not make it at the "
                              "load; the server source of such an object is not known (stage QG5a)")
 CAUSE_QUEST_CHILD_ID_TAKEN = ("a quest object child whose client id an earlier child slot has: the first slot keeps the id (stage QG5a)")
+# Stage QG6a: the territory landmarks of the region files (TerritoryLandmarks of regions/REGION/region.metadata): the CommunityGoalProvider
+# landmark (type 8) at the place of each board names its territory, and the Claim landmark (type 4) of that territory has the actor id of
+# the claim, the provider identity of the board and the destination of its town missions (the static read
+# evidence/quests/qg6a/implement/static/destination/DESTINATION.md: 0x3A47881, CanCompleteMission 0x4954180, GetClaims 0x381C5C0).
+LANDMARKS_FIELD = field_id("TerritoryLandmarks")
+LANDMARK_TYPE_FIELD = field_id("landmarkType")
+LANDMARK_IDS_FIELD = field_id("TerritoryIds")
+LANDMARK_POSITION_FIELD = field_id("WorldPosition")
+LANDMARK_ACTOR_FIELD = field_id("ActorId")
+LANDMARK_CLAIM = 4
+LANDMARK_BOARD = 8
+# The largest distance (m) of the board landmark from the place of its board (the Windsward landmark is 0.9 m from the board).
+BOARD_LANDMARK_RADIUS = 3.0
+CAUSE_BOARD_NO_INIT = ("a mission board child of a PrefabSpawner with m_spawnOnInitialize false: the client does not make it at the load "
+                       "(stage QG6a)")
+CAUSE_BOARD_ID_TAKEN = ("a mission board child whose client id an earlier child slot has: the first slot keeps the id (stage QG6a)")
 CAUSE_PERSON_NO_INIT = ("a person child of a PrefabSpawner with m_spawnOnInitialize false: the client does not make it at the load "
                         "(stage 2.5c), and the server source of such a person is not known")
 # Stage QG4: the persons that the file does not make objects, in the member "personsApart" with one of these causes (the support manifest
@@ -824,7 +869,9 @@ class Template:
         # The PrefabSpawner components of the slice: the entity, the child asset, and the flags of the spawner.
         self.spawner_list: list[dict] = []
         # The slots of the replicated components that the backend sends for a server child (0: the slice has none).
-        self.slots = {"position": 0, "buildable": 0, "ownership": 0, "vitals": 0}
+        self.slots = {"position": 0, "buildable": 0, "ownership": 0, "vitals": 0, "territory": 0}
+        # Stage QG6a: the ObjectiveProvider component of a mission board (None: the slice has none).
+        self.provider: dict | None = None
         self.buildable_state = -1
         self.permission_rule = -1
         self.assembly: dict | None = None
@@ -927,7 +974,7 @@ class Template:
         """Reads the parts of a server child in one component: a slot, the Assembly, an initial state, a spawner."""
         what = f"{path}: the component {component.type_id} of the entity {name}"
         kind = {POSITION_CLASS: "position", BUILDABLE_CLASS: "buildable", OWNERSHIP_CLASS: "ownership",
-                VITALS_CLASS: "vitals"}.get(component.type_id)
+                VITALS_CLASS: "vitals", TERRITORY_INTERFACE_CLASS: "territory"}.get(component.type_id)
         if kind is not None and self.slots[kind] == 0:
             self.slots[kind] = self._slot(component, what)
         if component.type_id == BUILDABLE_CLASS and find_field(component, INITIAL_STATE) is not None:
@@ -942,6 +989,14 @@ class Template:
                 raise Failure(f"{what}: the Assembly component has no component id")
             self.assembly = {"key": text_of(entry), "fee": flag_of(fee, f"{what}: m_chargeCraftingFee") if fee is not None else False,
                              "entity": entity_id, "component": identifier}
+        if component.type_id == PROVIDER_CLASS and self.provider is None:
+            community, territory, no_pvp = (find_field(component, field) for field in (PROVIDER_COMMUNITY, PROVIDER_TERRITORY, PROVIDER_NO_PVP))
+            types = find_field(component, PROVIDER_TYPES)
+            self.provider = {"communityGoal": flag_of(community, f"{what}: m_isCommunityGoalBoard") if community is not None else False,
+                             "useTerritoryId": flag_of(territory, f"{what}: m_useTerritoryId") if territory is not None else False,
+                             "missionTypes": [text_of(node) for node in walk(types) if node is not types and text_of(node)]
+                             if types is not None else [],
+                             "pvpDisabled": flag_of(no_pvp, f"{what}: m_disablePvpMissions") if no_pvp is not None else False}
         if component.type_id in (INSTANCED_LOOT_CLASS, LOOT_DROP_CLASS, DELAYED_EVENT_CLASS, STORAGE_CLASS):
             self._read_loot_part(what, entity_id, name, component)
         if component.type_id == CONTROLLER_CLASS:
@@ -1069,6 +1124,14 @@ class Template:
     def is_station(self) -> bool:
         """@return True for a crafting station or a camp: an Assembly and a bound with a station option (stage 2.5b)."""
         return self.assembly is not None and any(name in STATION_OPTIONS for name in self.option_names())
+
+    def is_mission_board(self) -> bool:
+        """@return True for a town project board (stage QG6a): an ObjectiveProvider with m_isCommunityGoalBoard, a PositionInTheWorld
+        component, and a bound with OpenMissionBoardOption. The client makes it at the load of the level (a child of a spawner with
+        m_isClientAuthoratative false and m_spawnOnInitialize true: the client id of its place; live check of stage QG6a: the open 1589
+        names that id)."""
+        return (self.provider is not None and self.provider["communityGoal"] and self.slots["position"] != 0
+                and BOARD_OPTION in self.option_names())
 
     def is_quest_gather(self, quest_rows: set[str]) -> bool:
         """@return True for a quest object of a gather (stage QG5a): one GatherableController, a variation table of QUEST_GATHER_TABLES or
@@ -1200,6 +1263,40 @@ def kind_of(bounds: list[dict]) -> str:
                 if name in KIND_ORDER and (best is None or KIND_ORDER[name] < KIND_ORDER[best]):
                     best = name
     return KIND_OF[best] if best is not None else "other"
+
+
+def read_claim_landmarks(sources: Sources) -> tuple[dict[int, str], list[tuple[tuple[float, float, float], int]]]:
+    """@return The territory landmarks of the boards (stage QG6a): the actor id (32 hexadecimal digits) of the Claim landmark of each
+    territory, and the place and the territory of each CommunityGoalProvider landmark. Two Claim landmarks of one territory with two
+    different actor ids stop the tool (a layer and a region can repeat a landmark with the same values)."""
+    claims: dict[int, str] = {}
+    boards: list[tuple[tuple[float, float, float], int]] = []
+    paths = [path for path in sources.paths(REGIONS_FOLDER, "/region.metadata")
+             if re.fullmatch(r"r_\+\d\d_\+\d\d/region\.metadata", path[len(REGIONS_FOLDER):])]
+    for path in paths:
+        for root in sources.stream(path) or []:
+            listed = first(root, LANDMARKS_FIELD)
+            for index, element in enumerate(listed.children if listed is not None else []):
+                fields = {child.name: child for child in element.children}
+                kind = number(fields.get(LANDMARK_TYPE_FIELD))
+                if kind not in (LANDMARK_CLAIM, LANDMARK_BOARD):
+                    continue
+                ids = fields.get(LANDMARK_IDS_FIELD)
+                territories = [number(child) for child in (ids.children if ids is not None else [])]
+                position = fields.get(LANDMARK_POSITION_FIELD)
+                actor = fields.get(LANDMARK_ACTOR_FIELD)
+                if not territories or position is None or position.value is None or len(position.value) != 12:
+                    raise Failure(f"{path}: the landmark {index} (type {kind}) has no territory or no position of 12 bytes")
+                place = struct.unpack(">fff", position.value)
+                if kind == LANDMARK_BOARD:
+                    boards.append((place, territories[0]))
+                    continue
+                if actor is None or actor.value is None or len(actor.value) != 16:
+                    raise Failure(f"{path}: the Claim landmark {index} has no actor id of 16 bytes")
+                value = actor.value.hex()
+                if claims.setdefault(territories[0], value) != value:
+                    raise Failure(f"{path}: the territory {territories[0]} has two Claim landmarks with different actor ids")
+    return claims, boards
 
 
 def build_document(sources: Sources, regions: list[str] | None = None, center: tuple[float, float] | None = None,
@@ -1612,6 +1709,44 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                         "position": [round(value, 3) for value in place], "assembly": None, "bounds": bounds,
                         "questChild": {"spawner": identifier, "variant": spawner["variant"] or child.selected_variant}})
 
+    def board_children(layer: str, region: str, identifier: str, matrix: tuple[float, ...], template: Template, spawner: dict,
+                       child_path: str, child: Template) -> None:
+        """Adds the town project board of a settlement (stage QG6a): the client makes it at the load, with the id of client 0x6160B60 from
+        its place, its yaw, and its slice asset (the rule of a person child; live check of stage QG6a: the open 1589 of the board of
+        Windsward names the id of this rule). Its key is "UUID/ENTITY" of the spawner; the first id of a slot near a border of the rule.
+        The member "board" has the slot of its TerritoryInterface component and its ObjectiveProvider: the backend gives the states of the
+        server to the actor of the client child."""
+        world = multiply(matrix, template.matrices.get(spawner["entity"], IDENTITY))
+        place = (world[3], world[7], world[11])
+        if not all(math.isfinite(value) for value in place):
+            raise Failure(f"{layer}: the mission board child of the placement {identifier} has a place that is not finite")
+        if child.root is None:
+            raise Failure(f"{child_path}: the slice of a mission board child has no root entity")
+        group = child_groups(*place, yaw_of(world), spawner["asset"][0])[0]
+        if group in person_groups:
+            exclude(CAUSE_BOARD_ID_TAKEN)
+            return
+        person_groups.add(group)
+        k = child.root ^ group
+        bounds = []
+        for bound in varied_bounds(child, spawner["variant"]):
+            target = ((bound["entity"] ^ k) + bound["component"]) & 0xFFFFFFFFFFFFFFFF
+            entry, _ = bound_entry(bound, f"{layer}: the mission board child of {identifier}", k, apply(world, bound["translation"]))
+            entry["target"] = f"{target:016x}"
+            text = json.dumps(entry, sort_keys=True)
+            if (group, target) in references and references[(group, target)] != text:
+                raise Failure(f"two bounds have the reference {group:016x} {target:016x} with different content")
+            references[(group, target)] = text
+            bounds.append(entry)
+        kind = kind_of(child.bounds)
+        counts["byKind"][kind] = counts["byKind"].get(kind, 0) + 1
+        counts["bounds"] += len(bounds)
+        counts["boards"] = counts.get("boards", 0) + 1
+        objects.append({"key": f"{identifier}/{spawner['entity']:016x}", "kind": kind, "slice": child_path, "asset": spawner["asset"][0].hex(),
+                        "sub": spawner["asset"][1], "actor": (group.to_bytes(8, "little") + bytes(8)).hex(), "region": region,
+                        "position": [round(value, 3) for value in place], "assembly": None, "bounds": bounds,
+                        "board": {"territory": child.slots["territory"], "provider": dict(child.provider), "spawner": identifier}})
+
     def template_entry(slice_path: str, asset: tuple[bytes, int] | None, depth: int = 0) -> int:
         """@return The index of the template of a slice in "templates" (with its server children)."""
         if slice_path in template_index:
@@ -1629,6 +1764,8 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                        "root": f"{template.root:016x}", "slots": dict(template.slots), "buildableState": template.buildable_state,
                        "permissionRule": template.permission_rule, "assembly": assembly_entry(template, None), "bounds": [],
                        "children": []}
+        if template.provider is not None:
+            entry["provider"] = dict(template.provider)
         template_list.append(entry)
         for bound in template.bounds:
             entry["bounds"].append(bound_entry(bound, f"the template {slice_path}", None, bound["translation"])[0])
@@ -1757,6 +1894,12 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                             quest_children(layer, region, identifier, matrix, template, spawner, child_path, child)
                         else:
                             exclude(CAUSE_QUEST_CHILD_NO_INIT)
+                        continue
+                    if not child.is_station() and child.is_mission_board():
+                        if spawner["onInit"]:
+                            board_children(layer, region, identifier, matrix, template, spawner, child_path, child)
+                        else:
+                            exclude(CAUSE_BOARD_NO_INIT)
                         continue
                     if not child.is_station():
                         exclude(CAUSE_SPAWNER)
@@ -1903,6 +2046,20 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
         label = assembly.get("key", "") + ("" if assembly.get("resolved") else " (no row)")
         counts["spawnedByKey"][label] = counts["spawnedByKey"].get(label, 0) + 1
     counts["spawnedByKey"] = dict(sorted(counts["spawnedByKey"].items()))
+    # Stage QG6a: the territory and the claim of each board (the landmarks of the region files).
+    board_objects = [entry for entry in objects if "board" in entry]
+    if board_objects:
+        claims, landmarks = read_claim_landmarks(sources)
+        for entry in board_objects:
+            near = [(math.dist(place, entry["position"]), territory) for place, territory in landmarks]
+            near = [item for item in near if item[0] <= BOARD_LANDMARK_RADIUS]
+            territory = min(near)[1] if near else None
+            if territory is not None:
+                entry["board"]["territoryId"] = territory
+            if territory is not None and territory in claims:
+                entry["board"]["claim"] = claims[territory]
+            else:
+                counts["boardsWithNoClaim"] = counts.get("boardsWithNoClaim", 0) + 1
     objects.sort(key=lambda entry: (entry["region"], entry["position"][0], entry["position"][1], entry["key"]))
     spawned.sort(key=lambda entry: (entry["region"], entry["position"][0], entry["position"][1], entry["key"]))
     counts["unresolvedNames"] = len(unresolved)

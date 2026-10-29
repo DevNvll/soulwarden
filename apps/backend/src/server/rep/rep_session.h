@@ -375,6 +375,8 @@ private:
     /** Stage 1.8c: 2297 and 6416 (a cue of a place), 2617 (a screen), 3836 (an abandon), 5600 (a reset). */
     void handle_territory_report(std::span<const std::uint8_t> body, bool entered);
     void handle_objective_call(std::span<const std::uint8_t> body, std::uint32_t type);
+    /** Stage QG6a: 3819 (the accept of a town offer) and 2461 (the hand-in at a board). */
+    void handle_board_request(std::span<const std::uint8_t> body, std::uint32_t type);
     /** Stage 2.5c: the topic request 3158 and the finished topics 5397 of the Conversation component (docs/systems/persons.md). */
     void handle_conversation_topics(std::span<const std::uint8_t> body, std::uint32_t type);
     void handle_storage_search(std::uint32_t type, std::span<const std::uint8_t> body);

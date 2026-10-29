@@ -17,6 +17,7 @@
 #include "gamedata/gathering_data.h"
 #include "gamedata/interaction_data.h"
 #include "gamedata/item_catalog.h"
+#include "gamedata/mission_data.h"
 #include "gamedata/loot_tables.h"
 #include "gamedata/poi_data.h"
 #include "gamedata/progression_tables.h"
@@ -318,8 +319,26 @@ std::uint32_t artifact_level(const WorldOptions& options, const std::string& ite
 } // namespace
 
 /** The indexes of the world content that the rows name (one pass over the data at the start of a manifest). */
+/**
+ * Stage QG6a (docs/systems/mission-boards.md): one mission that a town board of the interaction data gives: its binding (the effective
+ * objective), the key of the board, and the territory of the board.
+ */
+struct QuestSupport::BoardMission {
+    const gamedata::MissionBinding* binding{nullptr};
+    std::string board;
+    std::uint16_t territory{0};
+};
+
 struct QuestSupport::Index {
     const gamedata::QuestData* quests{nullptr};
+    /**
+     * Stage QG6a: the missions that the town boards of the data give, by the CRC-32 of their template: a town row of an always available
+     * project of the board town (the project rule of 0x3A362A0) whose territory rule passes for the territory of the board (0x39D3EC0), with
+     * a binding of the quest data. The first board of the data that gives a mission keeps it. The level, the trade skill, and the time window
+     * of the offer are the gates of a history: no row has a level gate of the template.
+     */
+    std::unordered_map<std::uint32_t, std::vector<BoardMission>> boardMissions;
+    std::size_t boardCount{0};
     /**
      * Stage QG7: the rank-up rows of the validation lists of the base attributes (entry K + 1 of RankupObjectiveIds; lower case): the
      * faction system grants each one after the trial achievement K (Quests::next_rank_up).
@@ -495,6 +514,50 @@ void QuestSupport::build() {
         for (const gamedata::FactionRow& faction : tables->factions()) {
             for (std::size_t at = 1; at < faction.rankUps.size(); ++at) {
                 index.rankUpRows.insert(lower_text(faction.rankUps[at]));
+            }
+        }
+    }
+    // Stage QG6a: the missions of the town boards of the data.
+    if (const gamedata::MissionData* missions = m_world.missions().data();
+        missions != nullptr && options.interactionData != nullptr && options.interactionData->loaded()) {
+        std::set<std::uint32_t> seen;
+        // The boards that the client makes (level objects of the kind missionBoard: interaction data format 5).
+        for (const std::uint32_t board : options.interactionData->boards()) {
+            const gamedata::InteractionObject& child = options.interactionData->objects()[board];
+            if (!child.provider || !child.provider->communityGoal) {
+                continue;
+            }
+            ++index.boardCount;
+            const std::uint16_t territory = options.poiData != nullptr && options.poiData->loaded()
+                                                ? options.poiData->territory_at(child.position.x, child.position.y)
+                                                : 0;
+            const std::vector<std::uint32_t> projects = m_world.missions().town_projects(territory);
+            std::set<std::uint32_t> allowed;
+            for (const std::uint32_t project : projects) {
+                const gamedata::MissionProject* active = missions->project(project);
+                for (const gamedata::MissionProject& other : missions->projects()) {
+                    if (active != nullptr && other.type == active->type && other.level <= active->level) {
+                        allowed.insert(other.crc);
+                    }
+                }
+            }
+            for (const gamedata::TownBucket& bucket : missions->town_buckets()) {
+                for (const std::uint32_t id : bucket.missions) {
+                    const gamedata::MissionRow* row = missions->mission(id);
+                    if (row == nullptr || !row->enabled || allowed.count(row->projectCrc) == 0 || seen.count(id) != 0) {
+                        continue;
+                    }
+                    if (!row->territories.empty()
+                        && (std::find(row->territories.begin(), row->territories.end(), territory) != row->territories.end()) == row->excludeTerritories) {
+                        continue;
+                    }
+                    const gamedata::MissionBinding* binding = data.mission(id);
+                    if (binding == nullptr || binding->templateObjective == nullptr) {
+                        continue;
+                    }
+                    seen.insert(id);
+                    index.boardMissions[binding->templateObjective->crc].push_back(BoardMission{binding, child.key, territory});
+                }
             }
         }
     }
@@ -922,10 +985,12 @@ void QuestSupport::build() {
     }
 }
 
-QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
+QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* mission) const {
     const Index& index = *m_index;
     const gamedata::QuestData& data = *index.quests;
-    const QuestObjective& objective = data.objectives()[at];
+    // Stage QG6a: the effective objective of a board mission (the template with the values of its row), else the row of the data.
+    const QuestObjective& objective = mission != nullptr && mission->binding->objective != nullptr ? *mission->binding->objective
+                                                                                                   : data.objectives()[at];
     const WorldOptions& options = m_world.options();
     const std::string id = lower_text(objective.id);
     Row row;
@@ -1019,7 +1084,12 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
     if (index.rankUpRows.count(id) != 0) {
         add_grant("faction", "the rank-up row after a trial achievement (Progression Validation Achievement Data)", true, "");
     }
-    if (row.kind == "missionTemplate") {
+    if (mission != nullptr) {
+        // Stage QG6a: a town board of the data gives the mission (Missions: the offers of the client rule, the accept 3819).
+        add_grant("board", mission->binding->row->id + " at the board " + mission->board + " (territory " + std::to_string(mission->territory) + ")",
+                  mission->binding->refusals.empty(), mission->binding->refusals.empty() ? "" : mission->binding->refusals.front(),
+                  "a mission override with no rule");
+    } else if (row.kind == "missionTemplate") {
         add_grant("mission", objective.type, false, "the mission boards and the mission definitions have no contract (roadmap 4.5, 5.4)");
     } else if (row.kind == "communityGoal") {
         add_grant("communityGoal", objective.type, false, "the community goals have no contract (roadmap 5.4)");
@@ -1327,7 +1397,10 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
         }
         case task_type::kInteract:
             objects.push_back(task.interactTag);
-            if (index.objectTags.count(task.interactTag) == 0) {
+            if (mission != nullptr && mission->binding->row->returnToGiver && task.interactTag == "returntogiver") {
+                // Stage QG6a: the return task of a mission template goes to its provider (factory 0x4461150, case 23): the open of the board.
+                fact.supplier = "the provider board of the mission (ReturnToGiverOverride)";
+            } else if (index.objectTags.count(task.interactTag) == 0) {
                 block("no object of the data has the interact tag " + task.interactTag);
             } else {
                 fact.supplier = "the objects of the tag " + task.interactTag;
@@ -1528,8 +1601,16 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
     }
     RewardJoin join;
     std::string detail;
+    // Stage QG6a: a board mission pays the success event of its row, and its standing goes to the territory of the board.
+    QuestObjective payer = objective;
+    if (mission != nullptr) {
+        if (!mission->binding->row->successEvent.empty()) {
+            payer.successEvent = mission->binding->row->successEvent;
+        }
+        destination = mission->territory;
+    }
     const QuestError reward = m_world.quests().reward_join(
-        SkillSet{}, objective, m_world.quests().standing_territory(destination, objective.exclusiveTerritory.value_or(kNewStartTerritory)), join, detail);
+        SkillSet{}, payer, m_world.quests().standing_territory(destination, objective.exclusiveTerritory.value_or(kNewStartTerritory)), join, detail);
     row.rewards = reward == QuestError::none;
     row.rewardDetail = detail;
     json items = json::array();
@@ -1556,7 +1637,7 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
         row.blocked.push_back("gate: " + gate);
     }
     row.world = json{{"triggerTags", triggers}, {"poiTags", places}, {"persons", personsUsed}, {"objectTags", objects}, {"killTargets", creatures}};
-    row.supported = row.kind == "objective" && row.tree && row.rewards && row.grantKind && row.gates.empty();
+    row.supported = (row.kind == "objective" || mission != nullptr) && row.tree && row.rewards && row.grantKind && row.gates.empty();
     return row;
 }
 
@@ -1678,6 +1759,9 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
     };
     const auto sync = [&]() {
         history.scratch.achievements.assign(history.bits.begin(), history.bits.end());
+        // Code review of stage QG7, finding QG7R-R5: the person selection and the hand-in checks read the skills of the scratch entity: the
+        // categorical progressions (the faction reputation and tokens) that the history earned.
+        history.scratch.skills = history.skills;
         quests_now();
     };
     std::set<std::string> starts;
@@ -2230,12 +2314,30 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
     std::map<std::string, std::uint64_t> kinds;
     std::map<std::string, std::uint64_t> firstReasons;
     std::uint64_t supported = 0;
+    std::map<std::string, std::uint64_t> supportedKinds;
+    // Stage QG6a: the board mission of each template row whose evaluation the row keeps (the first supported one, else the first one).
+    std::vector<const BoardMission*> missionOf(objectives.size(), nullptr);
+    std::uint64_t boardMissions = 0;
+    std::uint64_t boardMissionsRun = 0;
     for (std::uint32_t at = 0; at < objectives.size(); ++at) {
         rows.push_back(evaluate(at));
+        if (rows.back().kind == "missionTemplate" || rows.back().kind == "communityGoal") {
+            const auto found = m_index->boardMissions.find(objectives[at].crc);
+            for (std::size_t candidate = 0; found != m_index->boardMissions.end() && candidate < found->second.size(); ++candidate) {
+                ++boardMissions;
+                Row board = evaluate(at, &found->second[candidate]);
+                boardMissionsRun += board.supported ? 1 : 0;
+                if (missionOf[at] == nullptr || (board.supported && !rows.back().supported)) {
+                    missionOf[at] = &found->second[candidate];
+                    rows.back() = std::move(board);
+                }
+            }
+        }
         const Row& row = rows.back();
         ++kinds[row.kind];
         if (row.supported) {
             ++supported;
+            ++supportedKinds[row.kind];
         } else if (row.kind == "objective") {
             ++firstReasons[reason_kind(row.blocked.empty() ? "not supported" : row.blocked.front())];
         }
@@ -2300,6 +2402,10 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
                    {"rewards", row.rewardJson},
                    {"supported", row.supported},
                    {"blocked", row.blocked}};
+        if (missionOf[at] != nullptr) {
+            // Stage QG6a: the board mission of the evaluation of a template row.
+            entry["mission"] = json{{"id", missionOf[at]->binding->row->id}, {"board", missionOf[at]->board}, {"territory", missionOf[at]->territory}};
+        }
         if (primary != nullptr) {
             entry["primary"] = primary->played[at] ? json{{"played", true}, {"round", primary->round[at]}}
                                                    : json{{"played", false}, {"cause", primary->cause[at]}};
@@ -2317,8 +2423,11 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
     document["counts"] = json{{"rows", objectives.size()},
                               {"kinds", kinds},
                               {"supported", supported},
+                              {"supportedByKind", supportedKinds},
                               {"firstReasonOfTheOthers", reasons},
-                              {"generatedMissions", "the mission definitions (MissionData) are not in the data of the backend: no row"},
+                              {"boards", m_index->boardCount},
+                              {"boardMissions", boardMissions},
+                              {"boardMissionsRunnable", boardMissionsRun},
                               {"levelCap", m_index->levelCap},
                               {"groups", groupCounts},
                               {"primaryProfile", profiles.empty() ? std::string{} : profiles.front().id},

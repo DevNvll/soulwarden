@@ -234,6 +234,15 @@ enum class ComponentKey {
      * after the first message 2709 of its session; the client reads its friend list from it.
      */
     social,
+    /**
+     * Stage QG6a (docs/systems/mission-boards.md): the ObjectiveInteractor state of a character (slot 10, type 3829): the provider of the
+     * board that it opened, the expiration, the mission parameters, and its town entries. Only the owner gets it, after its first open.
+     */
+    objectiveInteractor,
+    /** Stage QG6a: the TerritoryInterface state of a mission board (type 1746, slot 3 of the town board): the projects of its town. */
+    territoryInterface,
+    /** Stage QG6a: the LandClaimManager state of the world entity (type 3086, slot 2 of slices/globalgde): the claims of the towns. */
+    landClaims,
 };
 
 /**
@@ -1744,6 +1753,15 @@ struct ObjectBound {
     std::uint32_t users{0};
 };
 
+/**
+ * Stage QG6a: one claim of the LandClaimManager state (type 3086) of the world entity: a territory and the ids of its active projects
+ * (the CRC-32 of each ProjectId). The town screen of a board lists a project only when the claim of the territory of the player has it.
+ */
+struct LandClaim {
+    std::uint16_t territory{0};
+    std::vector<std::uint32_t> projects;
+};
+
 /** The values of an object entity (EntityKind::object, stage 2.5a; a server child: stage 2.5b). */
 struct ObjectBody {
     /** The index of the object in the interaction data (a level object), or of its template (a server child). */
@@ -1785,6 +1803,26 @@ struct ObjectBody {
      */
     std::uint32_t variationSlot{0};
     std::uint16_t variant{0};
+    /**
+     * Stage QG6a: the TerritoryInterface state of a mission board (type 1746): the slot of its component (0: none) and the territory of
+     * the board (the territory at its place).
+     */
+    std::uint32_t territorySlot{0};
+    std::uint16_t territory{0};
+    /**
+     * Stage QG6a: the provider identity of a board (the actor id of the Claim landmark of its territory, the interaction data; else the
+     * actor of the board): field 0 of the provider state of a character and the destination of the town missions of the board.
+     */
+    std::array<std::uint8_t, 16> providerIdentity{};
+    /** Stage QG6a: the active projects of the town of a board (the CRC-32 of each ProjectId): the mission system sets them at its spawn. */
+    std::vector<std::uint32_t> projects;
+    /**
+     * Stage QG6a: true for the world entity (slices/globalgde.dynamicslice, World::world_entity): each session observes it at each
+     * distance, and it stays while the backend runs.
+     */
+    bool world{false};
+    /** Stage QG6a: the claims of the LandClaimManager state of the world entity (the territories of the boards; the mission system). */
+    std::vector<LandClaim> landClaims;
 };
 
 /** One task element of the Objectives state of an encounter root (stage QG5c2): the generated task index, the progress, the state. */
@@ -1913,6 +1951,47 @@ struct QuestInstance {
     std::string source;
     /** The task states by task index of the tree (a hole of the tree has a New state and no element on the wire). */
     std::vector<QuestTaskState> tasks;
+    /**
+     * Stage QG6a (docs/systems/mission-boards.md): the mission of an instance that a board gave: its missionId (the CRC-32 of the lower-case
+     * MissionID; 0: not a mission), isCommunityGoal of a town mission, and the durable key of its provider (the board: "UUID/ENTITY"). The
+     * quest system runs the effective objective of the mission (QuestData::objective_by_crc with the mission).
+     */
+    std::uint32_t mission{0};
+    bool communityGoal{false};
+    std::string provider;
+    /**
+     * Stage QG6a: destinationOverride of the element: the actor id of the live board of `provider` (a value of the world: a new spawn of the
+     * board has a new actor; zero while the board is not in the world). Only the mission system sets it.
+     */
+    std::array<std::uint8_t, 16> destination{};
+};
+
+/**
+ * Stage QG6a: the town entry of a character (MissionOptionData of m_communityGoals, the ObjectiveInteractor state; reader 0x494F320): the
+ * stored seed of its offers and the missions that are not available for that seed (a hand-in), and the projects of that seed.
+ */
+struct MissionTownEntry {
+    std::uint32_t seed{0};
+    std::vector<std::uint32_t> unavailable;
+    std::vector<std::uint32_t> previousProjects;
+};
+
+/**
+ * Stage QG6a: the board state of a character (the ObjectiveInteractor state, player slot 10, type 3829): the provider that the character
+ * opened last in this world entry (its actor id and its durable key, the territory of its town), the expiration of the provider data, and the
+ * town entries of the character (rows `character_mission_offers`). Only the mission system changes it.
+ */
+struct MissionBoardState {
+    /** True after the first open of a board in this world entry: the state has a provider. */
+    bool opened{false};
+    std::array<std::uint8_t, 16> provider{};
+    std::string providerKey;
+    std::uint16_t territory{0};
+    /** expirationTime of the state: the server clock in nanoseconds. */
+    std::uint64_t expirationNs{0};
+    std::map<std::uint16_t, MissionTownEntry> towns;
+    /** True when the rows of the character are loaded (the mission system has its data). */
+    bool loaded{false};
 };
 
 /** The quests of a character (stage 1.8a): a copy of the values of the quest system for the Objectives state of the owner. */
@@ -2066,6 +2145,8 @@ struct Entity {
     Revision achievementsEmptied{0};
     /** The quests of the character (stage 1.8a): the quest system changes them (world/quests.h). */
     QuestLog quests;
+    /** Stage QG6a: the board state of the character (the provider, its town entries): the mission system changes it (world/missions.h). */
+    MissionBoardState missionBoard;
     /**
      * The committed interaction of the character (stage 2.5a): a copy of the value of the interaction system. No value: none.
      * `interactionEnded` is the world revision of the last end of one (the Interactor state of a session that got the begin

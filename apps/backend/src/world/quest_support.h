@@ -74,9 +74,14 @@ private:
     struct Index;
     struct Row;
     struct History;
+    struct BoardMission;
 
     void build();
-    [[nodiscard]] Row evaluate(std::uint32_t objective) const;
+    /**
+     * @return The facts of one row. Stage QG6a: `mission` (not null) evaluates a mission template with the effective objective of a mission
+     * that a board of the data gives (its tasks, its success event, the provider board as the destination of its return task).
+     */
+    [[nodiscard]] Row evaluate(std::uint32_t objective, const BoardMission* mission = nullptr) const;
     void play(const SupportProfile& profile, const std::vector<Row>& facts, History& history) const;
 
     World& m_world;
