@@ -819,6 +819,13 @@ QG5c2: `tests/review_qg5c2_tests.cpp`).
   `~/Games/soulwarden/work/evidence/quests/qg5c4/implement/scripts/`, with its own code of the rules of the runner of stage QG5c4 and of
   the findings R3 and R4 of the review of QG5c3) has the same counts: 47 recipes taken, 548 supported, 0 row, fact, history, and group
   differences.
+- The build (stage QG5c5): 548 supported rows before and after (2,147 rows); no row changes. The only row that waits for the Darkness
+  events is the mission template `FM_corruption_breach` (task 0: the game event `Darkness_Any_GlobalSuccess`): its event has producers
+  now (the five Darkness recipes), and its grant has no source (the mission boards). No quest task names the success events of the boat
+  reinforcements. The kinds of the parts of the group members are kill sources. A new character completes 68; the 25 groups keep their
+  counts. The second computation (a copy of `support_check.py` in `~/Games/soulwarden/work/evidence/quests/qg5c5/implement/scripts/`
+  with its own code of the rules of stage QG5c5 and of the finding QG5C4R-R4) has the same counts: 54 recipes taken, 548 supported, 0
+  row, fact, history, and group differences.
 
 ### The support manifest (stage 1.8e)
 

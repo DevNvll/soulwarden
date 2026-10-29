@@ -200,6 +200,9 @@ void Behavior::removed(const Entity& entity) {
 
 const gamedata::PatrolRoute* Behavior::route_of(const Entity& creature) const {
     const gamedata::CreatureData* data = m_creatures.data();
+    if (!creature.creature.spawnPoint && creature.creature.memberRoute != nullptr) {
+        return creature.creature.memberRoute.get(); // Stage QG5c5: the path of a part of a group member.
+    }
     if (data == nullptr || !creature.creature.spawnPoint || *creature.creature.spawnPoint >= data->spawn_points().size()) {
         return nullptr;
     }

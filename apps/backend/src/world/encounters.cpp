@@ -116,6 +116,7 @@ void Encounters::resolve(EncounterPlacement& placement) {
     const std::vector<gamedata::EncounterMember>& members = m_data->members();
     placement.kinds.assign(members.size(), nullptr);
     placement.templates.assign(members.size(), nullptr);
+    placement.partKinds.assign(members.size(), {});
     const auto refuse = [&](std::string cause) {
         if (std::find(placement.refused.begin(), placement.refused.end(), cause) == placement.refused.end()) {
             placement.refused.push_back(std::move(cause));
@@ -150,6 +151,27 @@ void Encounters::resolve(EncounterPlacement& placement) {
             }
         }
     }
+    // Stage QG5c5, the season rule (encounter_rules::kDarknessAtAllTimes; a project rule of the orchestrator): no season schedule.
+    if (recipe.season == "darkness" && !encounter_rules::kDarknessAtAllTimes) {
+        refuse("the season rule: a Darkness event runs only in its season, and the backend has no season schedule "
+               "(encounter_rules::kDarknessAtAllTimes)");
+    }
+    // Stage QG5c5: a WaitForParentObjective stage ends with its parent: a stage of the manager has no parent, and a child stage after it in
+    // the sequence of its parent would never start.
+    for (std::uint32_t index = 0; index < recipe.stages.size(); ++index) {
+        const gamedata::EncounterStage& stage = recipe.stages[index];
+        if (stage.objective.kind != gamedata::EncounterObjectiveKind::waitParent) {
+            continue;
+        }
+        if (stage.parent < 0) {
+            refuse("the stage " + stage.name + " waits for its parent, and it is a stage of the manager");
+            continue;
+        }
+        const std::vector<std::uint32_t>& siblings = recipe.stages[static_cast<std::size_t>(stage.parent)].children;
+        if (!siblings.empty() && siblings.back() != index) {
+            refuse("the stage " + stage.name + " waits for its parent, and a child stage after it would never start");
+        }
+    }
     // The kind of each creature member and the template of each start object (the other game data files), and the cause of a creature
     // member with no kind.
     std::map<std::uint32_t, std::string> noKind;
@@ -160,7 +182,27 @@ void Encounters::resolve(EncounterPlacement& placement) {
                 continue;
             }
             const gamedata::EncounterMember& member = members[spawn.memberIndex];
-            if (member.kind == gamedata::EncounterMemberKind::creature) {
+            if (member.kind == gamedata::EncounterMemberKind::creature && !member.parts.empty()) {
+                // Stage QG5c5: a group member: the kind of each part ("SLICE#N" of creatures.json). The member has no kind of its own
+                // when no part has one.
+                std::vector<const gamedata::CreatureKind*>& kinds = placement.partKinds[spawn.memberIndex];
+                kinds.assign(member.parts.size(), nullptr);
+                std::string first;
+                for (std::size_t number = 0; number < member.parts.size(); ++number) {
+                    std::string cause;
+                    const std::optional<std::uint32_t> kind =
+                        creatures != nullptr && creatures->loaded() ? creatures->member_kind(member.slice + "#" + std::to_string(number), &cause)
+                                                                    : std::nullopt;
+                    if (kind) {
+                        kinds[number] = &creatures->kinds()[*kind];
+                    } else if (first.empty()) {
+                        first = cause.empty() ? std::string("the backend has no creature data") : cause;
+                    }
+                }
+                if (std::none_of(kinds.begin(), kinds.end(), [](const gamedata::CreatureKind* kind) { return kind != nullptr; })) {
+                    noKind[spawn.memberIndex] = "no part of the group has a kind (" + first + ")";
+                }
+            } else if (member.kind == gamedata::EncounterMemberKind::creature) {
                 std::string cause;
                 const std::optional<std::uint32_t> kind = creatures != nullptr && creatures->loaded()
                                                               ? creatures->member_kind(member.slice, &cause) : std::nullopt;
@@ -186,6 +228,10 @@ void Encounters::resolve(EncounterPlacement& placement) {
             return false;
         }
         const gamedata::EncounterMember& member = members[spawn.memberIndex];
+        if (member.kind == gamedata::EncounterMemberKind::creature && !member.parts.empty()) {
+            const std::vector<const gamedata::CreatureKind*>& kinds = placement.partKinds[spawn.memberIndex];
+            return std::any_of(kinds.begin(), kinds.end(), [](const gamedata::CreatureKind* kind) { return kind != nullptr; });
+        }
         return member.kind == gamedata::EncounterMemberKind::creature ? placement.kinds[spawn.memberIndex] != nullptr
                : member.kind == gamedata::EncounterMemberKind::object
                    ? placement.templates[spawn.memberIndex] != nullptr || (member.proximity && !member.interact)
@@ -202,6 +248,45 @@ void Encounters::resolve(EncounterPlacement& placement) {
                 out.emplace_back(at, &spawn);
             }
             pending.insert(pending.end(), recipe.stages[at].children.begin(), recipe.stages[at].children.end());
+        }
+        return out;
+    };
+    // Stage QG5c5: the members of one spawn of an entry that an objective counts: the ones that the runner makes, and the ones that it
+    // does not make because the client does not show them (a creature member with no kind; a part of a group with no kind).
+    const auto tally = [&](const gamedata::EncounterObjective& objective, const gamedata::EncounterSpawn& spawn) {
+        std::pair<std::uint32_t, std::uint32_t> out{0, 0};
+        if (spawn.memberIndex >= members.size()) {
+            return out;
+        }
+        const gamedata::EncounterMember& member = members[spawn.memberIndex];
+        if (member.kind == gamedata::EncounterMemberKind::creature && !member.parts.empty()) {
+            for (std::size_t number = 0; number < member.parts.size(); ++number) {
+                if (counts_toward(objective, spawn, static_cast<std::int32_t>(number))) {
+                    (placement.partKinds[spawn.memberIndex][number] != nullptr ? out.first : out.second) += 1;
+                }
+            }
+            return out;
+        }
+        if (counts_toward(objective, spawn)) {
+            out.first = makes(spawn) ? 1 : 0;
+            out.second = noKind.count(spawn.memberIndex) != 0 ? 1 : 0;
+        }
+        return out;
+    };
+    // Stage QG5c5: the spawns of the stages of the manager order before the stage of the manager above `index` (with their child stages):
+    // a destroyed objective with a tracked slice counts their members too (the spyglass of Scallywag Shore).
+    const auto earlier = [&](std::uint32_t index) {
+        std::int32_t top = static_cast<std::int32_t>(index);
+        while (recipe.stages[static_cast<std::size_t>(top)].parent >= 0) {
+            top = recipe.stages[static_cast<std::size_t>(top)].parent;
+        }
+        std::vector<std::pair<std::uint32_t, const gamedata::EncounterSpawn*>> out;
+        for (const std::uint32_t before : recipe.stageOrder) {
+            if (static_cast<std::int32_t>(before) == top) {
+                break;
+            }
+            const auto spawns = below(before);
+            out.insert(out.end(), spawns.begin(), spawns.end());
         }
         return out;
     };
@@ -223,11 +308,12 @@ void Encounters::resolve(EncounterPlacement& placement) {
             std::uint32_t made = 0;
             std::uint32_t hidden = 0;
             for (const auto& [owner, spawn] : spawns) {
-                if (objective.tracked.empty() || !counts_toward(objective, *spawn)) {
+                if (objective.tracked.empty()) {
                     continue;
                 }
-                made += makes(*spawn) ? 1 : 0;
-                hidden += noKind.count(spawn->memberIndex) != 0 ? 1 : 0;
+                const auto [shown, notShown] = tally(objective, *spawn);
+                made += shown;
+                hidden += notShown;
             }
             voided[at] = !objective.tracked.empty() && made == 0 && hidden > 0;
         }
@@ -247,7 +333,9 @@ void Encounters::resolve(EncounterPlacement& placement) {
             const std::string name = short_slice(member.slice);
             const bool needed = spawn_needed(placement, index, spawn);
             if (member.kind == gamedata::EncounterMemberKind::creature) {
-                if (placement.kinds[spawn.memberIndex] == nullptr && needed) {
+                // Stage QG5c5: a group member has a creature when one of its parts has a kind.
+                const bool none = member.parts.empty() ? placement.kinds[spawn.memberIndex] == nullptr : noKind.count(spawn.memberIndex) != 0;
+                if (none && needed) {
                     refuse("the creature member " + name + ": " + noKind[spawn.memberIndex]);
                 }
             } else if (member.kind == gamedata::EncounterMemberKind::object) {
@@ -258,8 +346,11 @@ void Encounters::resolve(EncounterPlacement& placement) {
                     refuse("the start object " + name + " has no template of the interaction data (encounterObjects)");
                 } else if (placement.templates[spawn.memberIndex] == nullptr) {
                     refuse("the start object " + name + " has no row of the gathering data (encounterObjects)");
-                } else if (const std::optional<gamedata::GatheringLink> link = gathering->encounter_object(member.slice);
+                } else if (const std::optional<gamedata::GatheringLink> link = gathering != nullptr ? gathering->encounter_object(member.slice)
+                                                                                                    : std::nullopt;
                            !member.proximity && link && link->row < gathering->rows().size() && !gathering->rows()[link->row].unsupported.empty()) {
+                    // Code review of stage QG5c4, finding QG5C4R-R1: with no gathering data (a missing or a refused file) a proximity
+                    // object has no row and no lookup: no call through a null pointer at the load.
                     // Stage QG5c4: the gathering system refuses the gather of such a row (a rule that the backend cannot check): no
                     // character can count the object for its stage.
                     const gamedata::GatherableRow& row = gathering->rows()[link->row];
@@ -278,22 +369,62 @@ void Encounters::resolve(EncounterPlacement& placement) {
     // destroyed stage with no tracked slice and no spawn below it counts each death of a member of its instance (it needs that time limit).
     // Code review of stage QG5c3, finding QG5C3R-R3: a spawn due at or after the time limit of its own stage gives no count (the end of its
     // stage comes first). Stage QG5c4: each objective of the stage, not one that is met at its start.
+    // Code review of stage QG5c4, finding QG5C4R-R4: a spawn comes only when its own stage and each stage above it run at its time. Its
+    // earliest time from the start of a stage above it adds the earlier child stages that end only at their time (a timed stage with one
+    // objective: the sequence of the child stages); a stage with a time limit at or before that time ends first.
+    const auto comes = [&](std::uint32_t owner, const gamedata::EncounterSpawn& spawn) {
+        double at = static_cast<double>(spawn.delay.count()) / 1000.0;
+        for (std::int32_t current = static_cast<std::int32_t>(owner); current >= 0;) {
+            const gamedata::EncounterStage& stage = recipe.stages[static_cast<std::size_t>(current)];
+            if (stage.objective.timeLimit > 0.0F && at >= static_cast<double>(stage.objective.timeLimit)) {
+                return false;
+            }
+            if (stage.parent < 0) {
+                break;
+            }
+            for (const std::uint32_t sibling : recipe.stages[static_cast<std::size_t>(stage.parent)].children) {
+                if (static_cast<std::int32_t>(sibling) == current) {
+                    break;
+                }
+                const gamedata::EncounterStage& before = recipe.stages[sibling];
+                if (before.objective.kind == gamedata::EncounterObjectiveKind::timed && before.more.empty()) {
+                    at += static_cast<double>(before.objective.timeLimit);
+                }
+            }
+            current = stage.parent;
+        }
+        return true;
+    };
     placement.anyMember.assign(recipe.stages.size(), false);
+    placement.fills.assign(recipe.stages.size(), {});
     for (std::uint32_t index = 0; index < recipe.stages.size(); ++index) {
         const gamedata::EncounterStage& stage = recipe.stages[index];
         const auto spawns = below(index);
+        const auto before = earlier(index);
+        placement.fills[index].assign(stage.more.size() + 1, 0);
         for (std::size_t at = 0; at <= stage.more.size(); ++at) {
             const gamedata::EncounterObjective& objective = objective_of(stage, at);
             if ((objective.kind != gamedata::EncounterObjectiveKind::destroyed && objective.kind != gamedata::EncounterObjectiveKind::spawned)
                 || placement.voided[index][at]) {
                 continue;
             }
+            // Stage QG5c5: each member that the objective counts gives one count (a group: each part that it counts); a destroyed
+            // objective with a tracked slice counts the members of the stages before it too.
             std::uint32_t possible = 0;
+            std::uint32_t hidden = 0;
             for (const auto& [owner, spawn] : spawns) {
-                const float limit = recipe.stages[owner].objective.timeLimit;
-                const bool comes = !(limit > 0.0F && spawn->delay >= std::chrono::milliseconds(std::lround(limit * 1000.0F)));
-                if (counts_toward(objective, *spawn) && makes(*spawn) && comes) {
-                    possible += spawn->count;
+                if (comes(owner, *spawn)) {
+                    const auto [shown, notShown] = tally(objective, *spawn);
+                    possible += spawn->count * shown;
+                    hidden += spawn->count * notShown;
+                }
+            }
+            if (objective.kind == gamedata::EncounterObjectiveKind::destroyed && !objective.tracked.empty()) {
+                for (const auto& [owner, spawn] : before) {
+                    if (spawn->memberIndex < members.size() && members[spawn->memberIndex].kind == gamedata::EncounterMemberKind::object
+                        && comes(owner, *spawn)) {
+                        possible += spawn->count * tally(objective, *spawn).first;
+                    }
                 }
             }
             const bool timedEnd = stage.objective.timeLimit > 0.0F && stage.objective.succeedOnTimeout;
@@ -305,6 +436,14 @@ void Encounters::resolve(EncounterPlacement& placement) {
                 }
                 continue;
             }
+            if (!timedEnd && objective.requiredCount > possible && possible > 0 && possible + hidden >= objective.requiredCount
+                && objective.kind == gamedata::EncounterObjectiveKind::destroyed) {
+                // Stage QG5c5 [agent: the rule of stage QG5c4 for the creatures that the client does not show, for the parts of a group]:
+                // the parts that the runner does not make (the swarmers of the portal waves) give the count that the made parts cannot
+                // give, at the start of the stage; the objective needs each member that the runner makes.
+                placement.fills[index][at] = objective.requiredCount - possible;
+                continue;
+            }
             if (!timedEnd && objective.requiredCount > possible) {
                 refuse("the stage " + label + " needs " + std::to_string(objective.requiredCount) + " "
                        + (objective.kind == gamedata::EncounterObjectiveKind::destroyed ? "destroyed" : "spawned")
@@ -314,14 +453,42 @@ void Encounters::resolve(EncounterPlacement& placement) {
     }
 }
 
-bool Encounters::counts_toward(const gamedata::EncounterObjective& objective, const gamedata::EncounterSpawn& spawn) const {
+bool Encounters::counts_toward(const gamedata::EncounterObjective& objective, const gamedata::EncounterSpawn& spawn, std::int32_t part) const {
     const std::string& tracked = objective.tracked;
-    if (tracked.empty() || tracked == spawn.member) {
+    // Stage QG5c5: a spawn of an alias counts for an objective that tracks the alias (the pylons, the cores).
+    if (tracked.empty() || tracked == spawn.member || (!spawn.alias.empty() && tracked == spawn.alias)) {
         return true;
     }
     const gamedata::EncounterMember* member = m_data->member(spawn.member);
-    return member != nullptr
-           && (tracked == member->body || std::find(member->bodySlices.begin(), member->bodySlices.end(), tracked) != member->bodySlices.end());
+    if (member == nullptr) {
+        return false;
+    }
+    // The body of the member (stage QG5c5: of a part of a group) is the tracked slice, a slice of the tracked alias, or the alias itself.
+    const auto names = [&](const std::string& body, const std::vector<std::string>& slices) {
+        const auto has = [&](const std::string& path) {
+            return path == body || std::find(slices.begin(), slices.end(), path) != slices.end();
+        };
+        return has(tracked) || std::any_of(objective.trackedSlices.begin(), objective.trackedSlices.end(), has);
+    };
+    if (member->parts.empty()) {
+        return names(member->body, member->bodySlices);
+    }
+    if (part >= 0) {
+        return static_cast<std::size_t>(part) < member->parts.size()
+               && names(member->parts[static_cast<std::size_t>(part)].body, member->parts[static_cast<std::size_t>(part)].bodySlices);
+    }
+    return std::any_of(member->parts.begin(), member->parts.end(),
+                       [&](const gamedata::EncounterPart& each) { return names(each.body, each.bodySlices); });
+}
+
+bool Encounters::children_done(const EncounterInstance& instance, std::uint32_t index) const {
+    const gamedata::EncounterRecipe& recipe = *m_placements[instance.placement].recipe;
+    for (const std::uint32_t child : recipe.stages[index].children) {
+        if (recipe.stages[child].objective.kind != gamedata::EncounterObjectiveKind::waitParent && !instance.stages[child].ended) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::optional<std::uint32_t> Encounters::placement_of(const std::string& key) const {
@@ -474,7 +641,7 @@ void Encounters::look_proximity() {
         ++m_counts.proximityLooks;
         const float radius = object.member->radius;
         std::vector<std::string> finders;
-        for (const auto& [characterId, attempts] : object.failures) {
+        for (const auto& [characterId, ledger] : object.failures) {
             finders.push_back(characterId);
         }
         m_world.for_each_near(object.place, radius, [&](Entity& entity) {
@@ -523,8 +690,21 @@ void Encounters::look_proximity() {
                 interacted.keys = {object.member->tag};
                 events.push_back(std::move(interacted));
             }
-            if (const QuestError error = m_world.quests().object_destroyed(*character, {}, events); error != QuestError::none) {
-                const std::uint32_t attempts = ++object.failures[characterId];
+            // Code review of stage QG5c4, finding QG5C4R-R3: a retry credits only the tasks that the find matched at its first attempt.
+            const auto retry = object.failures.find(characterId);
+            for (std::size_t position = 0; retry != object.failures.end() && position < events.size(); ++position) {
+                events[position].restricted = true;
+                events[position].attempt = retry->second.attempts;
+                events[position].matched = position < retry->second.matched.size() ? retry->second.matched[position]
+                                                                                     : std::vector<std::pair<std::uint64_t, std::uint8_t>>{};
+            }
+            std::vector<std::vector<std::pair<std::uint64_t, std::uint8_t>>> matched;
+            if (const QuestError error = m_world.quests().object_destroyed(*character, {}, events, &matched); error != QuestError::none) {
+                FindRetry& ledger = object.failures[characterId];
+                if (ledger.attempts == 0) {
+                    ledger.matched = std::move(matched);
+                }
+                const std::uint32_t attempts = ++ledger.attempts;
                 ++m_counts.findRetries;
                 log::write("world: encounters: the quest change of the find of the proximity object %016llx by %s was refused (%s, attempt %u)",
                            static_cast<unsigned long long>(id), characterId.c_str(), quest_error_text(error), attempts);
@@ -712,9 +892,16 @@ void Encounters::look_triggers() {
             continue;
         }
         ++m_counts.triggersFound;
-        // The change of the target completes the objective; the stage ends as at its count (its child stages first, if any).
-        instance->stages[entry.stage].met.assign(instance->stages[entry.stage].met.size(), true);
-        objective_met(*instance, entry.stage);
+        // The change of the target completes its own objective (the first of the stage); the stage ends when each objective is met (its
+        // child stages first, if any). Code review of stage QG5c4, finding QG5C4R-R2: the trigger does not meet the other objectives.
+        EncounterStageRun& run = instance->stages[entry.stage];
+        if (!run.met.empty()) {
+            run.met[0] = true;
+        }
+        publish_objectives(*instance);
+        if (std::all_of(run.met.begin(), run.met.end(), [](bool value) { return value; })) {
+            objective_met(*instance, entry.stage);
+        }
     }
 }
 
@@ -814,6 +1001,19 @@ void Encounters::start_stage(EncounterInstance& instance, std::uint32_t index) {
             ++m_counts.objectivesVoided;
         }
     }
+    // Stage QG5c5: the count of the parts that the runner does not make (EncounterPlacement::fills: the swarmers of the portal waves).
+    const std::vector<std::uint32_t>& fills = m_placements[instance.placement].fills[index];
+    for (std::size_t at = 0; at < run.counts.size() && at < fills.size(); ++at) {
+        if (fills[at] > 0) {
+            run.counts[at] += fills[at];
+            if (at == 0) {
+                run.destroyed = run.counts[0];
+            }
+            m_counts.partsFilled += fills[at];
+            log::write("world: encounters: the encounter %s (stage %s, objective %zu) counts %u parts that the client does not show",
+                       recipe.key.c_str(), stage.name.c_str(), at + 1, fills[at]);
+        }
+    }
     stage_status(instance, index, encounter_rules::kStageStarted);
     log::write("world: encounters: the encounter %s (generation %llu) starts the stage %s", recipe.key.c_str(),
                static_cast<unsigned long long>(instance.generation), stage.name.c_str());
@@ -835,6 +1035,7 @@ void Encounters::start_stage(EncounterInstance& instance, std::uint32_t index) {
     if (stage.killSpawnsAtStart) {
         remove_members(instance, false, true);
     }
+    destroy_slices(instance, stage.destroyAtStart);
     const WorldClock::time_point now = m_world.clock().now();
     if (stage.objective.timeLimit > 0.0F) {
         const auto time = std::chrono::milliseconds(static_cast<std::int64_t>(std::lround(stage.objective.timeLimit * 1000.0F)));
@@ -873,6 +1074,8 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
     const gamedata::EncounterMember& member = m_data->members()[spawn.memberIndex];
     const bool needed = spawn_needed(placement, index, spawn);
     std::uint32_t made = 0;
+    // Stage QG5c5: the part of each member that this entry made (-1: not a part of a group), for the spawned objectives below.
+    std::vector<std::int32_t> madeParts;
     for (std::uint32_t number = 0; number < spawn.count; ++number) {
         if (instance.members.size() >= encounter_rules::kMaxMembers) {
             log::write("world: encounters: the encounter %s has %zu members: no more", recipe.key.c_str(), instance.members.size());
@@ -884,6 +1087,72 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
             const gamedata::EncounterPlace& location = spawn.locations[number % spawn.locations.size()];
             place = location.position;
             yaw = location.yaw;
+        }
+        if (member.kind == gamedata::EncounterMemberKind::creature && !member.parts.empty()) {
+            // Stage QG5c5: a group member: one creature for each part with a kind, at its place in the member slice (the offset turned by
+            // the yaw of the spawn location), with the yaw of its entity, and with its patrol path in the world [data: the spawner
+            // entities, their m_worldTM, their AIPathComponent; agent: the yaw only, no tilt]. A part that the client does not show is not
+            // made (its count: EncounterPlacement::fills).
+            const float turn = yaw * 3.14159265358979F / 180.0F;
+            const float cosine = std::cos(turn);
+            const float sine = std::sin(turn);
+            const auto world_of = [&](float x, float y, float z) {
+                return state::WorldPosition{place.x + cosine * x - sine * y, place.y + sine * x + cosine * y, place.z + z};
+            };
+            for (std::size_t part = 0; part < member.parts.size(); ++part) {
+                const gamedata::CreatureKind* kind = placement.partKinds[spawn.memberIndex].size() > part
+                                                         ? placement.partKinds[spawn.memberIndex][part] : nullptr;
+                if (kind == nullptr) {
+                    ++m_counts.partsHidden;
+                    ++m_counts.spawnsSkipped;
+                    continue;
+                }
+                if (instance.members.size() >= encounter_rules::kMaxMembers) {
+                    log::write("world: encounters: the encounter %s has %zu members: no more", recipe.key.c_str(), instance.members.size());
+                    break;
+                }
+                const gamedata::EncounterPart& data = member.parts[part];
+                gamedata::PatrolRoute route;
+                route.policy = data.route.policy;
+                for (const gamedata::PatrolWaypoint& point : data.route.points) {
+                    gamedata::PatrolWaypoint waypoint = point;
+                    waypoint.position = world_of(point.position.x, point.position.y, point.position.z);
+                    waypoint.yaw = point.yaw + yaw;
+                    route.points.push_back(std::move(waypoint));
+                }
+                Entity* creature = m_world.creatures().spawn_member(*kind, world_of(data.offset[0], data.offset[1], data.offset[2]),
+                                                                    yaw + data.yaw, instance.placement, instance.generation,
+                                                                    route.points.empty() ? nullptr : &route);
+                if (creature == nullptr) {
+                    log::write("world: encounters: the encounter %s did not make the part %zu (%s) of its member %s", recipe.key.c_str(), part,
+                               data.name.c_str(), short_slice(member.slice).c_str());
+                    continue;
+                }
+                ++m_counts.membersMade;
+                ++m_counts.partsMade;
+                EncounterMemberRun run{index, entry, false, false, false, false};
+                run.part = static_cast<std::int32_t>(part);
+                instance.members[creature->id] = run;
+                m_memberOf[creature->id] = {instance.placement, instance.generation};
+                ++instance.stages[index].spawned;
+                ++made;
+                madeParts.push_back(static_cast<std::int32_t>(part));
+                if (recipe.overrideAggroDelay) {
+                    if (recipe.aggroDelay > 0.0F) {
+                        const auto delay = std::chrono::milliseconds(static_cast<std::int64_t>(std::lround(recipe.aggroDelay * 1000.0F)));
+                        schedule(m_world.clock().now() + delay, Due{DueKind::aggro, instance.placement, instance.generation, index, 0, creature->id});
+                    } else {
+                        provoke(instance, *creature);
+                    }
+                }
+                log::write("world: encounters: the encounter %s (generation %llu, stage %s) makes the part %zu (%s, %s) of the group %s: entity "
+                           "%016llx at %.2f %.2f %.2f%s",
+                           recipe.key.c_str(), static_cast<unsigned long long>(instance.generation), stage.name.c_str(), part, data.name.c_str(),
+                           kind->id.c_str(), short_slice(member.slice).c_str(), static_cast<unsigned long long>(creature->id),
+                           static_cast<double>(creature->position.x), static_cast<double>(creature->position.y),
+                           static_cast<double>(creature->position.z), route.points.empty() ? "" : " (with its path)");
+            }
+            continue;
         }
         Entity* entity = nullptr;
         if ((member.kind == gamedata::EncounterMemberKind::object && member.proximity && !member.interact)
@@ -950,6 +1219,7 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
         m_memberOf[entity->id] = {instance.placement, instance.generation};
         ++run.spawned;
         ++made;
+        madeParts.push_back(-1);
         if (member.kind == gamedata::EncounterMemberKind::creature && recipe.overrideAggroDelay) {
             // m_overrideAggroDelay of the manager (game data; the AITargetCollector of the root): the member takes the nearest participant
             // as its target after m_aggroDelayOverride (0 s in the recipes of the stage: at once).
@@ -988,7 +1258,14 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
         if (current == nullptr || current->phase != EncounterPhase::running) {
             return;
         }
-        count_objective(*current, at, number, made);
+        // Stage QG5c5: each made member (each made part of a group) that the objective counts.
+        const gamedata::EncounterObjective& objective = objective_of(recipe.stages[at], number);
+        const auto added = static_cast<std::uint32_t>(std::count_if(madeParts.begin(), madeParts.end(), [&](std::int32_t part) {
+            return counts_toward(objective, spawn, part);
+        }));
+        if (added > 0) {
+            count_objective(*current, at, number, added);
+        }
     }
 }
 
@@ -1083,6 +1360,7 @@ void Encounters::count_destroyed(EncounterInstance& instance, EntityId member) {
     const EncounterPlacement& placement = m_placements[instance.placement];
     const gamedata::EncounterRecipe& recipe = *placement.recipe;
     const gamedata::EncounterSpawn& spawn = recipe.stages[found->second.stage].spawns[found->second.spawn];
+    const std::int32_t part = found->second.part;
     const bool death = !found->second.object && !found->second.noEntity;
     // The objectives that count it (stage QG5c3): its stage and each stage above it that tracks it (a parent counts the spawns of its child
     // stages), the innermost first; and each stage that counts each death of a member of the instance (Kill Helvan Boss). Stage QG5c4: each
@@ -1092,8 +1370,26 @@ void Encounters::count_destroyed(EncounterInstance& instance, EntityId member) {
         const gamedata::EncounterStage& stage = recipe.stages[static_cast<std::size_t>(at)];
         for (std::size_t number = 0; number <= stage.more.size(); ++number) {
             const gamedata::EncounterObjective& objective = objective_of(stage, number);
-            if (objective.kind == gamedata::EncounterObjectiveKind::destroyed && counts_toward(objective, spawn)) {
+            if (objective.kind == gamedata::EncounterObjectiveKind::destroyed && counts_toward(objective, spawn, part)) {
                 counting.emplace_back(static_cast<std::uint32_t>(at), number);
+            }
+        }
+    }
+    // Stage QG5c5: a running stage whose destroyed objective tracks the slice of a start object of an earlier stage (its stage ended) counts
+    // it too (the spyglass of Scallywag Shore, spawned by the timed setup and tracked by "Look through Spyglass") [data: the stage tracks a
+    // slice that only the earlier stage spawns; agent: the rule, only for a start object].
+    for (std::uint32_t index = 0; found->second.object && instance.stages[found->second.stage].ended && index < recipe.stages.size(); ++index) {
+        const EncounterStageRun& run = instance.stages[index];
+        if (!run.started || run.ended) {
+            continue;
+        }
+        const gamedata::EncounterStage& stage = recipe.stages[index];
+        for (std::size_t number = 0; number <= stage.more.size(); ++number) {
+            const gamedata::EncounterObjective& objective = objective_of(stage, number);
+            const std::pair<std::uint32_t, std::size_t> entry{index, number};
+            if (objective.kind == gamedata::EncounterObjectiveKind::destroyed && !objective.tracked.empty()
+                && counts_toward(objective, spawn, part) && std::find(counting.begin(), counting.end(), entry) == counting.end()) {
+                counting.push_back(entry);
             }
         }
     }
@@ -1103,6 +1399,12 @@ void Encounters::count_destroyed(EncounterInstance& instance, EntityId member) {
             counting.push_back(first);
         }
     }
+    // Stage QG5c5: a death counts only for the stages that ran when it came: the end of a sub-wave starts the next child stage (a
+    // transition that counts each death of a member) in this loop, and that stage does not count the same death (live L2: "1/3").
+    std::vector<bool> running(instance.stages.size(), false);
+    for (std::size_t index = 0; index < running.size(); ++index) {
+        running[index] = instance.stages[index].started && !instance.stages[index].ended;
+    }
     const std::uint32_t placementIndex = instance.placement;
     const std::uint64_t generation = instance.generation;
     for (const auto& [index, number] : counting) {
@@ -1110,7 +1412,9 @@ void Encounters::count_destroyed(EncounterInstance& instance, EntityId member) {
         if (current == nullptr || current->phase != EncounterPhase::running) {
             return; // An earlier stage of the chain ended the encounter.
         }
-        count_objective(*current, index, number, 1);
+        if (index < running.size() && running[index]) {
+            count_objective(*current, index, number, 1);
+        }
     }
 }
 
@@ -1132,9 +1436,9 @@ void Encounters::count_objective(EncounterInstance& instance, std::uint32_t inde
     if (run.counts[number] >= objective.requiredCount) {
         run.met[number] = true;
     }
-    if (objective.kind == gamedata::EncounterObjectiveKind::destroyed) {
-        publish_objectives(instance);
-    }
+    // Code review of stage QG5c4, finding QG5C4R-R5: a spawned objective publishes its count too (a met spawned objective of a stage that
+    // waits for an other objective must reach the HUD of each observer).
+    publish_objectives(instance);
     if (std::all_of(run.met.begin(), run.met.end(), [](bool value) { return value; })) {
         objective_met(instance, index);
     }
@@ -1148,8 +1452,9 @@ void Encounters::objective_met(EncounterInstance& instance, std::uint32_t index)
         return;
     }
     run.objectiveMet = true;
-    if (!stage.children.empty() && !stage.childrenOptional && !run.childrenDone) {
+    if (!stage.children.empty() && !stage.childrenOptional && !run.childrenDone && !children_done(instance, index)) {
         // m_childStagesOptional 0 [data: the name; agent: the rule]: the stage ends when its count came and its last child stage ended.
+        // Stage QG5c5: a child stage with a WaitForParentObjective ends with its parent; the parent does not wait for it.
         log::write("world: encounters: the encounter %s (stage %s) has its count and waits for its child stages", recipe.key.c_str(),
                    stage.name.c_str());
         return;
@@ -1233,6 +1538,7 @@ void Encounters::end_stage(EncounterInstance& instance, std::uint32_t index, boo
     if (stage.killSpawnsAtEnd) {
         remove_members(instance, false, true);
     }
+    destroy_slices(instance, stage.destroyAtEnd);
     publish_objectives(instance);
     if (stage.parent >= 0) {
         // Stage QG5c3: a child stage ended. A failure of a child that is not optional fails its parent; else the next child starts, or the
@@ -1249,7 +1555,14 @@ void Encounters::end_stage(EncounterInstance& instance, std::uint32_t index, boo
         }
         if (parentRun.nextChild < parent.children.size()) {
             const std::uint32_t next = parent.children[parentRun.nextChild++];
+            const std::uint32_t placementIndex = instance.placement;
+            const std::uint64_t generation = instance.generation;
             start_stage(instance, next);
+            // Stage QG5c5: the next child waits for its parent (WaitForParentObjective): a parent that has its count ends now.
+            if (recipe.stages[next].objective.kind == gamedata::EncounterObjectiveKind::waitParent && instance_of(placementIndex, generation) != nullptr
+                && parentRun.objectiveMet && !parentRun.ended && children_done(instance, parentIndex)) {
+                end_stage(instance, parentIndex, true);
+            }
             return;
         }
         parentRun.childrenDone = true;
@@ -1356,6 +1669,58 @@ void Encounters::pay(std::size_t index) {
     }
     ++m_counts.creditRetries;
     schedule(m_world.clock().now() + encounter_rules::kPayoutRetry, Due{DueKind::payout, payout.placement, payout.generation, 0, 0, index});
+}
+
+void Encounters::destroy_slices(EncounterInstance& instance, const std::vector<gamedata::EncounterDestroy>& actions) {
+    if (actions.empty()) {
+        return;
+    }
+    // Stage QG5c5, DestroySliceAction [data: m_sliceAsset, m_aliasAsset of the action; agent: no count and no reward, as KillSpawnsAction]:
+    // each member of the instance whose slice, alias, or body is the slice of the action, its alias, or a slice of its alias goes. A visual
+    // that the runner did not make (the corruption hazard of the setup of a monolith) has no member: nothing goes.
+    const gamedata::EncounterRecipe& recipe = *m_placements[instance.placement].recipe;
+    const auto named = [&](const gamedata::EncounterDestroy& action, const std::string& path) {
+        return !path.empty()
+               && (path == action.slice || path == action.alias
+                   || std::find(action.aliasSlices.begin(), action.aliasSlices.end(), path) != action.aliasSlices.end());
+    };
+    std::vector<std::pair<EntityId, bool>> removed;
+    for (auto& [entity, run] : instance.members) {
+        if (run.done) {
+            continue;
+        }
+        const gamedata::EncounterSpawn& spawn = recipe.stages[run.stage].spawns[run.spawn];
+        const gamedata::EncounterMember* member = m_data->member(spawn.member);
+        std::string body = member != nullptr ? member->body : std::string();
+        if (member != nullptr && run.part >= 0 && static_cast<std::size_t>(run.part) < member->parts.size()) {
+            body = member->parts[static_cast<std::size_t>(run.part)].body;
+        }
+        const bool hit = std::any_of(actions.begin(), actions.end(), [&](const gamedata::EncounterDestroy& action) {
+            return named(action, spawn.member) || named(action, spawn.alias) || named(action, body);
+        });
+        if (!hit) {
+            continue;
+        }
+        run.done = true;
+        if (run.noEntity) {
+            m_proximity.erase(entity);
+            continue;
+        }
+        if (m_memberOf.erase(entity) != 0) {
+            removed.emplace_back(entity, run.object);
+        }
+    }
+    for (const auto& [entity, object] : removed) {
+        if (object) {
+            m_objects.erase(entity);
+            m_proximity.erase(entity);
+            m_world.interactions().remove_object(entity);
+        } else {
+            m_world.creatures().remove_member(entity);
+        }
+        ++m_counts.slicesDestroyed;
+        ++m_counts.membersRemoved;
+    }
 }
 
 void Encounters::remove_members(EncounterInstance& instance, bool objectsToo, bool endedObjects) {
@@ -1590,6 +1955,18 @@ std::vector<EncounterView> Encounters::view(const state::WorldPosition& place, f
         }
         for (const auto& [characterId, participant] : instance.participants) {
             view.participants.push_back(characterId);
+        }
+        for (std::uint32_t index = 0; index < recipe.stages.size(); ++index) {
+            const EncounterStageRun& run = instance.stages[index];
+            if (!run.started || run.ended) {
+                continue;
+            }
+            std::string text = recipe.stages[index].name + ":";
+            for (std::size_t number = 0; number < run.counts.size(); ++number) {
+                text += (number == 0 ? " " : ", ") + std::to_string(run.counts[number]) + "/"
+                        + std::to_string(objective_of(recipe.stages[index], number).requiredCount);
+            }
+            view.running.push_back(std::move(text));
         }
         for (const auto& [entity, member] : instance.members) {
             if (!member.done) {

@@ -75,6 +75,10 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   (`Spells::creature_hit`: the damage of the creature rule with the armor of the vitals row of the summon). A summon in its
   end chain, with the health 0, or that left the world is not a target: the creature loses it ("the summon ends") and goes
   back. A trap and an aura are not targets.
+- Stage QG5c5: a member of an encounter has no spawn point; a part of a group member with a patrol path of the data has its route in its
+  entity (`Creature::memberRoute`: the waypoints of its AIPathComponent in world coordinates, turned by the yaw of its spawn location), and
+  `Behavior::route_of` returns it. The rules below apply to it: at rest it walks its route (live QG5c5 L3: the navigator of the boat landing
+  walks from the boat along its path); a target of the encounter (the aggro of the manager) comes first.
 - Patrol, wander, and the reset (stage 3.4e, protocol notes 4.14 and 4.17; project rules,
   each constant in `behavior_rules`). The routes of the spawn points and the wander values of
   the slices are game data (`creatures.json` of format 3: the member `routes`, value 11 of a

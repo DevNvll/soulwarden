@@ -61,6 +61,16 @@
 // after the first stage (R1), each finder of a proximity object keeps its write until the store took it (R2), and a spawn due at or after the
 // time limit of its stage gives no count (R3).
 //
+// Stage QG5c5 (the Darkness events, the boat reinforcements): a group member makes one creature for each part (each creature spawner of
+// its slice: its kind "SLICE#N", its place in the slice, its patrol path); a part that the client does not show is not made, and an
+// objective that the made parts cannot reach counts the missing parts at the start of its stage. A child stage with a
+// WaitForParentObjective ends with its parent, and its parent does not wait for it. A DestroySliceAction removes the members of a slice or
+// an alias. A destroyed objective with a tracked slice counts a member of that slice of an earlier stage too (the spyglass). A spawn of an
+// alias counts for an objective that tracks the alias. The season rule (kDarknessAtAllTimes): a Darkness event is available at all times.
+// Code review of stage QG5c4: a missing gathering file is no fault of the load (R1), a trigger meets only its own objective (R2), a retry
+// of a find credits only the tasks of its first attempt (R3), the count check takes the time limits of the stages above a spawn (R4), and
+// a spawned objective publishes its count (R5).
+//
 // The cost depends on the characters, the instances, and the due entries, not on the size of the world (MP-8): the placements are in a grid
 // of cells (a scan looks at the cells near each character), the participants of an instance are the characters near its root (the position
 // index), the proximity objects are the ones of the running instances (the characters near each one), and the timers are one due list.
@@ -97,6 +107,13 @@ inline constexpr std::uint32_t kPayoutAttempts = 5;
  * object that the store refused: 20 looks, the 10 s of the credit ledger (kPayoutAttempts times kPayoutRetry; a rule of this project).
  */
 inline constexpr std::uint32_t kFindAttempts = 20;
+/**
+ * Stage QG5c5, the season rule (a project rule of the orchestrator of stage QG5c5, docs/systems/encounters.md; the user can change it): the
+ * backend has no season schedule, so a Darkness event (a recipe with the season "darkness") is available at all times. It starts only by
+ * the start rule of its recipe (its placement near a character, its manager, its detector), as each other encounter; it never starts by
+ * itself across the world. False: the runner refuses each Darkness recipe (one cause), and no Darkness event runs.
+ */
+inline constexpr bool kDarknessAtAllTimes = true;
 /** The bounds of one instance (load bounds: the data has at most 32 for each spawn entry). */
 inline constexpr std::size_t kMaxMembers = 256;
 inline constexpr std::size_t kMaxParticipants = 64;
@@ -136,6 +153,8 @@ struct EncounterMemberRun {
      */
     bool proximity{false};
     bool noEntity{false};
+    /** Stage QG5c5: the part of a group member (EncounterMember::parts); -1: not a part. */
+    std::int32_t part{-1};
 };
 
 /** The run of one stage of an instance. */
@@ -191,6 +210,13 @@ struct EncounterPlacement {
      */
     std::vector<const gamedata::CreatureKind*> kinds;
     std::vector<const gamedata::EncounterObject*> templates;
+    /** Stage QG5c5: the kind of each part of a group member (null: the client does not show its slice), by the index of the member. */
+    std::vector<std::vector<const gamedata::CreatureKind*>> partKinds;
+    /**
+     * Stage QG5c5: for each stage, the count that each objective gets at its start for the parts that the runner does not make (a part that
+     * the client does not show: the swarmers of the portal waves): the parts that its count needs beyond the parts that the runner makes.
+     */
+    std::vector<std::vector<std::uint32_t>> fills;
     /**
      * Stage QG5c3: the stages that count each death of a member of their instance (a destroyed stage with no tracked slice and no spawn of
      * its own or of its child stages: Kill Helvan Boss), by the stage index.
@@ -243,6 +269,13 @@ struct EncounterCounts {
     std::uint64_t triggerLooks{0};
     std::uint64_t objectivesVoided{0};
     std::uint64_t findRetries{0};
+    /** Stage QG5c5: the parts of the group members that the runner made, the parts that it did not make (the client does not show their
+     *  slice), the counts given at a stage start for such parts (EncounterPlacement::fills), and the members that a DestroySliceAction
+     *  removed. */
+    std::uint64_t partsMade{0};
+    std::uint64_t partsHidden{0};
+    std::uint64_t partsFilled{0};
+    std::uint64_t slicesDestroyed{0};
     /** Events of an old generation (a late death, an old timer, an old gather): no change. */
     std::uint64_t oldGeneration{0};
     std::uint64_t participantsAdded{0};
@@ -270,6 +303,8 @@ struct EncounterView {
     std::vector<std::string> participants;
     std::vector<EntityId> members;
     float distance{0.0F};
+    /** Stage QG5c5: each stage that runs (also a child stage) with the count of each objective: "NAME: N/M, N/M". */
+    std::vector<std::string> running;
 };
 
 class Encounters {
@@ -353,6 +388,15 @@ private:
         /** Stage QG5c3: the end of a member that ends itself (its id in `payout`). */
         memberEnd,
     };
+    /**
+     * Code review of stage QG5c4, finding QG5C4R-R3: a finder whose quest write the store refused: its attempts, and the tasks that each event
+     * of its find matched at the first attempt (a retry credits only these tasks, when they are still active: a quest that became active
+     * after the find gets nothing).
+     */
+    struct FindRetry {
+        std::uint32_t attempts{0};
+        std::vector<std::vector<std::pair<std::uint64_t, std::uint8_t>>> matched;
+    };
     /** Stage QG5c3: a proximity object of a running stage (with an entity or not): its place and its member data. */
     struct Proximity {
         std::uint32_t placement{0};
@@ -364,7 +408,7 @@ private:
          * refused (the attempts). The object stays until each finder of the set has its write or ran out of attempts; then it goes, one time.
          */
         std::set<std::string> paid;
-        std::map<std::string, std::uint32_t> failures;
+        std::map<std::string, FindRetry> failures;
     };
     /** Stage QG5c4: a running entity-state stage (its triggers are in the objective of the stage of the recipe). */
     struct Armed {
@@ -424,8 +468,16 @@ private:
     void manager_status(EncounterInstance& instance, std::uint32_t status);
     void publish_objectives(EncounterInstance& instance);
     void link(Entity& character, EntityId root, bool on);
-    /** @return True when an objective counts a spawn: it tracks no slice, its slice, or the body slice or an alias slice of the member. */
-    [[nodiscard]] bool counts_toward(const gamedata::EncounterObjective& objective, const gamedata::EncounterSpawn& spawn) const;
+    /**
+     * @return True when an objective counts a spawn: it tracks no slice, its slice, its alias (stage QG5c5), or the body slice or an alias
+     *         slice of the member. Stage QG5c5: `part` is a part of a group member (its body); -1: the member, or any part of a group.
+     */
+    [[nodiscard]] bool counts_toward(const gamedata::EncounterObjective& objective, const gamedata::EncounterSpawn& spawn,
+                                     std::int32_t part = -1) const;
+    /** Stage QG5c5: the members of the instance whose slice, alias, or body a DestroySliceAction names go (no count, no reward). */
+    void destroy_slices(EncounterInstance& instance, const std::vector<gamedata::EncounterDestroy>& actions);
+    /** Stage QG5c5: the child stages of a stage that it waits for (not optional) ended: each one that is not a WaitForParentObjective stage. */
+    [[nodiscard]] bool children_done(const EncounterInstance& instance, std::uint32_t stage) const;
     /**
      * Stage QG5c3: the stage of a spawn or a stage above it counts the spawn (a destroyed or a spawned objective that tracks it or nothing).
      * Stage QG5c4: each objective of those stages, not one that is met at its start (EncounterPlacement::voided).

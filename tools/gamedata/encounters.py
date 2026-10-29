@@ -19,7 +19,8 @@ adds the causes of the other game data files: a member kind, a template, or a ro
   - The scope (a rule of this project; the patterns of research quest-encounters.md, Appendix A): stage QG5c2 the kill waves after an
     interaction and the Blighted Ranger; stage QG5c3 the summoned opponents, the ambushes, and the kill waves with a cause of the data.
     PATTERNS gives each other recipe its pattern (the label of the counts); LATER names the patterns of a later stage: the interaction
-    sequences and the defenses (QG5c4), the summoned opponent with phases (BT3), the world events and the seasonal events (later).
+    sequences and the defenses (QG5c4), the summoned opponent with phases (BT3), the seasonal events of slices/worldevents/seasons/ (later).
+    Stage QG5c5 runs the Darkness events (SEASON_FOLDERS: the backend has the season rule) and the world events of the open world.
   - The manager starts the encounter by itself (m_autoActivate). A reset event of the manager (m_resetEncounterEventId, Reset_Encounter of
     the stone tablet of Helvan) is no cause: no slice or table of the data sends it, and the fail of the runner (a fight with no
     participant) is the reset (stage QG5c3, a rule of this project).
@@ -31,8 +32,13 @@ adds the causes of the other game data files: a member kind, a template, or a ro
   - Each objective is an InvasionWaveObjective with a time limit and succeedOnTimeout (a timed stage), a SliceDestroyedObjective (with a
     tracked slice of its own spawns or of the spawns of its child stages, or none: the members of its stage and of its child stages), or a
     SliceSpawnedObjective (stage QG5c3: the spawn of its tracked slice); no failure condition, no background activation.
-  - Child stages run (stage QG5c3: one after the other in their order, docs/systems/encounters.md); no DestroySliceAction (a later
-    stage); EntityEventAction is a part of the client (the handler of the stage status); KillSpawnsAction removes the members.
+  - Child stages run (stage QG5c3: one after the other in their order, docs/systems/encounters.md); EntityEventAction is a part of the
+    client (the handler of the stage status); KillSpawnsAction removes the members; stage QG5c5: DestroySliceAction removes the members of
+    its slice or alias, and a child stage with a WaitForParentObjective ends with its parent (a stage of the manager, or a child before an
+    other child, has a cause).
+  - Stage QG5c5: a group member counts one for each part that an objective counts (units); a spawn of an alias counts for an objective
+    that tracks the alias (the spawn has "alias"); a tracked alias counts the bodies of its slices ("trackedSlices"); a destroyed
+    objective with a tracked slice counts the start objects of the stages before it (the spyglass).
   - Each member is a creature member or a start object (a gather or a proximity object: stage QG5c3, the ambushes), the recipe has a
     creature member (else it is an interaction sequence), and a start object is only in a stage that tracks it.
 
@@ -105,16 +111,24 @@ PATTERNS = {
     "slices/worldevents/monarchsbluffs/scallywagshore/enc_worldevent_boatreinforcements_bryseddshore.dynamicslice": WORLD_EVENT,
     "slices/worldevents/monarchsbluffs/scallywagshore/enc_worldevent_boatreinforcements_scallywagshore.dynamicslice": WORLD_EVENT,
 }
-# Stage QG5c4: the pattern of the recipes of a folder (the eight tarot towers of Dunwood).
+DARKNESS = "a seasonal event (the Darkness)"
+# Stage QG5c4: the pattern of the recipes of a folder (the eight tarot towers of Dunwood). Stage QG5c5: the Darkness events (3 monoliths and
+# 2 portals of Myrkgard).
 PATTERN_FOLDERS = {
     "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/": SEQUENCE,
+    "slices/darkness/": DARKNESS,
+}
+# Stage QG5c5: the season of the recipes of a folder ("season" of the recipe). The tool refuses no seasonal recipe: the backend decides
+# with its season rule (encounter_rules::kDarknessAtAllTimes, docs/systems/encounters.md: a project rule of the orchestrator of stage
+# QG5c5; the backend has no season schedule).
+SEASON_FOLDERS = {
+    "slices/darkness/": "darkness",
 }
 # The recipes of the patterns of a later stage and their stage (refused).
 LATER = {
     "slices/worldevents/dunwood/enc_worldevent_carmilla_mindthief.dynamicslice": ("a summoned opponent with phases", "a later stage (BT3)"),
 }
 LATER_FOLDERS = {
-    "slices/darkness/": ("a seasonal event (the Darkness)", "a later stage (the scheduled and seasonal events)"),
     "slices/worldevents/seasons/": ("a seasonal event", "a later stage (the scheduled and seasonal events)"),
 }
 TIMED = "InvasionWaveObjective"
@@ -122,6 +136,11 @@ DESTROYED = "SliceDestroyedObjective"
 SPAWNED = "SliceSpawnedObjective"
 # Stage QG5c4: the objective that waits for a change of the active state of an entity of the slice (its trigger: a detection volume).
 STATE = "EntityActiveStateChangedObjective"
+# Stage QG5c5: the objective of a child stage that ends with its parent (the sustain stages of the monoliths; the client makes no task for
+# it: static read D1 of stage QG5c4, 0x7C7DF0).
+WAIT_PARENT = "WaitForParentObjective"
+# Stage QG5c5: the actions that the runner runs (EntityEventAction is a part of the client, the handler of the stage status).
+ACTIONS = ("EntityEventAction", "KillSpawnsAction", "DestroySliceAction")
 # The detector shapes that the runner tests (encounter_recipes.detector_shape) and the size that each one needs.
 SHAPES = ("sphere", "cylinder", "aabb")
 
@@ -182,11 +201,37 @@ def good_detector(detector: dict | None) -> bool:
     return bool(shapes) and all(good_shape(shape) for shape in shapes)
 
 
-def tracks(tracked: str, member_path: str, members: dict[str, dict]) -> bool:
-    """@return True when the tracked slice or alias of a SliceDestroyedObjective is a spawn: its member slice, the body slice or alias of a
-    creature member, or a slice of that alias (the lost pylons track undead_berserker.dynamicslice, a slice of the alias of the member)."""
-    member = members.get(member_path, {})
-    return tracked in (member_path, member.get("body")) or tracked in member.get("bodySlices", [])
+def tracked_of(objective: dict) -> str | None:
+    """@return The tracked slice or alias of an objective (no value: it tracks no slice)."""
+    return objective.get("trackedSlice") or objective.get("trackedAlias")
+
+
+def body_tracked(tracked: str, slices: list[str], body: str | None, body_slices: list[str]) -> bool:
+    """@return True when a tracked slice or alias (and the slices of a tracked alias) names a body: the body slice or alias of a creature,
+    or a slice of that alias (the lost pylons track undead_berserker.dynamicslice, a slice of the alias of the member)."""
+    return tracked == body or tracked in body_slices or any(path == body or path in body_slices for path in slices)
+
+
+def units(objective: dict, spawn: dict, members: dict[str, dict]) -> int:
+    """@return The members of one spawn of a spawn entry that an objective counts (stage QG5c5): 0 or 1 for a member, and the parts of a
+    group member that it counts (each part of the group for an objective with no tracked slice; else each part whose body it tracks). A
+    spawn of an alias (the pylon, the cores) counts for an objective that tracks the alias ("alias" of the spawn)."""
+    tracked = tracked_of(objective)
+    member = members.get(spawn["member"], {})
+    group = member.get("group") or []
+    if not tracked:
+        return len(group) if group else 1
+    if tracked in (spawn["member"], spawn.get("alias")):
+        return len(group) if group else 1
+    slices = objective.get("trackedSlices") or []
+    if group:
+        return sum(1 for part in group if body_tracked(tracked, slices, part.get("body"), part.get("bodySlices", [])))
+    return 1 if body_tracked(tracked, slices, member.get("body"), member.get("bodySlices", [])) else 0
+
+
+def tracks(objective: dict, spawn: dict, members: dict[str, dict]) -> bool:
+    """@return True when a SliceDestroyedObjective or a SliceSpawnedObjective counts a spawn (units)."""
+    return units(objective, spawn, members) > 0
 
 
 def makes(member: dict | None) -> bool:
@@ -194,11 +239,27 @@ def makes(member: dict | None) -> bool:
     return member is not None and (member["kind"] in ("creature", "object") or member.get("lifetime", 0.0) > 0.0)
 
 
-def comes(stage: dict, spawn: dict) -> bool:
+def comes(recipe: dict, stage: dict, spawn: dict) -> bool:
     """@return False for a spawn that its stage never makes: its delay is at or after the time limit of its stage (the end of the stage comes
-    first; code review of stage QG5c3, finding QG5C3R-R3)."""
-    limit = stage["objective"].get("timeLimit", 0) or 0
-    return not (limit > 0 and spawn.get("delay", 0) >= limit)
+    first; code review of stage QG5c3, finding QG5C3R-R3), or (code review of stage QG5c4, finding QG5C4R-R4) its earliest time from the
+    start of a stage above it is at or after the time limit of that stage. The earliest time adds the earlier child stages that end only at
+    their time (a timed stage with one objective: the child stages run one after the other)."""
+    current = next(index for index, other in enumerate(recipe["stages"]) if other is stage)
+    parent = {child: at for at, other in enumerate(recipe["stages"]) for child in other["children"]}
+    at = spawn.get("delay", 0) or 0
+    while True:
+        limit = recipe["stages"][current]["objective"].get("timeLimit", 0) or 0
+        if limit > 0 and at >= limit:
+            return False
+        if current not in parent:
+            return True
+        for sibling in recipe["stages"][parent[current]]["children"]:
+            if sibling == current:
+                break
+            before = recipe["stages"][sibling]["objective"]
+            if before["type"] == TIMED and not before.get("more"):
+                at += before.get("timeLimit", 0) or 0
+        current = parent[current]
 
 
 def objectives_of(stage: dict) -> list[dict]:
@@ -206,20 +267,47 @@ def objectives_of(stage: dict) -> list[dict]:
     return [stage["objective"], *stage["objective"].get("more", [])]
 
 
-def needs(stage: dict, member_path: str, members: dict[str, dict]) -> bool:
+def needs(stage: dict, spawn: dict, members: dict[str, dict]) -> bool:
     """@return True when an objective of a stage counts a spawn of this member: a destroyed or a spawned objective that tracks it or tracks
     no slice. A timed stage needs no spawn (it ends at its time)."""
-    for objective in objectives_of(stage):
-        if objective["type"] not in (DESTROYED, SPAWNED):
-            continue
-        tracked = objective.get("trackedSlice") or objective.get("trackedAlias")
-        if not tracked or tracks(tracked, member_path, members):
-            return True
-    return False
+    return any(objective["type"] in (DESTROYED, SPAWNED) and tracks(objective, spawn, members) for objective in objectives_of(stage))
 
 
-def objective_causes(name: str, objective: dict, kind: str, tracked: str | None, below: list[dict], members: dict[str, dict]) -> list[str]:
-    """@return The causes of one objective of the stage `name` (the rules of the docstring); `below` is the stage and its child stages."""
+def manager_order(recipe: dict) -> list[int]:
+    """@return The stages of the manager (stageOrder; a made-up recipe with none: each stage that no stage names as a child)."""
+    if "stageOrder" in recipe:
+        return list(recipe["stageOrder"])
+    children = {child for stage in recipe["stages"] for child in stage["children"]}
+    return [index for index in range(len(recipe["stages"])) if index not in children]
+
+
+def top_of(recipe: dict, index: int) -> int:
+    """@return The stage of the manager order above a stage (the stage itself for a stage of the manager)."""
+    return ancestors(recipe, index)[-1]
+
+
+def earlier_stages(recipe: dict, index: int) -> list[dict]:
+    """@return The stages of the manager order before the top stage of `index`, with their child stages (stage QG5c5: their members can
+    still wait when the stage starts: the spyglass of Scallywag Shore of the timed setup stage, tracked by the next stage)."""
+    order = manager_order(recipe)
+    top = top_of(recipe, index)
+    before = order[:order.index(top)] if top in order else []
+    return [recipe["stages"][at] for start in before for at in descendants(recipe, start)]
+
+
+def later_stages(recipe: dict, index: int) -> list[dict]:
+    """@return The stages of the manager order after the top stage of `index`, with their child stages (stage QG5c5)."""
+    order = manager_order(recipe)
+    top = top_of(recipe, index)
+    after = order[order.index(top) + 1:] if top in order else []
+    return [recipe["stages"][at] for start in after for at in descendants(recipe, start)]
+
+
+def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracked: str | None, below: list[dict], members: dict[str, dict],
+                     earlier: list[dict] | None = None) -> list[str]:
+    """@return The causes of one objective of the stage `name` (the rules of the docstring); `below` is the stage and its child stages, and
+    `earlier` the stages before it (stage QG5c5: an objective with a tracked slice counts a member of an earlier stage too)."""
+    earlier = earlier or []
     causes: list[str] = []
     if kind == STATE:
         # Stage QG5c4: the stage ends at the change of the active state of its target entity (m_completeOnDeactivated or
@@ -242,8 +330,16 @@ def objective_causes(name: str, objective: dict, kind: str, tracked: str | None,
     elif kind in (DESTROYED, SPAWNED):
         if objective["requiredCount"] <= 0:
             causes.append(f"the stage {name} needs no {'destroyed' if kind == DESTROYED else 'spawned'} slice")
-        if tracked and not any(tracks(tracked, spawn["member"], members) for part in below for spawn in part["spawns"]):
-            causes.append(f"the stage {name} tracks a slice that it and its child stages do not spawn")
+        # Stage QG5c5: a destroyed objective with a tracked slice counts a member of that slice of an earlier stage too (the spyglass of
+        # Scallywag Shore: the timed setup spawns it, the next stage tracks it).
+        # The spawns that can count: the stage and its child stages, and (a tracked destroyed objective) the start objects of the stages
+        # before it.
+        reach = [(part, spawn) for part in below for spawn in part["spawns"]]
+        if tracked and kind == DESTROYED:
+            reach += [(part, spawn) for part in earlier for spawn in part["spawns"]
+                      if members.get(spawn["member"], {}).get("kind") == "object"]
+        if tracked and not any(tracks(objective, spawn, members) for _, spawn in reach):
+            causes.append(f"the stage {name} tracks a slice that it, its child stages, and the stages before it do not spawn")
         # Code review of stage QG5c2, finding QG5C2R-R3: the spawns that can count for the objective (its own and those of its child
         # stages that it tracks, not a visual: a creature, a start object, or a member that ends itself) must reach its count, or a time
         # limit with succeedOnTimeout ends it. A stage with no spawn below it and no tracked slice counts each death of a member of its
@@ -251,12 +347,14 @@ def objective_causes(name: str, objective: dict, kind: str, tracked: str | None,
         # Code review of stage QG5c3, finding QG5C3R-R3: a spawn due at or after the time limit of its own stage never comes (the end of
         # the stage cancels its due entry), so it gives no count.
         timed_end = objective["timeLimit"] > 0 and objective["succeedOnTimeout"]
-        possible = sum(spawn["count"] for part in below for spawn in part["spawns"]
-                       if (not tracked or tracks(tracked, spawn["member"], members)) and makes(members.get(spawn["member"]))
-                       and comes(part, spawn))
+        # Stage QG5c5: a group member gives one count for each part that the objective counts (units).
+        possible = sum(spawn["count"] * units(objective, spawn, members) for part, spawn in reach
+                       if makes(members.get(spawn["member"])) and comes(recipe, part, spawn))
         if not timed_end and objective["requiredCount"] > possible:
             causes.append(f"the stage {name} needs {objective['requiredCount']} {'destroyed' if kind == DESTROYED else 'spawned'} "
                           f"slices, and its spawns can give only {possible}")
+    elif kind == WAIT_PARENT:
+        pass  # Stage QG5c5: a child stage that ends with its parent (docs/systems/encounters.md).
     else:
         causes.append(f"the objective {kind} of the stage {name}: a later stage")
     return causes
@@ -296,7 +394,7 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
             short = spawn["member"].rsplit("/", 1)[-1]
             # The stages that count this spawn: the stage itself and each parent of it (stage QG5c3: a parent counts the spawns of its
             # child stages).
-            needed = any(needs(recipe["stages"][at], spawn["member"], members) for at in ancestors(recipe, index))
+            needed = any(needs(recipe["stages"][at], spawn, members) for at in ancestors(recipe, index))
             if member["kind"] == "unknown":
                 if not needed:
                     # A visual of the stage (the smoke burst of the lost pylons in their tracked stages, the cannon storm of Helvan in a
@@ -308,33 +406,39 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
             elif member["kind"] == "object":
                 if member.get("cause"):
                     causes.append(f"the start object {short}: {member['cause']}")
-                if not any(part["type"] == DESTROYED and (not (part.get("trackedSlice") or part.get("trackedAlias"))
-                                                          or tracks(part.get("trackedSlice") or part.get("trackedAlias"), spawn["member"],
-                                                                    members))
-                           for part in objectives_of(stage)):
+                # Stage QG5c5: a later stage of the manager order whose destroyed objective tracks the object counts it too (the spyglass
+                # of Scallywag Shore: the timed setup spawns it, and "Look through Spyglass" tracks it).
+                later = later_stages(recipe, index)
+                if not any(part["type"] == DESTROYED and tracks(part, spawn, members) for part in objectives_of(stage)) \
+                        and not any(part["type"] == DESTROYED and tracked_of(part) and tracks(part, spawn, members)
+                                    for other in later for part in objectives_of(other)):
                     causes.append(f"the start object {short} is in a stage that does not track it")
-            elif member.get("parts", 1) > 1 and needed:
-                # Stage QG5c4: a member slice with more than one creature spawner (the boat landings: an officer and a navigator on their
-                # paths); the runner makes one creature for each member.
-                causes.append(f"the creature member {short} has {member['parts']} creature spawners (a group on paths): a later stage")
+            # Stage QG5c5: a group member (more than one creature spawner in its slice: the portal waves, the boat landings) makes one
+            # creature for each part (the backend: each part with its kind "SLICE#N" of creatures.json).
             if spawn["count"] <= 0:
                 causes.append(f"a spawn of the stage {name} has no count")
         # Stage QG5c4: each objective of the stage (the stage ends when each one is met: one objective for each tracked member slice).
+        earlier = earlier_stages(recipe, index)
         for number, objective in enumerate(objectives_of(stage)):
             kind = objective["type"]
             label = name if number == 0 else f"{name} (its objective {number + 1})"
-            tracked = objective.get("trackedSlice") or objective.get("trackedAlias")
+            tracked = tracked_of(objective)
             if number > 0 and (kind not in (DESTROYED, SPAWNED) or objective["timeLimit"] > 0):
                 causes.append(f"the objective {number + 1} of the stage {name} is not a destroyed or a spawned objective with no time limit")
                 continue
-            causes.extend(objective_causes(label, objective, kind, tracked, below, members))
+            if kind == WAIT_PARENT and index in manager_order(recipe):
+                # Stage QG5c5: a WaitForParentObjective of a stage of the manager has no parent that ends it.
+                causes.append(f"the stage {name} waits for its parent, and it is a stage of the manager")
+            causes.extend(objective_causes(recipe, label, objective, kind, tracked, below, members, earlier))
             if objective.get("failureCondition"):
                 causes.append(f"a failure condition of the stage {label}")
             if objective.get("background"):
                 causes.append(f"a background activation of the stage {label}")
         for action in stage["startActions"] + stage["endActions"]:
-            if action["type"] not in ("EntityEventAction", "KillSpawnsAction"):
+            if action["type"] not in ACTIONS:
                 causes.append(f"the action {action['type']} of the stage {name}: a later stage")
+            elif action["type"] == "DestroySliceAction" and not (action.get("slice") or action.get("alias")):
+                causes.append(f"the DestroySliceAction of the stage {name} names no slice and no alias")
     # Stage QG5c4: a recipe with no creature member (an interaction sequence: the Disk of Atum of 1624_0401) is no cause; its stages count
     # its start objects.
     return list(dict.fromkeys(causes))
@@ -354,6 +458,8 @@ def build(sources: Sources) -> dict:
     members: dict[str, dict] = {}
     for path, member in sorted(reader.members.items()):
         members[path] = {key: value for key, value in member.items() if not key.startswith("_") and key != "slice"}
+        if "group" in members[path]:
+            members[path]["group"] = [{key: value for key, value in part.items() if not key.startswith("_")} for part in member["group"]]
     out = []
     refused = collections.Counter()
     for recipe in recipes:
@@ -376,6 +482,9 @@ def build(sources: Sources) -> dict:
             "unreachable": recipe["unreachable"], "pattern": pattern_label(recipe),
             "refused": causes,
         }
+        season = next((value for folder, value in SEASON_FOLDERS.items() if recipe["slice"].startswith(folder)), None)
+        if season is not None:
+            entry["season"] = season
         for cause in causes:
             refused[cause.split(":")[0] if cause.startswith(("the member ", "the start object ")) else cause.split(" (")[0]] += 1
         out.append(entry)

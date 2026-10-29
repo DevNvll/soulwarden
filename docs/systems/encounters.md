@@ -23,11 +23,13 @@ wire contracts are in the protocol notes (section 4.62). The quest events are in
 | The corrections of the code review of stage QG5c2 (QG5C2R-R1 to R6) | Test cases QGR5C2A to QGR5C2F (`tests/review_qg5c2_tests.cpp`; QGR5C2F runs the case `complete` of `check_encounters_tool.py`) |
 | Stage QG5c4: the entity-state stage and its trigger, the objectives of a stage (`more`), the objectives met at their start, the task tree of the client and the timer, the shape entity of a detector, the parent spawner rules, a recipe with no creature member | `world/encounters.cpp` (`look_triggers`, `in_shapes`, `count_objective`, `publish_objectives`, `resolve`), `gamedata/encounter_data.h` (`EncounterTrigger`, `EncounterObjective::leaf`, `EncounterStage::more`, `EncounterRecipe::taskLeaves`), `world/entity.h` (`EncounterBody::taskStarts`), `tools/gamedata/encounter_recipes.py` (`spawner_rules`, `state_senders`, `detector_shape`), test cases QG5C4A to QG5C4H (`tests/encounter_sequence_tests.cpp`, the fixture `tests/support/encounter_pattern_fixture.h`) |
 | The corrections of the code review of stage QG5c3 (QG5C3R-R1 to R4) | Test cases QGR5C3A to QGR5C3D (`tests/review_qg5c3_tests.cpp`) |
+| Stage QG5c5: the Darkness events and the boat reinforcements: the season rule, the group members and their parts, the spawns of an alias, the slices of a tracked alias, the stages that wait for their parent, the DestroySliceAction, the parts that the client does not show (the fill), the start objects of an earlier stage | `world/encounters.h` (`encounter_rules::kDarknessAtAllTimes`, `EncounterPlacement::partKinds`, `fills`, `EncounterMemberRun::part`), `world/encounters.cpp` (`resolve`, `spawn`, `count_destroyed`, `children_done`, `destroy_slices`), `gamedata/encounter_data.h` (`EncounterPart`, `EncounterDestroy`, `EncounterSpawn::alias`, `EncounterObjective::trackedSlices`, `EncounterObjectiveKind::waitParent`, `EncounterRecipe::season`), `world/entity.h` (`Creature::memberRoute`), `tools/gamedata/encounter_recipes.py` (`group_parts`, `part_route`, `alias_tiers`, `Reader.alias`), test cases QG5C5A to QG5C5F (`tests/encounter_darkness_tests.cpp`) |
+| The corrections of the code review of stage QG5c4 (QG5C4R-R1 to R5) | Test cases QGR5C4A to QGR5C4F (`tests/review_qg5c4_tests.cpp`; QGR5C4F starts the world with each encounter data file missing) |
 
 ## Rules
 
 The source of each rule is in brackets: [data] the game data, [client ADDR] the client code (build 1.400.6031.6004151, image-relative
-addresses), [live] a live check of stage QG5c1, QG5c2, QG5c3, or QG5c4, [agent] a decision of the agent of the stage (a choice where the
+addresses), [live] a live check of stage QG5c1, QG5c2, QG5c3, QG5c4, or QG5c5, [agent] a decision of the agent of the stage (a choice where the
 data does not decide), [user] a decision of the user, [review] a correction of a code review.
 
 ### The recipes
@@ -74,8 +76,9 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   `EncVol_16_AEAmbush`, `EncActive_99B_MSQ_05_YonasRetreat`), and no slice of the encounter or its parent and no table reads it [data: the
   achievements table and the task tables only]. The runner does not read the achievement; the quest gate of the proximity object
   (`InteractOnlyOnQuest` and its tag) decides who starts an ambush [agent].
-- Kept out, each with its stage [agent: the scope of the briefs of stages QG5c2 to QG5c4]: the summoned opponent with phases (BT3), the
-  scheduled and seasonal events (the Darkness, the seasons: QG5c5), the arenas, and the instances (later). The table `LATER` of
+- Kept out, each with its stage [agent: the scope of the briefs of stages QG5c2 to QG5c5]: the summoned opponent with phases (BT3), the
+  scheduled and seasonal events of the folder `slices/worldevents/seasons/` (none in the recipes of the build), the arenas, and the
+  instances (later). Stage QG5c5 runs the Darkness events (the season rule below) and the world events of the open world. The table `LATER` of
   `encounters.py` names them, and the tables `PATTERNS` and `PATTERN_FOLDERS` give the label of the other patterns (stage QG5c4: the
   interaction sequences, the defenses, the world events of the open world); the support manifest names the cause of each event that only
   a refused recipe gives.
@@ -106,6 +109,25 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   later stage), and the spyglass of Scallywag Shore is spawned in a timed stage and counted by the next stage (a stage that tracks a slice
   that an earlier stage spawned) [data]. The only quest event of the two recipes, `IO_Gimmick_BreakingWallsCannon_interact`, also comes
   from the placed cannons of stage QG5b: no manifest row waits for them [data; the manifest of stage QG5c3].
+- Stage QG5c5, the season rule (a project rule of the orchestrator of stage QG5c5; the user can change it): the backend has no season
+  schedule. A Darkness event (a recipe of the folder `slices/darkness/`: the tool writes `"season": "darkness"`) is available at all times.
+  It starts only by the start rule of its recipe (its placement near a character, its manager `m_autoActivate`, its detector), as each other
+  encounter; it never starts by itself across the world. The rule is one constant: `encounter_rules::kDarknessAtAllTimes` (true). With
+  false the runner refuses each Darkness recipe with the cause "the season rule" [project rule; the tool refuses no seasonal recipe].
+- Stage QG5c5, the Darkness events of the build [data]: 3 monoliths and 2 portals, all in Myrkgard (Shattered Mountain, levels 64 to 66).
+  Their success event is `Darkness_Any_GlobalSuccess`; one row of the manifest names it (the task 0 of the mission template
+  `FM_corruption_breach`, whose grant has no source in the backend: the mission boards). The parent of each one respawns after 3,000 s.
+  A monolith: the setup (4 s), "Destroy the Pylons" (3 pylons; a sustain child), "Damage Carapace" (the core shell; an attack child and a
+  sustain child), "Destroy Core" (the core; a sustain child), the cleanup (3 s; KillSpawnsAction and DestroySliceAction). A portal: the
+  setup, "Disrupt the Ritual" (2 acolytes), a transition, "Defeat Enemy Waves" (11 child stages: 6 sub-waves and 5 transitions; the boss
+  is the last one), a transition, "Destroy the Portal" (the core, 10 m above the ground), the cleanup (5 s).
+- Stage QG5c5, the boat reinforcements of Monarch's Bluffs [data; live QG5c5 L3]: the setup spawns the spyglass (a start object of the
+  direct row `BoatEncounter_Scallywag`: Handcrafting, no tool, 3 s, no loot, no event); the next stage tracks it (Scallywag Shore) or the
+  setup itself counts it (Brysedd Shore); the boat stage (61 s) has the timeline of the client (the ship comes and docks: no record of the
+  backend, live L3); the landing (a group of two parts on their paths), the intermission, the named creature (Captain Esteban of Scallywag
+  Shore), the cannon (a start object), the cleanup (10 s), and the success events (no quest task names them).
+- Stage QG5c5, the counts of the supported build: 64 recipes, 59 with no cause of the tool, 54 taken by the runner, 10 refused [data]. The
+  Darkness 5 taken (by the season rule), the world events (the boats) 2 taken; the other patterns as in stage QG5c4.
 - Stage QG5c4, the refusals of the other sequences [data]: the braziers of `99A_MSQ_10_GetCrosspiece` (each of the four spawns is an
   encounter itself, with its own manager and stages: a nested encounter; the stage has four objectives, one for each destructible brazier
   of the nested encounters; a DestroySliceAction removes the solid door), and the M5 wave event of `09A_M5_DefendSettlement` (its stages
@@ -162,6 +184,31 @@ data does not decide), [user] a decision of the user, [review] a correction of a
 - Code review of stage QG5c3: the activation finds the instance again after its first stage (a spawned objective that its spawn meets at
   once ends the encounter in the activation) [review QG5C3R-R1]. A spawn due at or after the time limit of its own stage gives no count
   for the count check (the end of the stage cancels it) [review QG5C3R-R3].
+- Stage QG5c5, a child stage with a WaitForParentObjective (the sustain waves of the monoliths: 9 stages) ends with its parent (the end of
+  a stage ends its child stages that run, with its status) [data: the class; client: it makes no task for it, static read D1 of stage
+  QG5c4, 0x7C7DF0]. A parent whose child stages are not optional does not wait for such a child: it ends when it has its count and each
+  child stage that is not of this kind ended [agent]. A WaitForParentObjective stage of the manager, or one before an other child stage
+  of its parent (that one would never start), refuses its recipe [agent]. The data has neither.
+- Stage QG5c5, a DestroySliceAction (`m_sliceAsset`, `m_aliasAsset` of the action) in the start or the end actions of a stage removes each
+  member of the instance whose slice, alias, or body is the slice of the action, its alias, or a slice of its alias (no count, no reward,
+  as a KillSpawnsAction) [data: the fields; agent: the removal]. The cleanups of the monoliths and of the portal SM_00 name the alias
+  `alias_darkness_corruption_hazard_major`: its slices are the corruption hazards of the setup, a visual that the runner does not make, so
+  nothing goes (the count `slicesDestroyed`); the client removes the corruption at the end of the instance [live QG5c5 L1].
+- Stage QG5c5, the parts that the client does not show [agent: the rule of stage QG5c4 for the creatures that the client does not show,
+  for the parts of a group]: a part with no kind is not made (the swarmers: live QG5c5 L0, the client shows only their spawn particles).
+  An objective whose count the made parts cannot reach, and the made and the hidden parts can, gets the missing count at the start of its
+  stage (`EncounterPlacement::fills`); the objective needs each part that the runner makes. The portal waves 5 and 6: 3 of 8 and 6 of 11
+  (live L2: "3/8" and "6/11" at the start). An objective with no made part refuses its recipe.
+- Stage QG5c5, a destroyed objective with a tracked slice counts a start object of an earlier stage of the manager order (its stage ended)
+  that has that slice [data: "Look through Spyglass" of Scallywag Shore tracks the spyglass that the timed setup spawns; agent: the rule,
+  only for a start object; live QG5c5 L3].
+- Stage QG5c5 (live QG5c5 L2): a death counts only for the stages that ran when it came. The end of a sub-wave starts its next sibling (a
+  transition that counts each death of a member) in the same step, and that stage does not count the same death.
+- Code review of stage QG5c4: a trigger meets only its own objective; the stage ends when each objective is met [review QG5C4R-R2]. The
+  count check takes the time limits of the stages above a spawn: its earliest time from the start of each stage above it adds the earlier
+  child stages that end only at their time, and a stage with a time limit at or before that time ends first [review QG5C4R-R4]. A spawned
+  objective publishes its count (a met spawned objective of a stage that waits for a kill reaches the HUD of each observer) [review
+  QG5C4R-R5].
 - Stage QG5c3: a destroyed stage with no tracked slice and no spawn of its own or of its child stages counts each death of a creature
   member of its instance while it runs (Wave_06 - Objective: Kill Helvan Boss: Helvan came in an earlier stage) [agent: a stage with no
   spawn has nothing else to count; live QG5c3 L3]. Such a stage needs a time limit with `succeedOnTimeout` (it has 180 s) [review
@@ -221,7 +268,9 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   next look [agent]. Code review of stage QG5c3: a finder whose write the store refused stays in the ledger of the object and is tried
   again at the next looks, also out of the sphere, at most 20 looks (`kFindAttempts`: the 10 s of the credit ledger); the object goes,
   and its stage counts it one time, when each finder has its write or ran out of attempts and one write was taken [review QG5C3R-R2;
-  agent: the limit]. The radius is `DetectionVolumeSphereRadius` of its variation row, else the sphere of its DetectionVolumeComponent
+  agent: the limit]. Code review of stage QG5c4: the ledger keeps the tasks that each event of the find matched at its first attempt; a
+  retry credits only these tasks, when they are still active (a quest that became active after the find gets nothing) [review
+  QG5C4R-R3]. The radius is `DetectionVolumeSphereRadius` of its variation row, else the sphere of its DetectionVolumeComponent
   (13 m for the CorrStaff ambush, 15 m the blight ambush, 30 m the Yonas retreat, 5 m the AE ambush and the Legion attack, 4.5 m the
   cave fight) [data: the rule of `quest_objects.py`]. Live QG5c3 L2: the walk into the 30 m sphere of the Yonas retreat finds it, and the
   kill stage starts at once.
@@ -234,6 +283,32 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   trigger; agent: the count]. The backend makes no record of it (a visual and a hazard: the bombardment volume of the smoke burst does not
   hurt) [agent]. It is a member with no entity; its end is a due entry of its generation (`DueKind::memberEnd`). The smoke burst makes the
   count of `Wave_04 - Objective: Kill Lost` of the lost pylons (3 creatures and the burst for the count 4) [data].
+
+- Stage QG5c5, a group member (a member slice with more than one creature spawner: the portal waves of 8 to 11 parts, the mini-boss wave,
+  the subwave of a monolith, the boat landings) makes one creature for each part: each entity of the slice with an AIVariantProvider and a
+  spawner of a creature slice or alias (its vitals row, its category, its body; its kind is `SLICE#N` of `creatures.json`) [data]. The
+  place of a part is the spawn location plus the offset of its entity in the slice (m_worldTM), turned by the yaw of the location; its yaw
+  is the yaw of the location plus the yaw of its entity [data; agent: the yaw only, no tilt]. A part whose spawner names a patrol path
+  (`m_patrolPathEntity`, the AIPathComponent with its waypoints) has that route in the world (`Creature::memberRoute`) and the patrol rules
+  of a spawn point ([Creature behavior](creature-behavior.md)) [data; live QG5c5 L3: the navigator of the landing walks its path]. An
+  objective counts each part that it tracks (with no tracked slice: each part) [data: the counts 7, 2, 8, 11 of the sub-waves are parts of
+  the groups].
+- Stage QG5c5, a spawn of an alias (`m_aliasAsset` of a spawn entry; the pylon and the two cores): the tool takes the first slice of the
+  highest tag of the alias (`Reader.alias`: dt6) and writes the alias with the spawn (`alias`); an objective that tracks the alias counts
+  it [agent: the data has no field that names the tier of a placement; the events are at the levels 64 to 66; their direct members are dt6
+  slices]. An entry with a slice and an alias takes the alias [agent from the data: the core stage of the monolith SM_01 names the shell of
+  the stage before it and the core alias, and its objective tracks the core alias]. A tracked alias has its slices
+  (`trackedSlices`): a part whose body is one of them counts (the `01_Attack` of the monoliths tracks
+  `alias_corrupted_entity_and_impaler_elite`).
+- Stage QG5c5, the pylons and the cores are start objects with an ordinary row of the gathering data (the variation table
+  `Gatherable_Darkness`: AzothStaff, ToolRequired, the rank 5 of the trade skill AzothStaff; the pylon 10 s, the monolith core 12 s, the
+  portal core 7 s; a loot table) [data]. The gather has the rules of its row (the Azoth Staff in slot 38, the rank), its items, and its
+  trade skill experience; then the stage counts it ([Gathering](gathering.md)) [live QG5c5 L1, L2: "E CORRUPTED PYLON", "E CORRUPTED
+  MONOLITH", "E CORRUPTED PORTAL"].
+- Stage QG5c5, the core shells of the monoliths ("Damage Carapace": `Darkness_Monolith_Shell_*`, Elite, levels 65 and 66) are direct
+  stationary members: a Vitals component (`m_rowReference`), a PositionInTheWorld component, no CharacterComponent, no movement, and the
+  list `targets` of `creature_slices.json`; the record and the hits are the rules of a stationary target of stage QG5c1 ([Creatures](creatures.md))
+  [data; live QG5c5 L1: "Crystallized Anxiety" with its name plate and its health bar, arrows hurt it, its death ends the stage].
 
 ### The participants and the HUD
 
@@ -278,7 +353,8 @@ data does not decide), [user] a decision of the user, [review] a correction of a
 - `tools/world encounter CHARACTER [METERS]` (route `GET /v1/dev/encounters`; the admin state member `encounters`, 200 m): the instances
   near a character with their stage, the progress, the participants, the members, the links of the character, and the counts (stage
   QG5c3: `objectsFound`, `proximityLooks`, `timedEnds`, `spawnsSkipped`; stage QG5c4: `triggersFound`, `triggerLooks`, `objectivesVoided`,
-  `findRetries`).
+  `findRetries`; stage QG5c5: `partsMade`, `partsHidden`, `partsFilled`, `slicesDestroyed`, and the line `running` of each stage that runs,
+  also a child stage, with the count of each objective).
 - `tools/world encounter recipes` (route `GET /v1/dev/encounters/recipes`; admin `GET /admin/v1/catalog/encounters`): each recipe with its
   key, its root, its pattern, its quest events, and its causes.
 - `tools/world encounter reset CHARACTER KEY` (route `POST /v1/dev/encounters/reset`): a development aid; the instance of a placement ends,
@@ -333,3 +409,17 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   respawn of the parent; live QG5c4 L3].
 - Stage QG5c4: the anubian guardians of the hacker defense kill a level 65 character in some seconds (live QG5c4 L2: 735 damage for one
   hit); the live check used `tools/world heal` and `tools/world ignore`.
+- Stage QG5c5: the client does not show the swarmers (`corruption_swarmer*`, the list `notShown`): a spawn of one shows only its red
+  particles, no body and no name plate [live QG5c5 L0, `shots/L0-swarmers-near.png`]. The portal waves and the sustain waves have such
+  parts (see the rule of the parts that the client does not show).
+- Stage QG5c5: the place of a core shell is the center of its orb, about 2 m above the ground, and its hit body starts there: an arrow at
+  the lower half of the orb passes under it (live L1). Aim at the upper half.
+- Stage QG5c5: the creatures of the attack child of a monolith walk between the character and the shell: an arrow hits them first. The
+  core of a portal floats 10 m above the ground: look up at it (live L2: a bush and a flint node took the prompt first).
+- Stage QG5c5: a Darkness event respawns after 3,000 s, and a fight with no participant fails it: in a development run use
+  `tools/world encounter reset NAME KEY` for a new start.
+- Stage QG5c5: the cannon of the boat reinforcements showed no prompt from its side (live L3); the live check used `tools/world encounter
+  use`. The side of its bound is not checked.
+- Stage QG5c5: the sub-waves of a portal are not user-wave stages: the HUD shows only "Defeat all Enemy Waves"; their counts are in
+  `tools/world encounter` (`running`). The loot tables of the pylons and of the cores (`DarknessPylon`, `DarknessCorruptionCore`) give
+  `FlintT1` with a weight of 0: a gather gives no item [data; live L1].

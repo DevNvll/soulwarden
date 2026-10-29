@@ -2551,18 +2551,25 @@ std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> Quests::matc
     return found;
 }
 
-QuestError Quests::object_destroyed(Entity& entity, const std::vector<QuestDrop>& drops, const std::vector<QuestEvent>& events) {
+QuestError Quests::object_destroyed(Entity& entity, const std::vector<QuestDrop>& drops, const std::vector<QuestEvent>& events,
+                                    std::vector<std::vector<std::pair<std::uint64_t, std::uint8_t>>>* matchedOut) {
+    if (matchedOut != nullptr) {
+        matchedOut->assign(events.size(), {});
+    }
     if (data() == nullptr || !entity.quests.loaded || entity.kind != EntityKind::player) {
         return QuestError::none; // No quest of the character: the destruction has no row of the quest system.
     }
     const auto found = m_subscriptions.find(entity.id);
     Subscriptions* subscriptions = found != m_subscriptions.end() ? found->second.get() : nullptr;
     std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> matched;
-    for (const QuestEvent& event : events) {
+    for (std::size_t position = 0; position < events.size(); ++position) {
         ++m_counts.worldEvents;
         if (subscriptions != nullptr) {
-            for (const auto& task : matched_tasks(entity, event, *subscriptions)) {
+            for (const auto& task : matched_tasks(entity, events[position], *subscriptions)) {
                 matched.push_back(task);
+                if (matchedOut != nullptr) {
+                    (*matchedOut)[position].emplace_back(std::get<0>(task), std::get<1>(task));
+                }
             }
         }
     }

@@ -303,7 +303,7 @@ public:
      * @return The entity, or null (a position that is not of the world, no level row).
      */
     Entity* spawn_member(const gamedata::CreatureKind& kind, const state::WorldPosition& position, float yaw, std::uint32_t placement,
-                         std::uint64_t generation);
+                         std::uint64_t generation, const gamedata::PatrolRoute* route = nullptr);
     /** Stage QG5c2: removes a member (the end of its encounter, KillSpawnsAction): no reward, no spawn point. @return False: no member. */
     bool remove_member(EntityId id);
 

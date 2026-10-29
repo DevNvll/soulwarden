@@ -428,6 +428,16 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
   `worldevent_ai_tarottower_boss_20325`) is in `AREA_EXCEPTIONS` too (the same shared action list and no damage row of the plague nova; the
   other ghosts of that tower were in the list) [data]. The build has 142 member kinds, and 17 members stay out with their cause.
 
+- Stage QG5c5 (the Darkness events, the boat reinforcements; [Encounters](encounters.md)): a group member has one kind for each part (each
+  creature spawner of its slice) with the key `SLICE#N` (N from 0, in the order of the slice) in the list `members`; the member slice keeps
+  the kind of its first part [data; agent: the key]. A part whose slice the client does not show has -1 and the cause (the swarmers). The
+  core shells of the monoliths are direct stationary members: their slices are in the list `targets` (live check of stage QG5c5) and their
+  vitals rows have no family (Elite, `NoExpNoCoin`, `KillEventIdOverride` KillStructure); the creature tool takes such a member with the
+  rule of a stationary target (no family is needed) [data; live QG5c5 L1: "Crystallized Anxiety" level 65]. The build has 213 member kinds
+  (142 before), and 43 members stay out with their cause.
+- Stage QG5c5: a member with a patrol path of the data (a part of a group) has its route in world coordinates in its entity
+  (`Creature::memberRoute`, `Creatures::spawn_member`); the behavior takes it as the route of a spawn point ([Creature behavior](creature-behavior.md)).
+
 ## Open points
 
 - Stage QG5c1: a stationary target has no server part of its slice: the area status of a corruption barb on the players near it

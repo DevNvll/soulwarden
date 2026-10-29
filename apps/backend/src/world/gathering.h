@@ -287,6 +287,8 @@ public:
     /** The handler: the timed use reached its end, and the checks of the base passed. */
     /** @return True when the gather completed (code review of stage 1.8c, finding QR8C-R12). */
     bool complete(Entity& character, const InteractionContext& context);
+    /** Stage QG5c5: the gather of the row has no roll of a loot table (a quest row; an encounter start object with no loot table). */
+    [[nodiscard]] static bool no_roll(const gamedata::GatherableRow& row, NodeKind kind);
     /** The handler: the use ends (before its completion: a cancel). */
     void ended(Entity& character, const InteractionContext& context, InteractionEnd cause);
 

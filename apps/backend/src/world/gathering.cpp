@@ -637,7 +637,7 @@ InteractionVerdict Gathering::begin(Entity& character, const InteractionContext&
         return refuse(*refusal, character, key, row.id + ": " + detail);
     }
     const gamedata::LootTables* tables = m_world.rewards().tables();
-    if (!row.quest && (tables == nullptr || !tables->table_index(row.loot))) {
+    if (!no_roll(row, target->kind) && (tables == nullptr || !tables->table_index(row.loot))) {
         return refuse(GatherRefusal::noLoot, character, key, row.id + ": " + row.loot);
     }
     if (!row.event.empty()) {
@@ -763,6 +763,12 @@ void Gathering::ended(Entity& character, const InteractionContext& context, Inte
     fail_work(character);
 }
 
+bool Gathering::no_roll(const gamedata::GatherableRow& row, NodeKind kind) {
+    // A quest row (its result is the quest drops), and (stage QG5c5) an encounter start object whose row has the loot table Empty or none
+    // (BoatEncounter_Scallywag: Handcrafting, no tool, no event; the encounter counts the gather) [agent: the rule of the quest rows].
+    return row.quest || (kind == NodeKind::encounter && (row.loot.empty() || row.loot == "Empty"));
+}
+
 bool Gathering::complete(Entity& character, const InteractionContext& context) {
     const std::string characterId = character.characterId;
     const auto found = m_work.find(characterId);
@@ -804,8 +810,9 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
     std::vector<Rest>& rests = m_rests[characterId];
     std::vector<KeptRoll>& kept = m_kept[characterId];
     const auto roll = std::find_if(kept.begin(), kept.end(), [&](const KeptRoll& entry) { return entry.node == work.node; });
-    if (row.quest) {
-        // Stage 1.8c: a quest object has no loot of its own (the loot table Empty): its result is the quest drops below.
+    if (no_roll(row, target->kind)) {
+        // Stage 1.8c: a quest object has no loot of its own (the loot table Empty): its result is the quest drops below. Stage QG5c5: the
+        // same for an encounter start object with no loot table (the spyglass of the boat reinforcements).
     } else if (roll != kept.end() && roll->generation == work.nodeGeneration) {
         items = roll->items;
     } else {
@@ -871,7 +878,9 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
         written = skill.ok();
     }
     written = written && !full && m_world.quests().write_drops(character, drops);
-    if (written && !full && target->kind != NodeKind::body && !row.quest) {
+    // Stage QG5c5: a start object of an encounter (also one with an ordinary row: the Azoth Staff rows of the Darkness pylons and cores)
+    // has no node row: the next instance makes a new object.
+    if (written && !full && target->kind != NodeKind::body && target->kind != NodeKind::encounter && !row.quest) {
         state::GatheringNodeRow stored;
         stored.key = next.key;
         stored.source = next.source;
@@ -920,9 +929,11 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
     rests.erase(std::remove_if(rests.begin(), rests.end(), [&](const Rest& rest) { return rest.node == work.node; }), rests.end());
     m_work.erase(characterId);
     m_world.quests().drops_done(character, drops);
-    if (row.quest && target->kind == NodeKind::encounter) {
+    if (target->kind == NodeKind::encounter) {
         // Stage QG5c2: the start object of an encounter stage: its quest events (the game event of its row, its tag), then the encounter
-        // system removes it in its next tick (its stage counts it: SliceDestroyedObjective). No LootTracker entry: the object goes.
+        // system removes it in its next tick (its stage counts it: SliceDestroyedObjective). No LootTracker entry: the object goes. Stage
+        // QG5c5: also a start object with an ordinary row (the pylons and the cores of the Darkness: the items of its loot table and the
+        // trade skill experience of the row, as a node; then the encounter counts it).
         ++m_counts.completions;
         m_counts.itemsGiven += given.size();
         set_gather(character, gathering_rules::kStatusDone, 0.0F, work.parts.speed, false, kNoTarget);

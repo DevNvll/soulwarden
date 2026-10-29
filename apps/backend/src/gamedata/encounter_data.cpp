@@ -171,11 +171,78 @@ float reach_of(const std::vector<EncounterShape>& shapes) {
     return reach;
 }
 
+/** @return The lower-case texts of a list member (stage QG5c5: the slices of an alias); no list: none. */
+std::vector<std::string> lower_list(const json& entry, const char* name) {
+    std::vector<std::string> out;
+    if (entry.is_object() && entry.contains(name) && entry[name].is_array()) {
+        for (const json& value : entry[name]) {
+            if (value.is_string()) {
+                out.push_back(lower_text(value.get<std::string>()));
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * Stage QG5c5: reads one part of a group member: its vitals row, its category, its body, its place in the member slice, and its patrol path.
+ * @return False for a place, a yaw, or a waypoint that is not a finite number, a policy that the client does not have, or too many waypoints.
+ */
+bool read_part(const json& entry, EncounterPart& part) {
+    part.name = text_of(entry, "name");
+    part.vitals = text_of(entry, "vitals");
+    part.category = text_of(entry, "category");
+    part.body = lower_text(text_of(entry, "body"));
+    part.bodySlices = lower_list(entry, "bodySlices");
+    if (!entry.contains("offset") || !entry["offset"].is_array() || entry["offset"].size() != 3 || !entry.contains("yaw")
+        || !finite_number(entry["yaw"])) {
+        return false;
+    }
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (!finite_number(entry["offset"][axis]) || std::fabs(entry["offset"][axis].get<double>()) > 1000.0) {
+            return false;
+        }
+        part.offset[axis] = entry["offset"][axis].get<float>();
+    }
+    part.yaw = entry["yaw"].get<float>();
+    if (!entry.contains("route") || !entry["route"].is_object()) {
+        return true;
+    }
+    const json& route = entry["route"];
+    std::uint64_t policy = 0;
+    if (!whole(route, "policy", 3, policy) || !route.contains("points") || !route["points"].is_array()
+        || route["points"].size() > EncounterData::kMaxWaypoints) {
+        return false;
+    }
+    part.route.policy = static_cast<PatrolPolicy>(policy);
+    for (const json& point : route["points"]) {
+        // [x, y, z, yaw, min wait, max wait, task, alignment] in the coordinates of the member slice.
+        if (!point.is_array() || point.size() != 8) {
+            return false;
+        }
+        for (std::size_t at = 0; at < 6; ++at) {
+            if (!finite_number(point[at])) {
+                return false;
+            }
+        }
+        PatrolWaypoint waypoint;
+        waypoint.position = {point[0].get<float>(), point[1].get<float>(), point[2].get<float>()};
+        waypoint.yaw = point[3].get<float>();
+        waypoint.minWait = point[4].get<float>();
+        waypoint.maxWait = point[5].get<float>();
+        waypoint.task = point[6].is_string() ? point[6].get<std::string>() : std::string();
+        waypoint.align = point[7].is_number() && point[7].get<double>() != 0.0;
+        part.route.points.push_back(std::move(waypoint));
+    }
+    return true;
+}
+
 EncounterObjectiveKind objective_kind(const std::string& type) {
     return type == "InvasionWaveObjective"               ? EncounterObjectiveKind::timed
            : type == "SliceDestroyedObjective"           ? EncounterObjectiveKind::destroyed
            : type == "SliceSpawnedObjective"             ? EncounterObjectiveKind::spawned
            : type == "EntityActiveStateChangedObjective" ? EncounterObjectiveKind::entityState
+           : type == "WaitForParentObjective"            ? EncounterObjectiveKind::waitParent
                                                          : EncounterObjectiveKind::other;
 }
 
@@ -200,6 +267,7 @@ bool read_objective(const json& objective, EncounterObjective& out) {
     if (out.tracked.empty()) {
         out.tracked = lower_text(text_of(objective, "trackedAlias"));
     }
+    out.trackedSlices = lower_list(objective, "trackedSlices");
     out.title = text_of(objective, "title");
     out.description = text_of(objective, "description");
     if (out.kind == EncounterObjectiveKind::entityState && objective.contains("triggers") && objective["triggers"].is_array()) {
@@ -293,6 +361,21 @@ bool EncounterData::load_text(const std::string& text) {
         member.cause = text_of(entry, "cause");
         member.interact = !entry.contains("interact") || flag_of(entry, "interact");
         member.direct = flag_of(entry, "direct");
+        member.stationary = flag_of(entry, "stationary");
+        // Stage QG5c5: the parts of a group member (one for each creature spawner of its slice).
+        if (entry.contains("group") && entry["group"].is_array()) {
+            if (entry["group"].size() > kMaxParts) {
+                return fail("the member " + slice + " has more than " + std::to_string(kMaxParts) + " parts");
+            }
+            for (const json& item : entry["group"]) {
+                EncounterPart part;
+                if (!item.is_object() || !read_part(item, part) || part.vitals.empty() || part.body.empty()) {
+                    return fail("the member " + slice + " has a part with no vitals row, no body, or a place, a yaw, or a path that is not "
+                                "correct");
+                }
+                member.parts.push_back(std::move(part));
+            }
+        }
         if (entry.contains("radius") && (!seconds(entry, "radius", member.radius) || member.radius > kMaxRadius)) {
             return fail("the member " + slice + " has a radius that is not a number of 0 to " + std::to_string(static_cast<int>(kMaxRadius)));
         }
@@ -324,6 +407,7 @@ bool EncounterData::load_text(const std::string& text) {
         recipe.rootName = text_of(entry, "rootName");
         recipe.layer = text_of(entry, "layer");
         recipe.pattern = text_of(entry, "pattern");
+        recipe.season = lower_text(text_of(entry, "season"));
         if (!hex_bytes(entry.value("asset", json()), recipe.asset) || !whole(entry, "sub", 0xFFFFFFFFULL, sub)
             || !hex_u64(entry.value("root", json()), recipe.root) || !place_of(entry.value("position", json()), recipe.position)
             || !entry.contains("yaw") || !finite_number(entry["yaw"])) {
@@ -460,8 +544,14 @@ bool EncounterData::load_text(const std::string& text) {
             for (const char* list : {"startActions", "endActions"}) {
                 if (item.contains(list) && item[list].is_array()) {
                     for (const json& action : item[list]) {
+                        const bool atStart = std::string_view(list) == "startActions";
                         if (text_of(action, "type") == "KillSpawnsAction") {
-                            (std::string_view(list) == "startActions" ? stage.killSpawnsAtStart : stage.killSpawnsAtEnd) = true;
+                            (atStart ? stage.killSpawnsAtStart : stage.killSpawnsAtEnd) = true;
+                        } else if (text_of(action, "type") == "DestroySliceAction") {
+                            // Stage QG5c5: the members of a slice or of an alias go.
+                            EncounterDestroy destroy{lower_text(text_of(action, "slice")), lower_text(text_of(action, "alias")),
+                                                     lower_list(action, "aliasSlices")};
+                            (atStart ? stage.destroyAtStart : stage.destroyAtEnd).push_back(std::move(destroy));
                         }
                     }
                 }
@@ -472,6 +562,7 @@ bool EncounterData::load_text(const std::string& text) {
             for (const json& value : item["spawns"]) {
                 EncounterSpawn spawn;
                 spawn.member = lower_text(text_of(value, "member"));
+                spawn.alias = lower_text(text_of(value, "alias"));
                 float delay = 0.0F;
                 if (!seconds(value, "delay", delay) || !whole(value, "count", kMaxCount, number)) {
                     return fail(what + ": a spawn of the stage " + stage.name + " has no delay of 0 to an hour or no count of 0 to "

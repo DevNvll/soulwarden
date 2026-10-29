@@ -57,8 +57,8 @@ sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from appearance_tables import Failure, field_id  # noqa: E402
-from creature_data import (REGIONS_FOLDER, TABLES_FOLDER, Catalog, Sources, asset_id, read_alias, slice_assets,  # noqa: E402
-                           spawner_path)
+from creature_data import (REGIONS_FOLDER, TABLES_FOLDER, Catalog, Sources, asset_id, read_alias, read_target_list,  # noqa: E402
+                           slice_assets, spawner_path)
 from interactions import (IDENTITY, INTERACT_CLASS, child_of, matrix_of, multiply, placement_matrix, quaternion_of, text_of,  # noqa: E402
                           walk)
 from item_catalog import Sheet, sheet_type  # noqa: E402
@@ -130,7 +130,14 @@ F = {name: field_id(name) for name in (
     "m_center", "m_aabb",
     "m_targetEntityId", "m_completeOnActivated", "m_completeOnDeactivated", "m_detectionVolumeEntity", "m_eventsOnEnter",
     "m_eventsOnFirstEnter", "m_event", "m_detectDeadTargets", "m_editPrefab", "m_persistPrefab", "m_gatheringStartEvent",
-    "m_gatheringEndEvent", "m_shapeEntityID")}
+    "m_gatheringEndEvent", "m_shapeEntityID",
+    "m_patrolPathEntity", "m_waypointIds", "m_pathTravesalPolicy", "m_taskName", "m_minDuration", "m_maxDuration", "m_matchAlignment",
+    "Tags", "Tag", "Slices", "Slice", "Schedule")}
+# Stage QG5c5: the patrol path of a creature spawner of a group member (the boat landings, the portal waves: creature_data.py PATROL_TYPE,
+# WAYPOINT_TYPE) and the number of the policies of the client (creature_data.py POLICIES).
+PATH_CLASS = uuid.UUID("fa7fa996-f8c3-4cd0-8313-042fb6a66578")
+WAYPOINT_CLASS = uuid.UUID("3d1526bf-ac9c-4a5d-8b0d-00abfccd19f1")
+PATH_POLICIES = 4
 TASK_TYPE = "ObjectiveTasks"
 GATHERABLE_TYPE = "GatherableData"
 VARIATION_TYPE = "VariationData"
@@ -435,8 +442,73 @@ def read_actions(component, name: str) -> list[dict]:
                           entity=next(iter(refs(field(node, "m_entityRef")) or [None])) if field(node, "m_entityRef") is not None else None)
         elif kind == "KillSpawnsAction":
             action["localOnly"] = number(field(node, "m_localOnly")) != 0
+        elif kind == "DestroySliceAction":
+            # Stage QG5c5: the slice or the alias whose spawns the action removes (the corruption hazard of the setup of a monolith:
+            # alias_darkness_corruption_hazard_major; the solid door of the braziers). Encounter.encounter writes the paths.
+            action["localOnly"] = number(field(node, "m_localOnly")) != 0
+            action["_assets"] = (asset_id(field(node, "m_sliceAsset")), asset_id(field(node, "m_aliasAsset")))
         actions.append(action)
     return actions
+
+
+def part_route(entities: dict[int, dict], info: dict) -> dict | None:
+    """@return The patrol path of a creature spawner entity of a group member (stage QG5c5), in the coordinates of the member slice:
+    {"policy": N, "points": [[x, y, z, yaw, min wait, max wait, task, alignment], ...]}, or no value (no path, or a path that is not
+    complete). The spawner names its path entity (m_patrolPathEntity); the path entity has the AIPathComponent with its waypoints
+    (m_waypointIds) and its policy (m_pathTravesalPolicy); each waypoint entity has its AIWaypointComponent (the task, the waits, the
+    alignment) and its m_worldTM (relative to the root of the slice: the rule of creature_data.read_patrol)."""
+    reference = None
+    for component in info["components"]:
+        holder = field(component, "m_patrolPathEntity")
+        if holder is not None:
+            found = refs(holder) or [id_value(next((node for node in walk(holder) if node.value is not None and len(node.value) == 8),
+                                                     None))]
+            reference = found[0] if found and found[0] not in (None, 0, 0xFFFFFFFF) else None
+            break
+    if reference is None or reference not in entities:
+        return None
+    path = next((component for component in entities[reference]["components"] if component.type_id == PATH_CLASS), None)
+    if path is None:
+        return None
+    policy = number(field(path, "m_pathTravesalPolicy"))
+    points = []
+    for waypoint in refs(field(path, "m_waypointIds")):
+        entity = entities.get(waypoint)
+        part = next((component for component in entity["components"] if component.type_id == WAYPOINT_CLASS), None) if entity else None
+        if part is None:
+            return None
+        matrix = entity["matrix"]
+        task = field(part, "m_taskName")
+        points.append([round(matrix[3], 4), round(matrix[7], 4), round(matrix[11], 4),
+                       round(math.degrees(math.atan2(matrix[4], matrix[0])) % 360.0, 2),
+                       round(real(field(part, "m_minDuration")), 3), round(real(field(part, "m_maxDuration")), 3),
+                       task.value.decode("utf-8", "replace").strip("\0") if task is not None and task.value else "",
+                       1 if number(field(part, "m_matchAlignment")) != 0 else 0])
+    if not points or policy >= PATH_POLICIES:
+        return None
+    return {"policy": policy, "points": points}
+
+
+def alias_tiers(roots) -> list[tuple[int, list]]:
+    """@return The slices of an alias asset by their tag (stage QG5c5): [(TAG, [ASSET ID, ...]), ...] in the order of the asset, with no
+    slice that has a schedule. The Darkness aliases have the tags 0 to 6 (the slices of the tiers dt1 to dt6: the pylon, the cores)."""
+    out = []
+    for root in roots:
+        for node in walk(root):
+            if node.name != F["Tags"]:
+                continue
+            for element in node.children:
+                fields = {child.name: child for child in element.children}
+                slices = []
+                holder = fields.get(F["Slices"])
+                for entry in holder.children if holder is not None else []:
+                    parts = {child.name: child for child in entry.children}
+                    asset = asset_id(parts.get(F["Slice"]))
+                    schedule = parts.get(F["Schedule"])
+                    if asset is not None and not (schedule is not None and schedule.children):
+                        slices.append(asset)
+                out.append((number(fields.get(F["Tag"])), slices))
+    return out
 
 
 class Reader:
@@ -449,6 +521,13 @@ class Reader:
         self.members: dict[str, dict] = {}
         self.counts = {"layers": 0, "placements": 0, "parentsRead": 0, "encounters": 0, "quest": 0, "notQuest": 0}
         self.assets: dict[str, tuple[bytes, int]] | None = None
+        self.target_list: dict[str, str] | None = None
+
+    def targets(self) -> dict[str, str]:
+        """@return The slices of the stationary targets with a live check (creature_data.read_target_list; stage QG5c5)."""
+        if self.target_list is None:
+            self.target_list = read_target_list()
+        return self.target_list
 
     def own_asset(self, path: str) -> tuple[bytes, int] | None:
         """@return The asset id of a slice path (stage QG5c3: the body of a direct creature member is the member slice itself)."""
@@ -460,6 +539,22 @@ class Reader:
         if path not in self.streams:
             self.streams[path] = self.sources.stream(path) if self.sources.has(path) else None
         return self.streams[path]
+
+    def alias(self, path: str | None) -> tuple[str | None, list[str]]:
+        """@return For an alias asset (stage QG5c5): the slice that a spawn of the alias makes, and each slice of the alias (sorted). The
+        spawn takes the first slice of the highest tag [a rule of this project: the data has no field that names the tier of a placement;
+        the Darkness events of this build are at the levels 64 to 66, and their direct members are dt6 slices (risen_corruption_entity_dt6);
+        the highest tag of the pylon and of the cores is dt6]. No value: not an alias, or an alias with no slice."""
+        if not path or not path.endswith(".aliasasset"):
+            return None, []
+        roots = self.stream(path)
+        tiers = alias_tiers(roots) if roots is not None else []
+        every = sorted({found for _, slices in tiers for asset in slices if (found := self.catalog.path(asset))})
+        chosen = None
+        for _, slices in sorted(tiers, key=lambda tier: tier[0]):
+            found = next((self.catalog.path(asset) for asset in slices if self.catalog.path(asset)), None)
+            chosen = found or chosen
+        return chosen, every
 
     def task_events(self) -> set[str]:
         """@return The game events (lower case) that a quest task names: KillEnemyType of the task tables."""
@@ -527,7 +622,7 @@ class Reader:
             vitals = category = ""
             level = 0
             body = None
-            controller = interact = proximity = character = False
+            controller = interact = proximity = character = place = False
             variant = table = entry = own_vitals = ""
             sphere = 0.0
             providers = 0
@@ -537,6 +632,8 @@ class Reader:
                 for component in info["components"]:
                     if component.type_id == MANAGER_CLASS:
                         nested = True
+                    if component.type_id == PLACE_CLASS:
+                        place = True
                     if component.type_id == VARIANT_PROVIDER_CLASS:
                         providers += 1
                         vitals = vitals or text(field(component, "m_vitalsTableRowId"))
@@ -583,11 +680,23 @@ class Reader:
                     # Stage QG5c4: a member slice with more than one creature spawner (the boat landings of the boat reinforcements:
                     # an officer and a navigator, each on a path of three waypoints). The fields above are of the first one.
                     result["parts"] = providers
+                    # Stage QG5c5: each creature spawner of the group is one part (one creature of its own kind: creature_data.py writes
+                    # the kind of the part N as "SLICE#N"), at its place in the member slice (the matrix of its entity), with its patrol
+                    # path in the coordinates of the member slice where the data has one.
+                    result["group"] = self.group_parts(entities)
             elif not vitals and character and own_vitals and self.own_asset(path) is not None:
                 # Stage QG5c3: a direct creature member (the creature slice itself; its Vitals row; a GatherableController of the mining
                 # or the skinning of its body is a part of the creature).
                 result = {"slice": path, "kind": "creature", "vitals": own_vitals, "category": "", "level": 0, "bodyField": "slice",
                           "body": path, "bodySlices": [path], "direct": True, "_asset": self.own_asset(path)}
+            elif not vitals and not character and own_vitals and place and not controller and path in self.targets() \
+                    and self.own_asset(path) is not None:
+                # Stage QG5c5: a direct stationary member: a slice of the list targets of creature_slices.json (the project rule of
+                # stage QG5c1: each record has a live check) with a Vitals component (m_rowReference), a PositionInTheWorld component, no
+                # CharacterComponent, and no GatherableController (the core shells of the Darkness monoliths, "Damage Carapace":
+                # Darkness_Monolith_Shell_*, Elite). creature_data.py makes its kind with the rules of a stationary target.
+                result = {"slice": path, "kind": "creature", "vitals": own_vitals, "category": "", "level": 0, "bodyField": "slice",
+                          "body": path, "bodySlices": [path], "direct": True, "stationary": True, "_asset": self.own_asset(path)}
             elif controller and (interact or proximity):
                 result = {"slice": path, "kind": "object", "variant": variant, "table": table, "entry": entry, "proximity": proximity,
                           "interact": interact}
@@ -603,6 +712,44 @@ class Reader:
                     result["cause"] += f"; it ends itself {lifetime:g} s after its spawn (a delayed event of its init, DestroyGDEComponent)"
         self.members[path] = result
         return result
+
+    def group_parts(self, entities: dict[int, dict]) -> list[dict]:
+        """@return The parts of a group member (stage QG5c5): one for each entity with an AIVariantProviderComponent and a spawner of a
+        creature slice or alias on the same entity, in the order of the slice. A part: its vitals row, its category row, its level, its
+        body (the slice or the alias of its spawner and the slices of that alias), its place in the member slice ("offset" [x, y, z] and
+        "yaw": the matrix of its entity), and "route" (its patrol path, part_route) where the data has one."""
+        parts = []
+        for info in entities.values():
+            provider = next((component for component in info["components"] if component.type_id == VARIANT_PROVIDER_CLASS), None)
+            if provider is None:
+                continue
+            body = None
+            for component in info["components"]:
+                if component.type_id in (STAGE_CLASS, SLICE_CLASS):
+                    continue
+                for name in ("m_sliceAsset", "m_aliasAsset"):
+                    found = asset_id(field(component, name))
+                    if body is None and found is not None and self.catalog.path(found) is not None:
+                        body = (name, found)
+            if body is None:
+                continue
+            body_path = self.catalog.path(body[1])
+            bodies = [body_path]
+            if body[0] == "m_aliasAsset":
+                alias_roots = self.stream(body_path)
+                bodies = [self.catalog.path(asset) for asset, _ in (read_alias(alias_roots) if alias_roots is not None else [])]
+            matrix = info["matrix"]
+            part = {"name": info["name"], "vitals": text(field(provider, "m_vitalsTableRowId")),
+                    "category": text(field(provider, "m_vitalsCategoryTableRowId")), "level": number(field(provider, "m_vitalsLevel")),
+                    "bodyField": "alias" if body[0] == "m_aliasAsset" else "slice", "body": body_path,
+                    "bodySlices": sorted(path for path in bodies if path), "_asset": body[1],
+                    "offset": [round(matrix[3], 4), round(matrix[7], 4), round(matrix[11], 4)],
+                    "yaw": round(math.degrees(math.atan2(matrix[4], matrix[0])), 3)}
+            route = part_route(entities, info)
+            if route is not None:
+                part["route"] = route
+            parts.append(part)
+        return parts
 
     def encounter(self, path: str, roots, matrix: tuple[float, ...]) -> dict:
         """@return The recipe of one encounter slice at a world matrix (step 3)."""
@@ -705,6 +852,14 @@ class Reader:
             spawns = []
             for entry in stage.pop("_spawns").children if stage.get("_spawns") is not None else []:
                 member_path = asset_path(self.catalog, field(entry, "m_sliceAsset")) or asset_path(self.catalog, field(entry, "m_aliasAsset"))
+                # Stage QG5c5: a spawn of an alias makes a slice of the alias (Reader.alias: the highest tag); the spawn keeps the alias
+                # ("alias") for an objective that tracks it. An entry with a slice and an alias takes the alias [a rule of this project
+                # from the data: the core stage of the monolith sm_01 names the shell of the stage before it and the core alias, and
+                # its objective tracks the core alias].
+                alias_path = asset_path(self.catalog, field(entry, "m_aliasAsset"))
+                chosen, _ = self.alias(alias_path)
+                if chosen is not None:
+                    member_path = chosen
                 locations = []
                 for location in refs(field(entry, "m_spawnLocations")):
                     local = entities.get(location, {}).get("matrix")
@@ -714,6 +869,8 @@ class Reader:
                     locations.append(place_of(multiply(matrix, local)))
                 spawn = {"member": member_path or "", "delay": number(field(entry, "m_spawnDelay")), "count": number(field(entry, "m_count")),
                          "locations": locations}
+                if chosen is not None:
+                    spawn["alias"] = alias_path
                 if member_path is None:
                     recipe["unsupported"].append(f"a spawn of the stage {stage['name']} names no slice of the catalog")
                 spawns.append(spawn)
@@ -723,6 +880,17 @@ class Reader:
                 if tracked is not None:
                     objective["trackedSlice"] = asset_path(self.catalog, tracked[0])
                     objective["trackedAlias"] = asset_path(self.catalog, tracked[1])
+                    if objective["trackedAlias"] and not objective["trackedSlice"]:
+                        # Stage QG5c5: the slices of a tracked alias (a part of a group counts when its body is one of them: the 01_Attack
+                        # of the monoliths tracks alias_corrupted_entity_and_impaler_elite, the bodies of the parts of its subwave).
+                        objective["trackedSlices"] = self.alias(objective["trackedAlias"])[1]
+            # Stage QG5c5: the slice or the alias of a DestroySliceAction and the slices of that alias.
+            for action in stage["startActions"] + stage["endActions"]:
+                assets = action.pop("_assets", None)
+                if assets is not None:
+                    action["slice"] = self.catalog.path(assets[0]) if assets[0] is not None else None
+                    action["alias"] = self.catalog.path(assets[1]) if assets[1] is not None else None
+                    action["aliasSlices"] = self.alias(action["alias"])[1]
             recipe["stages"].append(stage)
         recipe["stageOrder"] = [index[identifier] for identifier in recipe["stageOrder"] if identifier in index]
         # Stage QG5c4: the trigger of an EntityActiveStateChangedObjective (m_targetEntityId, m_completeOnDeactivated): the detection

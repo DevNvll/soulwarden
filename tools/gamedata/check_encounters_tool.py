@@ -191,11 +191,12 @@ def case_objectives() -> bool:
         (with_stage(0, objective={"timeLimit": 0.0}), "the wave stage Wave_00 - Setup has no timed success"),
         (with_stage(2, objective={"requiredCount": 0}), "the stage Wave_02 - Objective: Kill AI needs no destroyed slice"),
         (with_stage(2, objective={"trackedSlice": "slices/test/other.dynamicslice"}),
-         "the stage Wave_02 - Objective: Kill AI tracks a slice that it and its child stages do not spawn"),
+         "the stage Wave_02 - Objective: Kill AI tracks a slice that it, its child stages, and the stages before it do not spawn"),
         (with_stage(2, objective={"type": "BossPhaseObjective"}), "the objective BossPhaseObjective of the stage Wave_02"),
         (with_stage(2, objective={"failureCondition": "Test_Fail"}), "a failure condition of the stage Wave_02"),
         (with_stage(2, objective={"background": True}), "a background activation of the stage Wave_02"),
-        (with_stage(2, endActions=[{"type": "DestroySliceAction"}]), "the action DestroySliceAction of the stage Wave_02"),
+        (with_stage(2, endActions=[{"type": "DestroySliceAction"}]), "the DestroySliceAction of the stage Wave_02 - Objective: Kill AI names no slice and no alias"),
+        (with_stage(2, endActions=[{"type": "SpawnSliceAction"}]), "the action SpawnSliceAction of the stage Wave_02"),
     ]
     spawned = with_stage(2, objective={"type": tool.SPAWNED, "requiredCount": 1, "trackedSlice": MEMBER})
     return all(has(tool.refusals(value, members()), text) for value, text in checks) and tool.refusals(spawned, members()) == []
@@ -325,8 +326,9 @@ def case_alias() -> bool:
     table = members()
     table[MEMBER].update(bodyField="alias", body="slices/test/test.aliasasset", bodySlices=[BODY, ALIAS_SLICE])
     value = with_stage(2, objective={"trackedSlice": ALIAS_SLICE})
-    return (tool.tracks(ALIAS_SLICE, MEMBER, table) and tool.tracks(MEMBER, MEMBER, table)
-            and not tool.tracks("slices/test/other.dynamicslice", MEMBER, table) and tool.refusals(value, table) == [])
+    tracking = lambda tracked: {"trackedSlice": tracked}  # noqa: E731
+    return (tool.tracks(tracking(ALIAS_SLICE), spawn(MEMBER), table) and tool.tracks(tracking(MEMBER), spawn(MEMBER), table)
+            and not tool.tracks(tracking("slices/test/other.dynamicslice"), spawn(MEMBER), table) and tool.refusals(value, table) == [])
 
 
 def case_later() -> bool:
@@ -444,7 +446,7 @@ def case_several() -> bool:
     short = has(tool.refusals(kill_stage([objective(tool.DESTROYED, requiredCount=2, trackedSlice=other)]), table),
                 "(its objective 2) needs 2 destroyed slices, and its spawns can give only 1")
     missing = has(tool.refusals(kill_stage([objective(tool.DESTROYED, requiredCount=1, trackedSlice="slices/test/x.dynamicslice")]), table),
-                  "(its objective 2) tracks a slice that it and its child stages do not spawn")
+                  "(its objective 2) tracks a slice that it, its child stages, and the stages before it do not spawn")
     timed = has(tool.refusals(kill_stage([objective(tool.TIMED)]), table), "the objective 2 of the stage Wave_02")
     # A start object that the second objective tracks is in a stage that tracks it.
     value = recipe()
@@ -463,15 +465,74 @@ def case_nested() -> bool:
 
 
 def case_group() -> bool:
+    """Stage QG5c5: a group member (the portal waves) gives one count for each part: 1 spawn of a group of 3 parts reaches a count of 3
+    with no tracked slice, and a tracked alias counts only the parts whose body is a slice of the alias (trackedSlices)."""
     table = members()
-    table[MEMBER]["parts"] = 2
-    needed = has(tool.refusals(recipe(), table), "the creature member worldevent_ai_test.dynamicslice has 2 creature spawners")
-    # The same group in the timed setup (no stage counts it): no cause.
-    table_free = members()
-    table_free["slices/test/group.dynamicslice"] = dict(table[MEMBER])
-    free = recipe()
-    free["stages"][0]["spawns"] = [spawn("slices/test/group.dynamicslice")]
-    return needed and tool.refusals(free, table_free) == []
+    other = "slices/test/other_body.dynamicslice"
+    table[MEMBER]["parts"] = 3
+    table[MEMBER]["group"] = [{"vitals": "A", "body": BODY, "bodySlices": [BODY]}, {"vitals": "B", "body": BODY, "bodySlices": [BODY]},
+                              {"vitals": "C", "body": other, "bodySlices": [other]}]
+    untracked = with_stage(2, spawns=[spawn(MEMBER)], objective={"requiredCount": 3, "trackedSlice": ""})
+    tracked = with_stage(2, spawns=[spawn(MEMBER)],
+                         objective={"requiredCount": 2, "trackedSlice": "", "trackedAlias": "slices/test/a.aliasasset", "trackedSlices": [BODY]})
+    above = with_stage(2, spawns=[spawn(MEMBER)],
+                       objective={"requiredCount": 3, "trackedSlice": "", "trackedAlias": "slices/test/a.aliasasset", "trackedSlices": [BODY]})
+    return (tool.refusals(untracked, table) == [] and tool.refusals(tracked, table) == []
+            and has(tool.refusals(above, table), "needs 3 destroyed slices, and its spawns can give only 2")
+            and tool.units({"trackedSlice": ""}, spawn(MEMBER), table) == 3)
+
+
+def case_wait() -> bool:
+    """Stage QG5c5: a child stage with a WaitForParentObjective (the sustain waves of the monoliths) has no cause; a stage of the manager with
+    one has a cause."""
+    value = recipe()
+    value["stages"].append(stage("01_Sustain", tool.WAIT_PARENT, [spawn(MEMBER)]))
+    value["stages"][2]["children"] = [4]
+    value["stages"][2]["childrenOptional"] = True
+    top = recipe()
+    top["stages"][3] = stage("Wave_03 - Wait", tool.WAIT_PARENT, [])
+    return tool.refusals(value, members()) == [] and has(tool.refusals(top, members()), "waits for its parent, and it is a stage of the manager")
+
+
+def case_destroy() -> bool:
+    """Stage QG5c5: a DestroySliceAction with a slice or an alias has no cause; one with neither has a cause."""
+    good = with_stage(3, startActions=[{"type": "DestroySliceAction", "slice": None, "alias": "slices/test/hazard.aliasasset",
+                                        "aliasSlices": []}])
+    bad = with_stage(3, startActions=[{"type": "DestroySliceAction", "slice": None, "alias": None, "aliasSlices": []}])
+    return tool.refusals(good, members()) == [] and has(tool.refusals(bad, members()), "names no slice and no alias")
+
+
+def case_season() -> bool:
+    """Stage QG5c5: the Darkness folder has the pattern label of the Darkness and no refusal of the tool (the backend has the season rule)."""
+    darkness = recipe(slice="slices/darkness/events/pois/enc_test.dynamicslice")
+    return (tool.refusals(darkness, members()) == [] and tool.pattern_label(darkness) == tool.DARKNESS
+            and tool.SEASON_FOLDERS.get("slices/darkness/") == "darkness")
+
+
+def case_earlier() -> bool:
+    """Stage QG5c5: a start object of a timed stage that a later stage tracks (the spyglass of Scallywag Shore): no cause; with no later stage
+    that tracks it the cause stays."""
+    value = recipe()
+    value["stages"][0]["spawns"] = [spawn(START)]
+    value["stages"][1]["spawns"] = []
+    alone = recipe()
+    alone["stages"][0]["spawns"] = [spawn(START)]
+    alone["stages"][1]["objective"]["trackedSlice"] = "slices/test/other.dynamicslice"
+    return tool.refusals(value, members()) == [] and has(tool.refusals(alone, members()), "is in a stage that does not track it")
+
+
+def case_ancestor() -> bool:
+    """Code review of stage QG5c4, finding QG5C4R-R4: a destroyed parent needs one death; its child is a timed stage of 1 s whose timed child
+    of 5 s has the only spawn at 2 s: the ancestor ends it first, and the recipe is refused."""
+    value = recipe()
+    value["stages"][2] = stage("Required death", tool.DESTROYED, [], objective={"requiredCount": 1, "trackedSlice": MEMBER})
+    value["stages"][2]["children"] = [4]
+    value["stages"].append(stage("Short parent", tool.TIMED, [], objective={"timeLimit": 1.0}))
+    value["stages"][4]["children"] = [5]
+    late = spawn(MEMBER)
+    late["delay"] = 2.0
+    value["stages"].append(stage("Long grandchild", tool.TIMED, [late], objective={"timeLimit": 5.0}))
+    return has(tool.refusals(value, members()), "needs 1 destroyed slices, and its spawns can give only 0")
 
 
 def case_shape() -> bool:
@@ -489,7 +550,8 @@ CASES = {"taken": case_taken, "manager": case_manager, "parent": case_parent, "o
          "cardinality": case_cardinality, "children": case_children, "members": case_members, "visual": case_visual,
          "lifetime": case_lifetime, "shapes": case_shapes, "alias": case_alias, "later": case_later, "counts": case_counts,
          "complete": case_complete, "state": case_state, "senders": case_senders, "several": case_several, "nested": case_nested,
-         "group": case_group, "shape": case_shape}
+         "group": case_group, "shape": case_shape, "wait": case_wait, "destroy": case_destroy, "season": case_season,
+         "earlier": case_earlier, "ancestor": case_ancestor}
 
 
 def main() -> int:

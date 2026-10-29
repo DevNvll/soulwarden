@@ -38,6 +38,8 @@ json encounters_view(world::World& world, const std::string& character, float ra
                  {"proximityLooks", counts.proximityLooks}, {"timedEnds", counts.timedEnds}, {"spawnsSkipped", counts.spawnsSkipped},
                  {"triggersFound", counts.triggersFound}, {"triggerLooks", counts.triggerLooks},
                  {"objectivesVoided", counts.objectivesVoided}, {"findRetries", counts.findRetries},
+                 {"partsMade", counts.partsMade}, {"partsHidden", counts.partsHidden}, {"partsFilled", counts.partsFilled},
+                 {"slicesDestroyed", counts.slicesDestroyed},
                  {"oldGeneration", counts.oldGeneration},
                  {"participantsAdded", counts.participantsAdded}, {"participantsLeft", counts.participantsLeft}, {"credits", counts.credits},
                  {"creditRetries", counts.creditRetries}, {"creditsDropped", counts.creditsDropped}, {"scans", counts.scans},
@@ -58,7 +60,8 @@ json encounters_view(world::World& world, const std::string& character, float ra
                                       {"phase", world::encounter_phase_text(view.phase)},
                                       {"stage", view.stage},       {"destroyed", view.destroyed},
                                       {"required", view.required}, {"participants", view.participants},
-                                      {"members", members},        {"distance", view.distance}});
+                                      {"members", members},        {"distance", view.distance},
+                                      {"running", view.running}});
     }
     return reply;
 }

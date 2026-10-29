@@ -1862,14 +1862,24 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     if members:
         import encounter_recipes  # noqa: E402 (encounter_recipes imports this module)
         reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog)
+        # Stage QG5c5: a group member (more than one creature spawner in its slice: the portal waves of the Darkness, the boat landings)
+        # has one kind for each part, with the key "SLICE#N" (N from 0, in the order of the slice); the member slice keeps the kind of
+        # its first part. A stationary member (the core shells of the monoliths: a Vitals component and no movement) takes its body by the
+        # rule of a stationary target (is_target: the list targets).
+        entries = []
         for member in reader.creature_members(recipes):
-            path = member["slice"]
+            entries.append((member["slice"], member))
+            for number, part in enumerate(member.get("group") or []):
+                entries.append((f"{member['slice']}#{number}", {**part, "slice": member["slice"]}))
+        for path, member in entries:
             vitals_crc = name_crc(member["vitals"])
             variant = tables["variants"].get(vitals_crc)
             base = tables["bases"].get(name_crc(variant["base"])) if variant else tables["bases"].get(vitals_crc)
             category = tables["categories"].get(name_crc(member["category"])) if member["category"] else None
             cause = ""
-            if base is None or not base["family"]:
+            # Stage QG5c5: a stationary member (a core shell) keeps the rule of a stationary target: no family is needed (stage QG5c1: a
+            # totem has no family).
+            if base is None or (not base["family"] and not member.get("stationary")):
                 cause = "its vitals row has no base row with a family"
             spawner = {"alias": member["_asset"], "slice": None} if member["bodyField"] == "alias" \
                 else {"alias": None, "slice": member["_asset"]}
@@ -1881,7 +1891,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                     if any(body in incomplete for body, _ in candidates):
                         raise Failure("an earlier member found the data of its slice not complete")
                     bodies = [(body, percent) for body, percent in candidates
-                              if slices[body]["movement"] != 0 and slices[body]["vitals"] != 0]
+                              if (slices[body]["movement"] != 0 and slices[body]["vitals"] != 0)
+                              or (member.get("stationary") and is_target(slices[body], targets))]
                 except Failure as error:
                     # A member does not stop the tool: the encounter runner refuses its recipe (the rules of a spawn point stay strict).
                     # The slices that the read added are not complete: no member uses them.
@@ -1908,7 +1919,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 continue
             vitals_name = names.get((variant or base)["name"].lstrip("@").lower(), "")
             member_kinds.append({
-                "id": path.rsplit("/", 1)[-1].removesuffix(".dynamicslice"), "vitals": variant["id"] if variant else base["id"],
+                "id": path.rsplit("/", 1)[-1].replace(".dynamicslice", ""), "vitals": variant["id"] if variant else base["id"],
                 "category": category["id"] if category else "", "vitalsId": vitals_crc,
                 "categoryId": name_crc(member["category"]) if member["category"] else 0,
                 "name": names.get(category["name"].lstrip("@").lower(), "") if category else vitals_name, "vitalsName": vitals_name,

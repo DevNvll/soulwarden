@@ -1125,6 +1125,11 @@ struct Creature {
      */
     std::optional<std::pair<std::uint32_t, std::uint64_t>> encounter;
     /**
+     * Stage QG5c5: the patrol path of a member (a part of a group member with a path in the data: the boat landings, the portal waves), in
+     * world coordinates. A member has no spawn point, so the behavior takes this route (Behavior::route_of). Null: no route.
+     */
+    std::shared_ptr<const gamedata::PatrolRoute> memberRoute;
+    /**
      * The characters that hurt the creature in its life, one entry for each character (the credit
      * of a kill, world/rewards.h). The entries go away when the creature has its full health again
      * at its anchor (the reset).

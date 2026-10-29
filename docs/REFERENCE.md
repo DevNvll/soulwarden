@@ -967,8 +967,9 @@ button on "Confirm").
   client plays no cinematic video: `tools/world quest cinematic NAME ID start|end` (route `POST /v1/dev/quests/cinematic`) gives the quest
   system the notice of the messages 6606 and 6542.
 - Encounters of the quests (stage QG5c2, [Encounters](systems/encounters.md), protocol notes 4.62). The world runs the encounter recipes
-  of `encounter-data.json` that the runner takes (47 in the supported build of stage QG5c4: the kill waves, the summoned opponents, the
-  ambushes, the interaction sequences, the defenses of the data, and the tarot towers; 32 in stage QG5c3, 14 in stage QG5c2). An instance comes at
+  of `encounter-data.json` that the runner takes (54 in the supported build of stage QG5c5: the kill waves, the summoned opponents, the
+  ambushes, the interaction sequences, the defenses of the data, the tarot towers, the Darkness events, and the boat reinforcements; 47
+  in stage QG5c4, 32 in stage QG5c3, 14 in stage QG5c2). An instance comes at
   its placement when a character is 150 m or less from it (the cells near the characters; no scan of the world), with its root entity
   (the metadata, the place, the manager status, the stage states, and the objective of the root). A character in the detector sphere of
   the recipe (for example 30 m) is a participant: its HUD shows the encounter (the player Objectives field 5) with the step of the stage
@@ -982,12 +983,20 @@ button on "Confirm").
   lifetime; the detector is the union of the shapes of the tracker entity, tested with the capsule of the character. From stage QG5c4:
   an entity-state stage ends when a character is in its trigger (the sphere of 20 m at the top of a tarot tower); a stage ends when each
   of its objectives is met; a recipe with no creature member runs; the HUD row goes to the next step (a satisfied task has its target),
-  and the time row of a timed step counts down (field 0 of the root Objectives). The phase bosses (stage BT3), the scheduled and
-  seasonal events, the nested encounters (the braziers), the group members (the boat landings), and a stage that waits for a gather of
-  the root slice (the horn of 09A_M5) are refused with their causes. In a development run
+  and the time row of a timed step counts down (field 0 of the root Objectives). From stage QG5c5: a group member makes one creature
+  for each part (its place in the slice, its path); a part that the client does not show (a swarmer) is not made, and its objective
+  counts it at the start of its stage when the made parts cannot reach the count; a child stage with a WaitForParentObjective ends with
+  its parent; a DestroySliceAction removes the members of a slice or an alias; a spawn of an alias (the pylons, the cores) counts for the
+  tracked alias; the pylons and the cores are Azoth Staff gathers; the core shells are stationary targets; a start object of an earlier
+  stage counts for a later stage that tracks it (the spyglass); the season rule `encounter_rules::kDarknessAtAllTimes` (true: the
+  Darkness events are there at all times, no season schedule). The phase bosses (stage BT3), the other scheduled and seasonal events,
+  the nested encounters (the braziers), and a stage that waits for a gather of the root slice (the horn of 09A_M5) are refused with their
+  causes. In a development run
   `tools/world encounter NAME [METERS]` (route `GET /v1/dev/encounters`) prints the instances near a character with their stage, their
   participants, their members, and the counts (from stage QG5c3 also `objectsFound`, `proximityLooks`, `timedEnds`, and
-  `spawnsSkipped`; from stage QG5c4 also `triggersFound`, `triggerLooks`, `objectivesVoided`, and `findRetries`); `tools/world encounter recipes` (route `GET /v1/dev/encounters/recipes`) prints each recipe:
+  `spawnsSkipped`; from stage QG5c4 also `triggersFound`, `triggerLooks`, `objectivesVoided`, and `findRetries`; from stage QG5c5 also
+  `partsMade`, `partsHidden`, `partsFilled`, `slicesDestroyed`, and the line `running` of each stage that runs with the count of each
+  objective); `tools/world encounter recipes` (route `GET /v1/dev/encounters/recipes`) prints each recipe:
   taken or refused with its causes; `tools/world encounter reset NAME KEY` (route `POST /v1/dev/encounters/reset`) ends the instance of a
   placement; `tools/world encounter use NAME` (route `POST /v1/dev/encounters/use`) is a development aid: the start object 10 m or less
   from the character counts as gathered. The admin routes have the same commands (`server/http/character_commands.h`).

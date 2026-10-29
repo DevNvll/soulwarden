@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "gamedata/creature_data.h"
 #include "state/store.h"
 
 // The encounter recipes of the quests (stage QG5c2, docs/systems/encounters.md): the file encounter-data.json of
@@ -19,6 +20,10 @@
 // "encounterObjects"). Without the file the world has no encounter, and the rest of the backend works. Stage QG5c3 (still format 1; a
 // backend of before ignores the new members): the child stages, the spawned objective, the detector shapes, the proximity objects (their
 // radius; an area trigger with no Interact component), the members that end themselves (lifetime), and the direct creature members.
+// Stage QG5c5 (still format 1): the child stages that wait for their parent (WaitForParentObjective), the DestroySliceAction, the group
+// members (one part for each creature spawner of the member slice, with its place and its patrol path), the spawns of an alias (the slice
+// that the tool chose and the alias), the slices of a tracked alias, the direct stationary members (the core shells), and the season of a
+// recipe. A backend of before ignores these members and must not take this file: it would run a group as one creature.
 
 namespace soulwarden::backend::gamedata {
 
@@ -38,6 +43,11 @@ enum class EncounterObjectiveKind : std::uint8_t {
      * shape of its trigger.
      */
     entityState,
+    /**
+     * Stage QG5c5: WaitForParentObjective: a child stage that ends with its parent (the sustain waves of the Darkness monoliths). The client
+     * makes no task for it (static read D1 of stage QG5c4, 0x7C7DF0); a parent does not wait for it.
+     */
+    waitParent,
     /** A class that the runner does not run (the recipe is refused by the tool). */
     other,
 };
@@ -65,6 +75,18 @@ struct EncounterSpawn {
     std::uint32_t count{1};
     /** The spawn locations; empty: the place of the root. A count above the locations takes them in turn. */
     std::vector<EncounterPlace> locations;
+    /** Stage QG5c5: the alias of a spawn of an alias (lower case; `member` is the slice of it that the tool chose). Empty: no alias. */
+    std::string alias;
+};
+
+/**
+ * Stage QG5c5: a DestroySliceAction of a stage: the members of the instance whose slice is `slice`, `alias`, or one of `aliasSlices` go (no
+ * count, no reward). The monoliths remove the corruption hazard of their setup (alias_darkness_corruption_hazard_major).
+ */
+struct EncounterDestroy {
+    std::string slice;
+    std::string alias;
+    std::vector<std::string> aliasSlices;
 };
 
 /** Stage QG5c3: one shape of the detector of the participants (a DetectionVolumeComponent of the entity of the ParticipantTracker). */
@@ -102,6 +124,8 @@ struct EncounterObjective {
     std::uint32_t requiredCount{0};
     /** m_trackedSlice or m_trackedAlias (lower case); empty: each spawn of the stage counts. */
     std::string tracked;
+    /** Stage QG5c5: the slices of a tracked alias (lower case): a part of a group counts when its body is one of them. */
+    std::vector<std::string> trackedSlices;
     std::string title;
     std::string description;
     /** Stage QG5c4: the triggers of an entity-state objective (a character in one of their shapes ends the stage). */
@@ -135,6 +159,9 @@ struct EncounterStage {
     /** A KillSpawnsAction in m_startActions or m_endActions: the members of the encounter go (no reward). */
     bool killSpawnsAtStart{false};
     bool killSpawnsAtEnd{false};
+    /** Stage QG5c5: the DestroySliceActions of m_startActions and of m_endActions. */
+    std::vector<EncounterDestroy> destroyAtStart;
+    std::vector<EncounterDestroy> destroyAtEnd;
     /**
      * Stage QG5c3: the child stages (m_stages of the stage: indexes into the stages of the recipe; they run one after the other), the stage
      * whose m_stages names this one (-1: a stage of the manager), and m_childStagesOptional (the stage can end before its child stages).
@@ -204,8 +231,29 @@ struct EncounterRecipe {
     /** Stage QG5c4: the leaf tasks of the task tree of the client (the outer container has the index 2 * taskLeaves + 1). */
     std::uint32_t taskLeaves{0};
     std::string pattern;
+    /**
+     * Stage QG5c5: the season of a seasonal event ("darkness": the Darkness events of slices/darkness/). Empty: none. The runner takes such a
+     * recipe only with its season rule (encounter_rules::kDarknessAtAllTimes).
+     */
+    std::string season;
     /** The causes of the data that the runner does not run (tools/gamedata/encounters.py). Empty: no cause of the data. */
     std::vector<std::string> refused;
+};
+
+/**
+ * Stage QG5c5: one part of a group member: one creature spawner of the member slice (its kind in creatures.json is "SLICE#N"), its body, its
+ * place in the member slice (the offset in the axes of the slice and its yaw), and its patrol path in the coordinates of the member slice
+ * (no points: none).
+ */
+struct EncounterPart {
+    std::string name;
+    std::string vitals;
+    std::string category;
+    std::string body;
+    std::vector<std::string> bodySlices;
+    std::array<float, 3> offset{0.0F, 0.0F, 0.0F};
+    float yaw{0.0F};
+    PatrolRoute route;
 };
 
 struct EncounterMember {
@@ -231,6 +279,10 @@ struct EncounterMember {
     bool interact{true};
     float lifetime{0.0F};
     bool direct{false};
+    /** Stage QG5c5: a direct stationary member (a core shell: a Vitals component and no movement; a stationary target of the creature data). */
+    bool stationary{false};
+    /** Stage QG5c5: the parts of a group member (empty: one creature, the member itself). */
+    std::vector<EncounterPart> parts;
 };
 
 class EncounterData {
@@ -240,6 +292,9 @@ public:
     static constexpr std::size_t kMaxStages = 64;
     static constexpr std::size_t kMaxSpawns = 64;
     static constexpr std::uint32_t kMaxCount = 32;
+    /** Stage QG5c5: the largest number of the parts of a group member and of the waypoints of the path of a part. */
+    static constexpr std::size_t kMaxParts = 32;
+    static constexpr std::size_t kMaxWaypoints = 64;
     static constexpr float kMaxSeconds = 3600.0F;
 
     /** Reads encounter-data.json. A file that is not complete is not used, as a whole. @return False with `error()`. */

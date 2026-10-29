@@ -1072,6 +1072,9 @@ def show_encounters(document: dict) -> None:
               f"{entry['phase']}  {entry['distance']:.1f} m")
         print(f"      stage: {entry['stage'] or '-'} ({entry['destroyed']} of {entry['required']}); participants: "
               f"{len(entry['participants'])}; members: {', '.join(entry['members']) or 'none'}")
+        # Stage QG5c5: each running stage (also a child stage) with the count of each objective.
+        for running in entry.get("running", []):
+            print(f"      running: {running}")
     if not document.get("instances"):
         print(f"no encounter instance in {document.get('radius', 0):g} m")
     counts = document.get("counts", {})

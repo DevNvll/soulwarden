@@ -7519,7 +7519,7 @@ InteractTeleportComponentClientFacet (vtable 0x82FBDA0) compares the action 0x52
 is the ordinary interaction block (writer 0x35E67E0); the teleport answer of the server and a gather of the row at action 82: not found].
 The shrine of `99D_MSQ_07_PortalFight` and the lift of `Quest_16008` stay out (a teleport handler of a later stage).
 
-### 4.62 The encounter states: the root record, the manager state, the stage state and 1278, the link of a nearby event, the participant message, the kill counter, the task tree and the timer of a row, the VariationData state of a start object (live proof of stages QG5c1 to QG5c4; static proof for the client code; the backend runner of stages QG5c2 to QG5c4: docs/systems/encounters.md)
+### 4.62 The encounter states: the root record, the manager state, the stage state and 1278, the link of a nearby event, the participant message, the kill counter, the task tree and the timer of a row, the VariationData state of a start object (live proof of stages QG5c1 to QG5c5; static proof for the client code; the backend runner of stages QG5c2 to QG5c5: docs/systems/encounters.md)
 
 Research: `~/Games/soulwarden/work/research/quest-encounters.md` section 2; the static read A of stage QG5c1
 (`~/Games/soulwarden/work/evidence/quests/qg5c1/implement/static/A/ANSWERS.md`); the live probes of the same folder (`shots/steps/`,
@@ -7720,6 +7720,17 @@ field 0 of the root Objectives := 02 01 00 01 sequence:size64 count:size (G:u64 
   defense of 09A_S9: "Defend Kievan Sidorov from the Anubian Guardians 00:00:57" (the countdown flag: no "N / M").
 - The entity-state stage of a tarot tower needs no message: the runner finds the character in the trigger of the data at its scan
   [agent; live: L3]. The cleanup status of the tower makes the client remove the corruption of the room (its stage actions) [live: L3].
+- Stage QG5c5 (the Darkness events, the boat reinforcements; no new message and no new state type) [live: L1 to L3 of stage QG5c5,
+  `~/Games/soulwarden/work/evidence/quests/qg5c5/implement/`]: the same root record, stage states, and root Objectives show the rows of a
+  monolith ("Corrupted Monolith": "Destroy the Pylons to break through the barrier. 0 / 3 - Corruption Pylons Destroyed", "Expose the
+  Corrupted Monolith's Core. Carapace Destroyed", "Destroy the Corrupted Monolith"), of a portal ("Corrupted Portal": "Disrupt the ritual.
+  0 / 2 - Acolytes Defeated", "Fight back the enemy invasion! Defeat all Enemy Waves", "Destroy the Corrupted Portal"), and of a boat ("The
+  Captain's Arrival": "Scour the Seas", "Boat Arrival 00:00:30" with the timer of field 0, "0 / 2 - Defeat Esteban's Crew", "Defeat Captain
+  Esteban", "Fire the nearby cannon to sink Captain Esteban's Ship"). The child stages of a portal and of a monolith have no user wave:
+  no row. The client plays the stage actions of a status itself: the flashes of the portal at the start of each sub-wave, the boat of the
+  timeline of "Spawn Boat, Start Timeline" (the ship comes from the horizon in 61 s and docks at the pier: no record of the backend for
+  the ship), and the end of the corruption and of the red sky at the cleanup. A part of a group, a pylon or a core (a start object of an
+  ordinary row with its VariationData state), and a core shell (the record of a stationary target, 4.14) need no new state.
 
 ## 5. Open items
 

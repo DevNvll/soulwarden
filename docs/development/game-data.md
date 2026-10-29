@@ -499,6 +499,16 @@ backend. The tool of each system is also in the document of that system.
   17 s. `creatures.json` has 141 member kinds (18 left out); `gathering-data.json` has 43 `encounterObjects` (the proximity start objects
   of the ambushes: the table Gatherable_Quest_Proximity for an encounter start object, `gathering.py` `quest_capital`) and one more
   skinning link (a direct creature member slice); `interaction-data.json` has the same bytes.
+  Stage QG5c5 (still format 1; a backend of before must not take the file: it reads a group member as one creature, and it has no rule
+  for the other new members): a group member has
+  `group` (one part for each creature spawner of its slice: `name`, `vitals`, `category`, `level`, `bodyField`, `body`, `bodySlices`,
+  `offset` [x, y, z] and `yaw` in the slice, and `route` `{"policy", "points": [[x, y, z, yaw, min wait, max wait, task, alignment],
+  ...]}` in the coordinates of the slice where the data has a path); a spawn of an alias has the chosen slice in `member` and the alias in
+  `alias`; an objective with a tracked alias has `trackedSlices`; a DestroySliceAction has `slice`, `alias`, and `aliasSlices`; a direct
+  stationary member (a slice of the list `targets` of `creature_slices.json`: the core shells) has `stationary`; a recipe of
+  `slices/darkness/` has `season` "darkness" (no refusal of the tool: the backend has the season rule); the WaitForParentObjective and the
+  DestroySliceAction are no causes. The build: 395 encounters, 64 recipes, 59 with no cause of the tool (54 taken by the runner); members
+  290 creatures (32 groups with 188 parts, 100 of them with a path), 74 objects, 100 unknown; 16 s.
 - `quest-objects.json` (stage 1.8e, `tools/gamedata/quest-objects.sh`, [Quests](../systems/quests.md)): format 1. The destructible quest
   objects: each placement of the layers (the capital placements of `gathering.py`) whose slice has a variation of the table
   `Gatherable_Quest_Damageable`, with its key (the placement UUID), its managed actor (the UUID rule of a capital node), its asset, its
@@ -624,6 +634,13 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   `interaction-data.json` does not change. A backend of stage QG5c3 must not take the new `encounter-data.json`: it reads the
   EntityActiveStateChangedObjective as an objective of no kind and takes the tarot towers, which then wait at their setup. Put the backend
   and the files together (`tools/release.sh` takes both).
+- Stage QG5c5 changes `encounter-data.json` (the new members above), `creatures.json` (a kind for each part of a group, `SLICE#N` of the
+  list `members`, and the kinds of the three core shells: 213 member kinds, 43 left out; the 33,023 spawn points, their kinds, and the
+  routes keep their values), `interaction-data.json` (the templates of the pylon and of the two cores: 51 `encounterObjects`; the template
+  list is sorted, so some template indexes move), and `gathering-data.json` (the rows of the pylon, of the two cores, and of the spyglass:
+  47 `encounterObjects`; the `gathering/` folder has the same bytes). `tools/gamedata/creature_slices.json` has the three core shells in its
+  list `targets`. A backend of stage QG5c4 must not take the new files: it reads a group member as one creature and has no rule for the
+  new members (the season, the aliases, the waiting child stages). Put the backend and the files together (`tools/release.sh` takes both).
 
 - Stage BT2 changes `creatures.json` (still format 4, `tools/gamedata/creatures.sh`): each slice that names a server tree has the member
   `serverTrees` (the asset paths of `m_behaviorTreeAssets` of its `BehaviorTreeComponent`, the entity "AI Functionality"; lower case, with

@@ -267,7 +267,7 @@ CreatureResult Creatures::spawn(const std::string& kindId,
 }
 
 Entity* Creatures::spawn_member(const gamedata::CreatureKind& kind, const state::WorldPosition& position, float yaw, std::uint32_t placement,
-                                std::uint64_t generation) {
+                                std::uint64_t generation, const gamedata::PatrolRoute* route) {
     if (!has_data() || !valid_position(position) || !std::isfinite(yaw) || !m_data->has_level(kind.level)) {
         return nullptr;
     }
@@ -277,6 +277,10 @@ Entity* Creatures::spawn_member(const gamedata::CreatureKind& kind, const state:
         return nullptr;
     }
     entity->creature.encounter = std::pair{placement, generation};
+    if (route != nullptr && !route->points.empty()) {
+        // Stage QG5c5: the patrol path of a part of a group member (the rules of a patrol of a spawn point, world/behavior.h).
+        entity->creature.memberRoute = std::make_shared<const gamedata::PatrolRoute>(*route);
+    }
     ++m_counts.spawnedByEncounter;
     return entity;
 }

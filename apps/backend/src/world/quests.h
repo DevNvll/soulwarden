@@ -533,9 +533,12 @@ public:
      * the cause ItemGathered, whole or not at all, and the award rows), then the events of the destruction (the game event of the row and
      * the InteractTag of the object). The caller destroys the object only after QuestError::none; a different error (a full bag, a refused
      * write of the store) changes nothing, and no retry follows (the object keeps its last unit of work: the next strike tries again).
-     * No quest data or no row to write: QuestError::none.
+     * No quest data or no row to write: QuestError::none. Code review of stage QG5c4, finding QG5C4R-R3: `matched`, when not null, gets
+     * the tasks (instance and index) that each event matched, in the order of the events (a caller that tries again gives them to the
+     * events of its retry: `QuestEvent::matched` with `restricted`).
      */
-    [[nodiscard]] QuestError object_destroyed(Entity& entity, const std::vector<QuestDrop>& drops, const std::vector<QuestEvent>& events);
+    [[nodiscard]] QuestError object_destroyed(Entity& entity, const std::vector<QuestDrop>& drops, const std::vector<QuestEvent>& events,
+                                              std::vector<std::vector<std::pair<std::uint64_t, std::uint8_t>>>* matched = nullptr);
     /**
      * @return True when an active task of the character has this InteractTag (a quest object that InteractOnlyOnQuest shows only during
      *         the task: client 0x8261FC0). An empty tag: false.

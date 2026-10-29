@@ -128,7 +128,8 @@ FORMAT = 1
 REGION_FORMAT = 1
 REGION_SIZE = 2048
 TERRAIN_PATH = f"sharedassets/coatlicue/{WORLD}/terrain.json"
-WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "slices/", "coatgen/", UI_DATABASE, CATALOG_PATH, TERRAIN_PATH)
+# Stage QG5c5: the alias assets (encounter_recipes.py reads the spawns of an alias: the pylons and the cores of the Darkness events).
+WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "slices/", "coatgen/", UI_DATABASE, CATALOG_PATH, TERRAIN_PATH, "sharedassets/genericassets/aliasassets/")
 GATHERABLE_TYPE = "GatherableData"
 VARIATION_TYPE = "VariationData"
 RANK_TYPE = "TradeskillRankData"
@@ -167,6 +168,10 @@ DAMAGEABLE_TABLES = ("Gatherable_Quest_Damageable",)
 # master_quest_proximity_instanced with a DetectionVolumeComponent and m_isProximityGatherable). This tool reads its rows for
 # quest_objects.py and writes no node of it.
 PROXIMITY_TABLES = ("Gatherable_Quest_Proximity",)
+# Stage QG5c5 (docs/systems/encounters.md): the variation table of the Darkness gatherables (the pylons and the cores of the monoliths and
+# of the portals: Azoth Staff rows with a loot table). Only an encounter start object takes its rows (encounter_capital); the tool writes no
+# node of it.
+ENCOUNTER_TABLES = ("Gatherable_Darkness",)
 # The cause of a loot container that a quest object does not have (its loot is the quest drops).
 LOOT_CONTAINER_CAUSE = "a loot container (a chest: stage 3.5b)"
 # The causes of a row that the backend refuses (a rule of the data that the backend has no predicate for).
@@ -322,7 +327,7 @@ class Tables:
 
     def _variations(self, sheet: Sheet, path: str) -> None:
         tagged = sheet.name in QUEST_TABLES or sheet.name in DAMAGEABLE_TABLES or sheet.name in PROXIMITY_TABLES
-        if sheet.name not in ORDINARY_TABLES and not tagged:
+        if sheet.name not in ORDINARY_TABLES and sheet.name not in ENCOUNTER_TABLES and not tagged:
             return
         # The column of the gatherable row: GatherableEntryID (Gatherables_NPCRescue_01 spells it GatherableEntryId).
         entry_column = next((column for column in sheet.columns if column.lower() == "gatherableentryid"), "GatherableEntryID")
@@ -714,7 +719,8 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
 
     def variant_row(template: int, variant: str, what: str, proximity: bool = False) -> int:
         table = slices.templates[template]["table"]
-        if table not in ORDINARY_TABLES and table not in QUEST_TABLES and not (proximity and table in PROXIMITY_TABLES):
+        if table not in ORDINARY_TABLES and table not in QUEST_TABLES and table not in ENCOUNTER_TABLES \
+                and not (proximity and table in PROXIMITY_TABLES):
             return -1
         entry = tables.variations.get(table, {}).get(variant.lower())
         if entry is None or not entry["gatherable"]:
@@ -826,6 +832,26 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
         counts["directQuest"] = counts.get("directQuest", 0) + 1
         return [template, row, extra["tag"], extra["onlyOnQuest"]]
 
+    def encounter_capital(template: int, variant: str, what: str) -> list | None:
+        """@return The entry of an encounter start object that is not a quest object (stage QG5c5), or no value: a variant of
+        ENCOUNTER_TABLES (the pylons and the cores of the Darkness: an Azoth Staff row with its loot table; its gather has the rules of its
+        row), or a direct row with no tool (GatheringType None), the loot table Empty or blank, and no game event (the spyglass of the boat
+        reinforcements: BoatEncounter_Scallywag, Handcrafting, 3 s) [agent: the encounter counts the gather; the row gives nothing]."""
+        table = slices.templates[template]["table"]
+        extra = slices.extra[template]
+        if table in ENCOUNTER_TABLES:
+            row = variant_row(template, variant.strip() or extra["selected"], what)
+            return [template, row, "", False] if row >= 0 else None
+        identifier = slices.templates[template]["entry"]
+        if table or not identifier or identifier.lower() not in tables.rows:
+            return None
+        cells = tables.rows[identifier.lower()][1]
+        if cells.get("GatheringType", "None") not in ("", "None") or cells.get("FinalLootTable", "") not in ("", "Empty") \
+                or cells.get("GameEventID", ""):
+            return None
+        counts["encounterDirect"] = counts.get("encounterDirect", 0) + 1
+        return [template, row_of(identifier, f"{what}: the direct gatherable row"), extra["tag"], extra["onlyOnQuest"]]
+
     spawner_cache: dict[str, list[dict]] = {}
 
     def spawners_of(path: str) -> list[dict]:
@@ -911,6 +937,8 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
             template = slices.template_of(member["slice"], False)
             entry = quest_capital(template, member["variant"], f"the start object {member['slice']}", bool(member.get("proximity"))) \
                 if template is not None else None
+            if entry is None and template is not None and not member.get("proximity"):
+                entry = encounter_capital(template, member["variant"], f"the start object {member['slice']}")
             if entry is None:
                 counts["encounterObjectsLeftOut"] = counts.get("encounterObjectsLeftOut", 0) + 1
                 continue
