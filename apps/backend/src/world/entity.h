@@ -224,6 +224,16 @@ enum class ComponentKey {
      * index of its variant. Each observer gets it in its first record; the client then applies the variant (the prompt and the gather row).
      */
     variation,
+    /**
+     * The Faction state of a character (stage QG7, slot 49, type 3152; docs/systems/factions.md): the owner gets the time and the count of
+     * the last change (group 1) and the faction (group 2), each observer the faction (group 2, the public group).
+     */
+    faction,
+    /**
+     * The Social state of a character (stage QG7, slot 55, type 4176): the empty state of the owner (no friends, invites, blocks, or wars),
+     * after the first message 2709 of its session; the client reads its friend list from it.
+     */
+    social,
 };
 
 /**
@@ -621,6 +631,21 @@ struct SkillSet {
         const std::uint32_t total = rank(found->second.standing);
         return found->second.spent >= total ? 0 : total - found->second.spent;
     }
+};
+
+/**
+ * Stage QG7: the faction of a character (docs/systems/factions.md): the Faction component of the entity Social of the player slice (slot 49,
+ * type 3152, a public field for the remote player slice). Only the faction system (world/factions.h) changes it.
+ */
+struct FactionState {
+    /** The client enum: 0 none, 1 Syndicate, 2 Marauder, 3 Covenant. */
+    std::uint8_t faction{0};
+    /** lastFactionChangeTimepoint: Unix nanoseconds of the wall clock of the world (0: no change that starts the wait). */
+    std::uint64_t changedNs{0};
+    /** factionChangeCount: the number of the changes from a faction to another faction (the first join is not a change). */
+    std::uint16_t changes{0};
+    /** The world revision of the last change of the faction (the public field): an observer gets the field again only after it. */
+    Revision publicChanged{0};
 };
 
 /** What the server permits the input of the owner to do. */
@@ -1995,6 +2020,8 @@ struct Entity {
     Progression progression;
     Attributes attributes;
     SkillSet skills;
+    /** Stage QG7: the faction of a character (the faction system; world/factions.h). */
+    FactionState faction;
     /** The items, the equipment, and the coin of the character. The inventory system changes them (world/inventory.h). */
     Bag bag;
     Equipment equipment;

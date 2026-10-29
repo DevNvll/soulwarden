@@ -41,9 +41,6 @@ constexpr std::uint8_t kFactionAny = 4;
 
 std::uint8_t faction_value(std::string_view text);
 
-/** The faction of a character: the backend has no faction (stage 4.5), thus None for each character. */
-constexpr std::uint8_t kCharacterFaction = kFactionNone;
-
 bool same_text(std::string_view one, std::string_view two) {
     return one.size() == two.size() && std::equal(one.begin(), one.end(), two.begin(), [](char a, char b) {
                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
@@ -83,8 +80,8 @@ std::optional<bool> progression_passes(const Entity& character, const std::strin
     if (rank == 0 && points == 0) {
         return true;
     }
-    // A progression that the character does not have has rank 0 and 0 points (the getters 0x3CB6330, 0x3CB5E60): the faction progressions
-    // of the data (Syndicate, ...) too, because the backend has no faction.
+    // A progression that the character does not have has rank 0 and 0 points (the getters 0x3CB6330, 0x3CB5E60). Stage QG7: the faction
+    // progressions of the data (Syndicate 3 49000) are entries of the categorical progressions of the character (world/skills.h).
     const auto found = character.skills.progressions.find(gamedata::progression_id(id));
     const ProgressionRank have = found != character.skills.progressions.end() ? found->second : ProgressionRank{};
     return have.rank >= rank && (points == 0 || have.points >= static_cast<std::uint64_t>(points));
@@ -200,7 +197,7 @@ Persons::Persons(World& world, const gamedata::ConversationData* data) : m_world
 Revision Persons::selection_revision(const Entity& character) {
     Revision revision = 0;
     for (const ComponentKey key :
-         {ComponentKey::achievements, ComponentKey::objectives, ComponentKey::progression, ComponentKey::categorical}) {
+         {ComponentKey::achievements, ComponentKey::objectives, ComponentKey::progression, ComponentKey::categorical, ComponentKey::faction}) {
         if (const auto found = character.changed.find(key); found != character.changed.end()) {
             revision = std::max(revision, found->second);
         }
@@ -234,15 +231,23 @@ bool Persons::passes(const Entity& character, const gamedata::ConversationRequir
     }
     // RequiredFaction: None (0) is no rule. Any (4) is no rule for a state, and for a topic the character must have a faction. A named
     // faction must be the faction of the character.
+    // Stage QG7: the faction of the character (world/factions.h).
     const std::uint8_t faction = faction_value(requirements.faction);
-    if (faction != kFactionNone && (faction == kFactionAny ? topic && kCharacterFaction == kFactionNone : faction != kCharacterFaction)) {
+    const std::uint8_t own = character.faction.faction;
+    if (faction != kFactionNone && (faction == kFactionAny ? topic && own == kFactionNone : faction != own)) {
         return false;
     }
     if (!topic) {
-        // RequiredFactionCooldown (a state only): NotInCooldown is no rule; InCooldownMultipleDays needs more than 24 hours of the cooldown
-        // of a faction change, InCooldownSingleDay 1 to 24 hours (0x37AB5F9 to 0x37AB6B5). The backend has no faction change: no cooldown.
-        if (same_text(requirements.factionCooldown, "InCooldownMultipleDays") || same_text(requirements.factionCooldown, "InCooldownSingleDay")) {
-            return false;
+        // RequiredFactionCooldown (a state only): NotInCooldown is no rule; InCooldownMultipleDays needs more than 24 whole hours of the
+        // wait of a faction change, InCooldownSingleDay 1 to 24 whole hours (0x37AB5F9 to 0x37AB6B5: the hours of the end of the wait,
+        // 0x3791020, minus the synced time, 0x179F3B0). Stage QG7: the wait of the faction system (Factions::wait_left).
+        const bool multiple = same_text(requirements.factionCooldown, "InCooldownMultipleDays");
+        if (multiple || same_text(requirements.factionCooldown, "InCooldownSingleDay")) {
+            constexpr std::uint64_t kHourNs = 3600ULL * 1000000000ULL;
+            const std::uint64_t hours = m_world.factions().wait_left(character.faction) / kHourNs;
+            if (multiple ? hours <= 24 : hours < 1 || hours > 24) {
+                return false;
+            }
         }
         // RequiredCompletedObjective: the completion achievement of the objective (0x3A48A30).
         if (!requirements.completedObjective.empty() && !m_world.quests().objective_completed(character, requirements.completedObjective)) {
@@ -341,8 +346,8 @@ PersonSelection Persons::select(const Entity& character, const gamedata::PersonB
             }
             continue;
         }
-        if ((*id == kServiceFactionBoard && (stateFaction != kCharacterFaction || !level))
-            || (*id == kServiceFactionSelection && ((stateFaction != kCharacterFaction && stateFaction != kFactionAny) || !level))) {
+        if ((*id == kServiceFactionBoard && (stateFaction != character.faction.faction || !level))
+            || (*id == kServiceFactionSelection && ((stateFaction != character.faction.faction && stateFaction != kFactionAny) || !level))) {
             continue;
         }
         selection.services.push_back(*id);

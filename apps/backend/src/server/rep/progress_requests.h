@@ -27,6 +27,10 @@ inline constexpr std::uint32_t kTypeChangeMappedAbility = 2701;   // AbilityComp
 inline constexpr std::uint32_t kTypeMasteryTreeRespec = 186;      // AbilityComponentServerFacet_RequestMasteryTreeRespec
 /** Stage QG1: the card choice of the territory standing. */
 inline constexpr std::uint32_t kTypeSpendTerritoryStandingPoint = 4040; // ProgressionPointComponentServerFacet_RequestSpendTerritoryStandingPoint
+/** Stage QG7: the join and the change of a faction. */
+inline constexpr std::uint32_t kTypeRequestSetFaction = 3161; // FactionComponentServerFacet_RequestSetFaction
+/** Stage QG7: the Faction component of the entity Social of the player slice (slice-ids.json; component id E9FFAD8E007C4913). */
+inline constexpr const char* kFactionComponentName = "Social/2bbb6c0d-28a5-4c6c-9e02-1b28ebd8170c";
 /** Server to client: the answer to a tree reset request. */
 inline constexpr std::uint32_t kTypeMasteryTreeRespecResponse = 2858; // AbilityComponentClientFacet_MasteryTreeRespecResponse
 
@@ -69,6 +73,18 @@ struct TerritoryPointRequest {
 };
 
 /**
+ * Stage QG7: FactionComponentServerFacet_RequestSetFaction (the sender 0x30A3310, the field writer 0x2745630, the field reader 0x3099BA0
+ * with the enum validator 0x2E6A8A0: 0 to 4; research factions.md 2.2):
+ *   target:u64 entity:u64 faction:u8
+ * The target is the Faction component of the entity Social of the player slice. The join and each later change use it. The client has no
+ * reply message: the next Faction state (slot 49) is the answer.
+ */
+struct SetFactionRequest {
+    ComponentCall call;
+    std::uint8_t faction{0};
+};
+
+/**
  * AbilityComponentServerFacet_RequestChangeMappedAbility (client writer at image RVA
  * 0x65A5580, reader 0x65A6270):
  *   target:u64 entity:u64 tableIndex:u16 slot:u32 abilityId:u32
@@ -98,6 +114,8 @@ struct TreeResetRequest {
 [[nodiscard]] std::optional<SpendRequest> read_spend_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<AssignRequest> read_assign_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<TerritoryPointRequest> read_territory_point_request(std::span<const std::uint8_t> body);
+/** Stage QG7: @return Request 3161, or no value when the body does not have its form (17 bytes) or the faction is above 4 (the validator). */
+[[nodiscard]] std::optional<SetFactionRequest> read_set_faction_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<BarRequest> read_bar_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<TreeResetRequest> read_tree_reset_request(std::span<const std::uint8_t> body);
 /**

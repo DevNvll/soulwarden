@@ -15,7 +15,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 17;
+constexpr int kSchemaVersion = 18;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -404,13 +404,26 @@ CREATE TABLE IF NOT EXISTS character_quest_repeats(
 );
 )sql";
 
+/**
+ * Version 18 (stage QG7): the faction of a character (docs/systems/factions.md): the faction, the wall time of the last change (Unix
+ * nanoseconds; 0: none), and the number of the changes. A character with no row has no faction.
+ */
+constexpr const char* kMigration18Factions = R"sql(
+CREATE TABLE IF NOT EXISTS character_factions(
+    character_id TEXT PRIMARY KEY,
+    faction INTEGER NOT NULL DEFAULT 0,
+    changed_ns INTEGER NOT NULL DEFAULT 0,
+    changes INTEGER NOT NULL DEFAULT 0
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
                                             "loot_claims",   "loot_claim_items",    "loot_bags",          "loot_bag_items",
                                             "craft_cooldowns", "character_quests",  "character_quest_tasks", "character_quest_pins",
                                             "character_quest_grants", "character_quest_undo", "character_quest_awards",
-                                            "character_quest_repeats"};
+                                            "character_quest_repeats", "character_factions"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -701,6 +714,13 @@ bool Store::migrate() {
     if (version < 17) {
         // Stage 1.8d: the repeats of the quests.
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration17QuestRepeats) || !execute("PRAGMA user_version=17") || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 18) {
+        // Stage QG7: the factions of the characters.
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration18Factions) || !execute("PRAGMA user_version=18") || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
         }
@@ -2007,6 +2027,40 @@ std::vector<CraftCooldownRow> Store::list_craft_cooldowns(const std::string& cha
         rows.push_back(std::move(row));
     }
     return rows;
+}
+
+CharacterFactionRow Store::faction(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    CharacterFactionRow row;
+    Statement statement(m_database, "SELECT faction, changed_ns, changes FROM character_factions WHERE character_id=?1");
+    statement.bind(1, characterId);
+    if (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        // A value outside the enum of the client is no faction (a database that a person changed).
+        const sqlite3_int64 faction = sqlite3_column_int64(statement.handle, 0);
+        row.faction = faction >= 0 && faction <= 3 ? static_cast<std::uint8_t>(faction) : 0;
+        row.changedNs = static_cast<std::uint64_t>(std::max<sqlite3_int64>(0, sqlite3_column_int64(statement.handle, 1)));
+        row.changes = static_cast<std::uint16_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 2), 0, 0xFFFF));
+    }
+    return row;
+}
+
+bool Store::write_faction(const std::string& characterId, const CharacterFactionRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "INSERT INTO character_factions(character_id, faction, changed_ns, changes) VALUES(?1, ?2, ?3, ?4) "
+                                    "ON CONFLICT(character_id) DO UPDATE SET faction=excluded.faction, changed_ns=excluded.changed_ns, "
+                                    "changes=excluded.changes");
+    statement.bind(1, characterId);
+    sqlite3_bind_int64(statement.handle, 2, static_cast<sqlite3_int64>(row.faction));
+    sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(row.changedNs));
+    sqlite3_bind_int64(statement.handle, 4, static_cast<sqlite3_int64>(row.changes));
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of the faction of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
 }
 
 bool Store::write_craft_cooldown(const std::string& characterId, const CraftCooldownRow& row) {

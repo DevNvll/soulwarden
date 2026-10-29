@@ -278,6 +278,25 @@ public:
      * points are 0, and a later gain adds nothing. A territory with no standing row: unknownProgression (noTables with no tables).
      */
     [[nodiscard]] ProgressError add_standing(Plan& plan, std::uint16_t territory, std::uint64_t amount, StandingGain* gain = nullptr) const;
+    /**
+     * Stage QG7: adds points to a faction progression of a plan (the reputation or the tokens of a faction; docs/systems/factions.md): the
+     * points are a total, and a gain stops at the MaximumInfluence of the rank of the progression (the faction rows have AutoRankUp false
+     * and AllowOverflow false: no rank-up by points). A cost (a negative delta) above the points is refused (notEnoughBalance).
+     * `gained` gets the change of the points. A progression that is not a faction progression: unknownProgression.
+     */
+    [[nodiscard]] ProgressError add_faction_points(Plan& plan, std::uint32_t progressionId, std::int64_t delta,
+                                                   std::int64_t* gained = nullptr) const;
+    /**
+     * Stage QG7: sets the rank of a faction progression of a plan (the ProgressionReward of a rank-up row or of a trial, a command). A rank
+     * above the largest rank of a player (Expansion01MaxLevel with the owned expansion): badRank. The points stay; a lower rank cuts them at
+     * its cap.
+     */
+    [[nodiscard]] ProgressError set_faction_rank(Plan& plan, std::uint32_t progressionId, std::uint32_t rank) const;
+    /** Stage QG7: a command: sets the rank and the points of a faction progression (the points at most the cap of the rank). */
+    SkillResult set_faction_progress(const std::string& characterId, std::uint32_t progressionId, std::uint32_t rank, std::uint64_t points);
+    /** Stage QG7: @return The rank and the points of a categorical progression of a skill set (rank 0 and 0 points when it has none). */
+    [[nodiscard]] static ProgressionRank progression_of(const SkillSet& skills, std::uint32_t progressionId);
+
     /** Stage 1.8d: @return The standing of a territory of a skill set: its rank and its points in the rank. */
     [[nodiscard]] static ProgressionRank standing(const SkillSet& skills, std::uint16_t territory);
     /** A command (stage 3.7c): sets a balance to `amount` (0 to `cap`). */

@@ -212,6 +212,9 @@ constexpr NamedCommand kCommands[] = {
     // Stage QG1: the territory standing of the character (the rules of a game reward) and a card choice (the rules of the message 4040).
     {"give_standing", commands::give_standing},
     {"choose_territory_card", commands::choose_territory_card},
+    // Stage QG7: the faction of the character and the rank and the points of its reputation and tokens.
+    {"set_faction", commands::set_faction},
+    {"set_faction_progress", commands::set_faction_progress},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */

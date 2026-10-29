@@ -72,6 +72,8 @@ inline constexpr std::uint32_t kTypeSeasonsTrackedStatState = 5606; // MB::Seaso
 inline constexpr std::uint32_t kTypeEncounterManagerState = 6786; // the EncounterManager component state (stage QG5c2; constructor 0x26E6700)
 inline constexpr std::uint32_t kTypeEncounterStageState = 2133;   // the Encounter component state (stage QG5c2; constructor 0x26E58D0)
 inline constexpr std::uint32_t kTypeVariationState = 14;          // MB::VariationComponentReplicatedState (stage QG5c2; constructor 0x42C5E80)
+inline constexpr std::uint32_t kTypeFactionState = 3152;          // MB::FactionComponentReplicatedState (stage QG7; constructor 0x30A7910)
+inline constexpr std::uint32_t kTypeSocialState = 4176;           // MB::SocialReplicatedState (stage QG7; constructor 0x3ED7110)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -130,6 +132,10 @@ inline constexpr std::uint32_t kCraftingSlot = 63;
  */
 inline constexpr std::uint32_t kObjectivesSlot = 22;
 inline constexpr std::uint32_t kSeasonsSlot = 73;
+/** Stage QG7: the component Faction of the entity Social of the player slice and of the remote player slice (research factions.md 1.1). */
+inline constexpr std::uint32_t kFactionSlot = 49;
+/** Stage QG7: the component JavSocial of the entity Social of the player slice (research social.md: slot 55). */
+inline constexpr std::uint32_t kSocialSlot = 55;
 
 enum class View {
     owner,
@@ -240,6 +246,13 @@ struct StateCodec {
 [[nodiscard]] std::uint32_t slot_of(const StateCodec& codec, const world::Entity& entity);
 
 [[nodiscard]] hub::Bytes encode_metadata_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * Stage QG7: @return The Faction state of a character (states/faction_state.cpp, type 3152, slot 49): the owner gets the time and the count
+ *         of the last change and the faction, an observer the faction (the public group).
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_faction_state(const world::Entity& entity, View view, const PartsRequest& request);
+/** Stage QG7: @return The empty Social state of the owner (states/social_state.cpp, type 4176, slot 55): the friend list of the client. */
+[[nodiscard]] hub::Bytes encode_social_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /**
  * @return The Projectile state of a projectile entity (states/projectile_state.cpp, type 16, stage 3.4f-A): for a session with no record
  *         the launch (and the collision when the flight ended), for a session that has the launch the collision at the end.

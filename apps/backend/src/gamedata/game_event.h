@@ -52,12 +52,19 @@ struct QuestGameEvent {
      */
     std::string progression;
     std::uint64_t progressionAmount{0};
+    /**
+     * Stage QG7: FactionReputation and FactionTokens (the event loader 0x31E70B0: row +0x74 and +0x78): the reputation and the tokens of
+     * the faction of the character (the grant 0x31F5400: no faction, no reward). A whole number of 0 to 1e9; another text stays unpaid.
+     */
+    std::uint64_t factionReputation{0};
+    std::uint64_t factionTokens{0};
     /** AchievementId: an achievement of the event. */
     std::string achievement;
     /** WhisperId or WhisperID: the whisper of the event (166 of 170 TaskTriggerGameEvent rows name an event with one). */
     std::string whisper;
     /**
-     * The rewards of the event that the backend cannot pay yet (stage 1.8d and later: FactionReputation, FactionTokens, a categorical
+     * The rewards of the event that the backend cannot pay yet (stage 1.8d and later; stage QG7 pays FactionReputation and FactionTokens: a
+     * text that is not a whole number stays here; a categorical
      * progression reward with no id or with an amount that is not a whole number of 0 to 1e9, the other currencies, an entitlement, a status effect, a TerritoryStanding, a GearScoreRange, or a CurrencyReward that is
      * not a whole number, a negative AzothReward, a loot limit of LootTags or LootLimitId): "COLUMN VALUE" for each cell with a value that
      * is not 0.

@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 30> codecs{{
+    static constexpr std::array<StateCodec, 32> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -70,6 +70,12 @@ std::span<const StateCodec> player_codecs() {
         // sorts by slot): live check L2 shows that the task change and a bit of the same change work in that order.
         {world::ComponentKey::seasons, kSeasonsSlot, kTypeSeasonsTrackedStatState, encode_seasons_state, nullptr, true, nullptr, nullptr, true},
         {world::ComponentKey::objectives, kObjectivesSlot, kTypeObjectivesState, encode_objectives_state, nullptr, true, nullptr, nullptr, true},
+        // The faction (stage QG7): the owner gets its time and count of the last change, each observer the faction (the remote player
+        // slice has the component at the same slot). No fragment in the first record of a character with no faction.
+        {world::ComponentKey::faction, kFactionSlot, kTypeFactionState, nullptr, encode_faction_state},
+        // The empty Social state (stage QG7): owner only, after the first 2709 (the friend list of the client: the faction poster of a
+        // conversation reads it).
+        {world::ComponentKey::social, kSocialSlot, kTypeSocialState, encode_social_state, nullptr, true, nullptr, nullptr, true},
     }};
     return codecs;
 }

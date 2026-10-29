@@ -311,6 +311,7 @@ bool QuestData::load_text(const std::string& text) {
             objective.experienceReward = static_cast<std::uint64_t>(std::min(*experience, 1e12));
         }
         objective.progressionReward = trimmed(cell(cells, "ProgressionReward"));
+        objective.resetOnFactionChange = flag(cell(cells, "ShouldResetOnFactionChange"));
         objective.objectiveReward = trimmed(cell(cells, "ObjectiveReward"));
         // Stage 1.8d: the availability and the repeat (loader 0x445CA30; research quests-18d rules).
         if (const std::optional<double> level = number(cell(cells, "RequiredLevel")); level && *level > 0.0) {

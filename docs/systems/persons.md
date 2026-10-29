@@ -135,11 +135,12 @@ the stage (with the cause), [review] a finding of the code review of stage 2.5c 
   - RequiredFaction [0x37AF200, 0x37AB5B4, 0x37AB898]: the value of the text is Syndicate 1, Marauder 2, Covenant 3, Any 4 (also the
     names Faction1 to Faction3), and 0 for each other text (None, a name with `!`, a name that the client does not know: the data has
     "Maruaders"). For a state, 0 and 4 are no rule; for a topic, 0 is no rule and 4 needs a faction. A named faction must be the faction of
-    the character. The backend has no faction of a character (roadmap 4.5): a named faction does not pass, and Any does not pass for a
-    topic;
+    the character (stage QG7: `Entity::faction`, [Factions](factions.md)). A character with no faction does not pass a named faction,
+    and it does not pass Any for a topic;
   - RequiredFactionCooldown (a state only; the topic loader 0x379F860 does not read it): NotInCooldown is no rule; InCooldownMultipleDays
-    needs more than 24 hours of the cooldown of a faction change, InCooldownSingleDay 1 to 24 hours [0x37AB5F9 to 0x37AB6B5]. The backend
-    has no faction change: the two cooldown values do not pass;
+    needs more than 24 whole hours of the wait of a faction change, InCooldownSingleDay 1 to 24 whole hours [0x37AB5F9 to 0x37AB6B5].
+    Stage QG7 reads the wait of the faction system (`Factions::wait_left`); a change of the faction selects the state again. Live: Astrid
+    selects `9826_RepAstrid_CooldownMultiple_b` for a character in the wait of 30 days;
   - RequiredActiveObjectiveId and RequiredActiveTaskId (a state only): a rule only when both have a value; one objective of the list
     (commas) has the task Active (1) or CompleteActive (3) [IsTaskActiveById 0x3A49520];
   - RequiredCompletedObjective (a state only): the character has the completion achievement of the objective (AchievementId of its row);
@@ -237,6 +238,9 @@ tools/world persons NAME [METERS]                  # the person conversation of 
 
 ## Traps
 
+- Stage QG7: the Talk prompt of a recruiter came only after a travel with a loading screen (`tools/world travel ... --screen on`) far
+  away and back; a world entry at the saved place near Astrid showed no prompt. The options of a conversation and the faction poster
+  need the Social state (slot 55): without it the client crashes ([Factions](factions.md), Traps).
 - Stage 1.8f: a made-up conversation state for a test needs the shape of the data: a state with no requirement must be the initial state
   (`"initial": true`), or the client rule skips it (case NC9). The fixtures of stages 2.5c and 1.8b had such states (`Pirate_Default`,
   `Inn_Default`, `Review_Talk`, the base states of NC8); they are initial states now, and each rule state of NC8 has RequiredLevel 1, so

@@ -57,6 +57,9 @@ bool read_numbers(const json& value, std::vector<std::uint32_t>& numbers) {
     return true;
 }
 
+/** Stage QG7: reads the member `factions` of the file into the data. @return False when it does not have the form of the tool. */
+bool read_factions(const json& member, ProgressionData& data);
+
 } // namespace
 
 bool valid_ranks(const ProgressionRow& row) {
@@ -468,12 +471,91 @@ bool ProgressionTables::load(const std::string& path) {
             data.achievements.push_back(std::move(achievement));
         }
     }
+    // Stage QG7: the factions (a new member of format 4; an older file has none).
+    if (document.contains("factions") && !read_factions(document["factions"], data)) {
+        return false;
+    }
     if (data.levels.empty() || data.levelCap == 0 || data.levelCap > data.levels.size() || !valid_ownership(data)) {
         return false;
     }
     set(std::move(data));
     return true;
 }
+
+namespace {
+
+bool read_factions(const json& member, ProgressionData& data) {
+    // {"change": [cooldownSeconds, costLevel, costMin, costMax, costIncrement], "rows": [[faction, reputation, reputationTable, token,
+    // tokenTable, maxRank, expansionMaxRank, achievement, legacyAchievement, [trials], [rankUps]], ...], "rankTables": {NAME:
+    // {"experience": [caps], "requiredLevel": [levels]}}}. One row for each faction 1 to 3; the caps of a table are larger than 0, do not go
+    // down, and have a row for each rank to the largest one; the two lists of a row have the same length.
+    if (!member.is_object() || !member.contains("change") || !member.contains("rows") || !member.contains("rankTables")) {
+        return false;
+    }
+    std::vector<std::uint32_t> change;
+    if (!read_numbers(member["change"], change) || change.size() != 5 || change[0] == 0) {
+        return false;
+    }
+    data.factionChange = FactionChange{change[0], change[1], change[2], change[3], change[4]};
+    const json& tables = member["rankTables"];
+    const json& rows = member["rows"];
+    if (!tables.is_object() || !rows.is_array() || rows.size() != kFactionCount) {
+        return false;
+    }
+    const auto caps_of = [&](const json& name, std::vector<std::uint32_t>& caps, std::vector<std::uint32_t>* levels) {
+        if (!name.is_string() || !tables.contains(name.get<std::string>())) {
+            return false;
+        }
+        const json& table = tables[name.get<std::string>()];
+        if (!table.is_object() || !table.contains("experience") || !read_numbers(table["experience"], caps) || caps.empty()) {
+            return false;
+        }
+        for (std::size_t rank = 0; rank < caps.size(); ++rank) {
+            if (caps[rank] == 0 || (rank != 0 && caps[rank] < caps[rank - 1])) {
+                return false;
+            }
+        }
+        return levels == nullptr
+               || (table.contains("requiredLevel") && read_numbers(table["requiredLevel"], *levels) && levels->size() == caps.size());
+    };
+    const auto texts_of = [](const json& value, std::vector<std::string>& texts) {
+        if (!value.is_array()) {
+            return false;
+        }
+        for (const json& entry : value) {
+            if (!entry.is_string()) {
+                return false;
+            }
+            texts.push_back(entry.get<std::string>());
+        }
+        return true;
+    };
+    for (const json& row : rows) {
+        FactionRow faction;
+        std::uint32_t number = 0;
+        if (!row.is_array() || row.size() != 11 || !read_number(row[0], number) || number != data.factions.size() + 1 || !row[1].is_string()
+            || !row[3].is_string() || !read_number(row[5], faction.maxRank) || !read_number(row[6], faction.expansionMaxRank)
+            || !row[7].is_string() || !row[8].is_string() || !caps_of(row[2], faction.reputationCaps, &faction.requiredLevels)
+            || !caps_of(row[4], faction.tokenCaps, nullptr) || !texts_of(row[9], faction.trials) || !texts_of(row[10], faction.rankUps)
+            || faction.trials.size() != faction.rankUps.size()) {
+            return false;
+        }
+        faction.faction = static_cast<std::uint8_t>(number);
+        faction.reputation = row[1].get<std::string>();
+        faction.token = row[3].get<std::string>();
+        faction.achievement = row[7].get<std::string>();
+        faction.legacyAchievement = row[8].get<std::string>();
+        const std::uint32_t largest = std::max(faction.maxRank, faction.expansionMaxRank);
+        if (faction.reputation.empty() || faction.token.empty() || largest > kLargestRank || faction.reputationCaps.size() <= largest
+            || faction.tokenCaps.size() <= largest) {
+            return false;
+        }
+        data.factions.push_back(std::move(faction));
+    }
+    return true;
+}
+
+} // namespace
 
 void ProgressionTables::set(ProgressionData data) {
     m_data = std::move(data);
@@ -510,6 +592,14 @@ void ProgressionTables::build_keys() {
         if (row.poolId != 0) {
             m_standingPoolKeys.emplace(row.poolId, position);
         }
+    }
+    m_factionKeys.clear();
+    for (std::size_t position = 0; position < m_data.factions.size(); ++position) {
+        FactionRow& row = m_data.factions[position];
+        row.reputationId = progression_id(row.reputation);
+        row.tokenId = progression_id(row.token);
+        m_factionKeys.emplace(row.reputationId, std::make_pair(position, false));
+        m_factionKeys.emplace(row.tokenId, std::make_pair(position, true));
     }
     m_cardKeys.clear();
     for (std::size_t position = 0; position < m_data.territoryCards.size(); ++position) {
@@ -637,6 +727,21 @@ const TerritoryCard* ProgressionTables::territory_card(TerritoryBonus kind) cons
 
 const ProgressionRow* ProgressionTables::progression(std::string_view id) const {
     return progression(progression_id(id));
+}
+
+const FactionRow* ProgressionTables::faction(std::uint8_t number) const {
+    return number >= 1 && number <= m_data.factions.size() ? &m_data.factions[number - 1U] : nullptr;
+}
+
+const FactionRow* ProgressionTables::faction_of_progression(std::uint32_t wireId, bool* token) const {
+    const auto found = m_factionKeys.find(wireId);
+    if (found == m_factionKeys.end()) {
+        return nullptr;
+    }
+    if (token != nullptr) {
+        *token = found->second.second;
+    }
+    return &m_data.factions[found->second.first];
 }
 
 const AbilityNode* ProgressionTables::node(std::uint32_t wireId) const {

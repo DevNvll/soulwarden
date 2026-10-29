@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -313,6 +314,10 @@ public:
      * removes an entry whose body is gone (kBodyCheck), and a new creature has a new entity id.
      */
     void body_removed(EntityId creature);
+    /**
+     * Code review of stage QG5c5, finding QG5C5R-R5: the world removed a server child (an encounter start object): its completion claim goes.
+     */
+    void object_removed(EntityId object);
 
     /** @return The work and the nodes near a character (a command). */
     [[nodiscard]] GatheringView view(const std::string& characterId, float radius);
@@ -414,6 +419,12 @@ private:
     const gamedata::GatheringData* m_data;
     std::unique_ptr<InteractionHandler> m_handler;
     std::unordered_map<std::string, GatherNode> m_nodes;
+    /**
+     * Code review of stage QG5c5, finding QG5C5R-R5: the encounter start objects with an ordinary row (not a quest row) that a gather completed
+     * (after its commit): a second completion of the same object (a gather that ends in the same tick, before the encounter removes the
+     * object) gets no reward. The claim goes with the object (object_removed).
+     */
+    std::set<EntityId> m_claimedObjects;
     std::unordered_map<std::string, GatherWork> m_work;
     /** The work that begin prepared, by character: started() makes it the work of the character (finding GA-R3). */
     std::unordered_map<std::string, GatherWork> m_pending;

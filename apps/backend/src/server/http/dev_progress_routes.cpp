@@ -49,6 +49,12 @@
 //                                                         the standings, the tokens, and the cards
 //   POST /v1/dev/progress/card?character=ID&territory=N&card=ID
 //                                                         stage QG1: one card choice with the rules of the message 4040
+//   POST /v1/dev/progress/faction?character=ID&faction=NAME[&changed=now|clear|NS][&changes=N]
+//                                                         stage QG7: set the faction of a character (no check of the data
+//                                                         path, the wait, or the cost); GET /v1/dev/progress has the
+//                                                         faction, the wait, and the balances
+//   POST /v1/dev/progress/faction-progress?character=ID&faction=NAME&kind=reputation|tokens&rank=N&points=N
+//                                                         stage QG7: the rank and the points of a faction progression
 //   GET  /v1/dev/presets                                  the build presets (stage B0) with the check of the start
 //   POST /v1/dev/presets/apply?character=ID&preset=NAME[&variant=NAME]
 //                                                         the whole build of a preset (the command apply_preset of the
@@ -144,6 +150,9 @@ void register_dev_progress_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/progress/bar", "dev.progress_bar", command_route(services, commands::set_ability_bar));
     router.add("POST", "", "/v1/dev/progress/standing", "dev.progress_standing", command_route(services, commands::give_standing));
     router.add("POST", "", "/v1/dev/progress/card", "dev.progress_card", command_route(services, commands::choose_territory_card));
+    router.add("POST", "", "/v1/dev/progress/faction", "dev.progress_faction", command_route(services, commands::set_faction));
+    router.add("POST", "", "/v1/dev/progress/faction-progress", "dev.progress_faction_progress",
+               command_route(services, commands::set_faction_progress));
     router.add("GET", "", "/v1/dev/presets", "dev.presets", [&services](const RouteContext& context) {
         if (!context.request.host.empty()) {
             return message(403, "forbidden");

@@ -45,6 +45,12 @@ struct SupportProfile {
     std::uint32_t level{1};
     /** Stage 1.8f (finding QR8E-R5): the items at the start (lower case): the start items of the creation of a new character. */
     std::vector<std::string> items;
+    /**
+     * Stage QG7: the faction that the history joins (1 Syndicate, 2 Marauder, 3 Covenant): the TaskChooseFaction of a recruitment of that
+     * faction completes, the one of an other faction waits (the decline branch can end its recruitment). 0: the history joins the faction of
+     * the first recruitment that it completes (the data order of the rounds).
+     */
+    std::uint8_t faction{0};
 };
 
 class QuestSupport {

@@ -204,6 +204,18 @@ struct CraftCooldownRow {
 };
 
 /**
+ * Stage QG7: the faction of a character (table `character_factions`, schema 18; docs/systems/factions.md): the faction (the client enum: 0
+ * none, 1 Syndicate, 2 Marauder, 3 Covenant), the time of the last change (lastFactionChangeTimepoint: Unix nanoseconds of the wall clock of
+ * the world; 0: no change that starts the wait), and the number of the changes (factionChangeCount). A character with no row has no
+ * faction. The reputation and the tokens are rows of `progressions` (the skill system).
+ */
+struct CharacterFactionRow {
+    std::uint8_t faction{0};
+    std::uint64_t changedNs{0};
+    std::uint16_t changes{0};
+};
+
+/**
  * One task of a saved quest (stage 1.8a, table `character_quest_tasks`; docs/systems/quests.md): the index of the task in the tree of the
  * objective, its id and CRC-32 (a check against the game data at the load), its progress, its state, and the start of a timer (Unix
  * nanoseconds; 0: none).
@@ -576,6 +588,11 @@ public:
     /** Removes achievements of a character (stage 1.8a: the lock of a quest task). A row that is not there changes nothing. */
     [[nodiscard]] bool remove_achievements(const std::string& characterId, const std::vector<std::string>& ids,
                                            std::vector<std::string>* removed = nullptr);
+
+    /** Stage QG7: @return The faction row of a character (a character with no row: faction 0, no change). */
+    [[nodiscard]] CharacterFactionRow faction(const std::string& characterId);
+    /** Stage QG7: writes (inserts or replaces) the faction row of a character. In a batch: a savepoint of its transaction. */
+    [[nodiscard]] bool write_faction(const std::string& characterId, const CharacterFactionRow& row);
 
     [[nodiscard]] std::vector<CraftCooldownRow> list_craft_cooldowns(const std::string& characterId);
     /** Writes (inserts or replaces) the cooldown of a recipe of a character. In a batch: a savepoint of its transaction. */

@@ -101,6 +101,16 @@ Usage:
                                                 experience of the ranks). A harness command (SOULWARDEN_HARNESS=1)
   tools/world card CHARACTER TERRITORY CARD     stage QG1: one card choice with the rules of the message 4040 (CARD: the id text of
                                                 a card, TB_GainStanding). A harness command
+  tools/world faction CHARACTER [NAME] [--changed now|clear|NS] [--changes N]
+                                                stage QG7: the faction of a character (the time and the count of the last change,
+                                                the wait that is left, the cost of a change, the reputation and the tokens of each
+                                                faction); with NAME (none, syndicate, marauder, covenant): set the faction with no
+                                                check of the quests, the wait, or the cost (--changed: the time of the last change:
+                                                now, clear, or Unix nanoseconds; --changes: the count of the changes)
+  tools/world reputation CHARACTER FACTION RANK POINTS
+  tools/world tokens CHARACTER FACTION RANK POINTS
+                                                stage QG7: the rank and the points of the reputation or the tokens of a faction
+                                                (POINTS: at most the cap of the rank)
   tools/world craft stop CHARACTER              the craft batch of a character stops (the completed jobs stay)
   tools/world craft cooldown CHARACTER RECIPE USED SECONDS
                                                 DEVELOPMENT AID (stage 3.7b): the cooldown window of a recipe: USED crafts, SECONDS
@@ -566,6 +576,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
     elif isinstance(document, dict) and "weapons" in document:
         if filter_text == "standings":
             show_standings(document)
+        elif filter_text == "faction":
+            show_faction(document)
         else:
             show_progress(document)
             show_standings(document)
@@ -1323,6 +1335,23 @@ def show_standings(document: dict) -> None:
               f"{entry['tokens']} free token(s); {cards}")
 
 
+def show_faction(document: dict) -> None:
+    """Stage QG7: the faction of a character, the wait and the cost of a change, and the reputation and the tokens of each faction."""
+    faction = document.get("faction") or {}
+    if not faction:
+        print("no faction data of the character")
+        return
+    wait = faction.get("waitSeconds", 0)
+    print(f"faction {faction['name']} ({faction['faction']}); last change {faction['lastChangeNs']} ns, {faction['changes']} change(s); "
+          f"wait {wait // 86400} d {wait % 86400 // 3600} h; cost of a change {faction['changeCost']} Azoth")
+    if not document.get("tables"):
+        print("the backend has no progression tables: no reputation and no tokens")
+    for entry in faction.get("balances", []):
+        reputation, tokens = entry["reputation"], entry["tokens"]
+        print(f"  {entry['faction']:<10} reputation rank {reputation['rank']}, {reputation['points']} of {reputation['cap']}; "
+              f"tokens rank {tokens['rank']}, {tokens['points']} of {tokens['cap']}")
+
+
 def show_ownership(document: dict) -> None:
     """The ownership of the DLC of a character (stage 1.1b): the expansion with its limits, the entitlements, the achievements."""
     place = "in the world" if document["inWorld"] else "not in the world"
@@ -1925,6 +1954,35 @@ def main() -> None:
             fail("CARD is the id text of a territory card (TB_GainStanding)")
         request(data_dir, "POST", f"/v1/dev/progress/card?character={character_id(data_dir, arguments[1])}"
                                   f"&territory={whole(arguments[2], 'the territory')}&card={arguments[3]}")
+    elif command == "faction" and len(arguments) >= 2:
+        words = list(arguments)
+        extra = ""
+        for flag_name, key in (("--changed", "changed"), ("--changes", "changes")):
+            if flag_name in words:
+                at = words.index(flag_name)
+                if at + 1 >= len(words):
+                    fail(f"{flag_name} needs a value")
+                value = words[at + 1]
+                if key == "changed" and value not in ("now", "clear") and not value.isdigit():
+                    fail("--changed is now, clear, or the Unix nanoseconds of the last change")
+                if key == "changes":
+                    value = str(whole(value, "the count of the changes"))
+                extra += f"&{key}={value}"
+                del words[at:at + 2]
+        if len(words) == 2 and not extra:
+            request(data_dir, "GET", f"/v1/dev/progress?character={character_id(data_dir, words[1])}", filter_text="faction")
+        elif len(words) == 3:
+            if not re.fullmatch(r"[A-Za-z0-9]+", words[2]):
+                fail("NAME is none, syndicate, marauder, covenant, or 0 to 3")
+            request(data_dir, "POST", f"/v1/dev/progress/faction?character={character_id(data_dir, words[1])}&faction={words[2]}{extra}")
+        else:
+            fail("tools/world faction CHARACTER [NAME] [--changed now|clear|NS] [--changes N]")
+    elif command in ("reputation", "tokens") and len(arguments) == 5:
+        if not re.fullmatch(r"[A-Za-z0-9]+", arguments[2]):
+            fail("FACTION is syndicate, marauder, or covenant")
+        request(data_dir, "POST", f"/v1/dev/progress/faction-progress?character={character_id(data_dir, arguments[1])}"
+                                  f"&faction={arguments[2]}&kind={command}&rank={whole(arguments[3], 'the rank')}"
+                                  f"&points={whole(arguments[4], 'the points')}")
     elif command == "azoth" and len(arguments) == 3:
         request(data_dir, "POST", f"/v1/dev/crafting/currency?character={character_id(data_dir, arguments[1])}"
                                   f"&amount={whole(arguments[2], 'the amount')}")

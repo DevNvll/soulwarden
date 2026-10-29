@@ -401,6 +401,10 @@ void older_schemas(const Options& options) {
                              && store.list_quest_awards(kCharacterA).size() == 1 && store.list_quest_awards(kCharacterA)[0].amount == 3
                              && store.write_quest(kCharacterA, state::QuestRow{0xF000000000000002ULL, "Test_Other", 8, 0, 0, 0, "", {}})
                              && store.delete_quest(kCharacterA, 0xF000000000000002ULL) && store.list_quests(kCharacterA).size() == 1;
+        // Schema version 18 (stage QG7): the faction row of a character (the delete of the character removes it).
+        const bool factioned = store.write_faction(kCharacterA, state::CharacterFactionRow{2, 1792619000000000000ULL, 3})
+                               && store.faction(kCharacterA).faction == 2 && store.faction(kCharacterA).changedNs == 1792619000000000000ULL
+                               && store.faction(kCharacterA).changes == 3;
         // Schema version 17 (stage 1.8d): the repeat rows of the quests.
         const bool repeated = store.write_quest_repeat(kCharacterA, state::QuestRepeatRow{"Test_Quest", 1, 100, 200})
                               && store.write_quest_repeat(kCharacterA, state::QuestRepeatRow{"Test_Quest", 2, 300, 400})
@@ -416,16 +420,16 @@ void older_schemas(const Options& options) {
                              && store.list_craft_cooldowns(kCharacterA).empty() && store.list_quests(kCharacterA).empty()
                              && store.list_quest_pins(kCharacterA).empty() && store.list_quest_grants(kCharacterA).empty()
                              && store.list_quest_undo(kCharacterA).empty() && store.list_quest_awards(kCharacterA).empty()
-                             && store.list_quest_repeats(kCharacterA).empty();
-        check(made && opened && schema_version(path) == 17 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
-                  && timed && gathered && cooled && quested && awarded && repeated && deleted,
+                             && store.list_quest_repeats(kCharacterA).empty() && store.faction(kCharacterA).faction == 0;
+        check(made && opened && schema_version(path) == 18 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
+                  && timed && gathered && cooled && quested && awarded && repeated && factioned && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 17: its character row and its item stay (the item with no perk), its persona has an account, "
+                  + " opens and gets version 18: its character row and its item stay (the item with no perk), its persona has an account, "
                     "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
                     "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, a loot "
                     "claim with a kept item (stage 3.5b.1), the part of a loot bag with a stored instance (stage 3.5b.2) and its fast end, the world time (stage 2.2), "
                     "the run clock and a depleted gathering node (stage 3.6a), the cooldown of a recipe (stage 3.7b), a quest with a full u64 "
-                    "instance, its pin, its grant, and its undo row (stage 1.8a), an award row and the delete of a quest (stage 1.8c), a repeat row (stage 1.8d), and the delete of a "
+                    "instance, its pin, its grant, and its undo row (stage 1.8a), an award row and the delete of a quest (stage 1.8c), a repeat row (stage 1.8d), a faction row (stage QG7), and the delete of a "
                     "character removes the rows of the character (the entitlement of the account stays)");
     }
 }

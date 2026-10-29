@@ -124,6 +124,19 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
  */
 [[nodiscard]] WorldCommand give_standing(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /**
+ * Stage QG7, set_faction: `faction` (none, syndicate, marauder, covenant, or 0 to 3), and optionally `changed` (now, clear, or the wall time
+ * of the last change in Unix nanoseconds) and `changes` (0 to 65535): the faction of the character with no check of the data path, the
+ * wait, or the cost (Factions::set; docs/systems/factions.md). The client of a character in the world gets the Faction state, and each
+ * observer the faction. A harness command: it refuses (403) with no SOULWARDEN_HARNESS=1 in the backend process.
+ */
+[[nodiscard]] WorldCommand set_faction(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * Stage QG7, set_faction_progress: `faction` (syndicate, marauder, covenant), `kind` (reputation or tokens), `rank` (0 to the largest
+ * rank), and `points` (at most the cap of the rank): the rank and the points of a faction progression (Skills::set_faction_progress). A
+ * harness command.
+ */
+[[nodiscard]] WorldCommand set_faction_progress(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
  * Stage QG1, choose_territory_card: `territory` and `card` (the id text of the card, TB_GainStanding): one card choice with the rules of
  * the client message 4040 (Skills::spend_territory_point). The reply has the level of the card and the free tokens.
  */
@@ -607,7 +620,9 @@ inline constexpr float kAdminEncounterRange = 200.0F;
 /**
  * @return The level, the attributes, the weapon masteries, and the trade skills of a character (world thread), or no value. Stage QG1:
  *         also "territory" (the territory at the position of a character in the world: World::territory_of) and "standings" (each
- *         territory standing: the rank, the points, the points of the rank, the free tokens, and each card with its level and bonus).
+ *         territory standing: the rank, the points, the points of the rank, the free tokens, and each card with its level and bonus); stage
+ *         QG7: "faction" (the faction, the time and the count of the last change, the wait, the cost, and the reputation and the tokens of
+ *         each faction).
  */
 [[nodiscard]] std::optional<nlohmann::json> progress_view(world::World& world, const std::string& character);
 

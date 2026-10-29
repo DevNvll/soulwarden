@@ -36,10 +36,11 @@ constexpr ComponentKey kAllComponents[] = {ComponentKey::metadata,    ComponentK
                                            ComponentKey::entitlements, ComponentKey::achievements};
 /**
  * The states that a new entity of a character also marks (code review of stage 3.3b-S1, finding F2): the statuses that the
- * character keeps across a new session and their speed table. The first record has them; their encoders give no fragment
- * for a character with no status. A full record again (touch_all) does not send them.
+ * character keeps across a new session and their speed table; stage QG7: the faction. The first record has them; their encoders give no
+ * fragment for a character with no status and no faction. A full record again (touch_all) does not send them.
  */
-constexpr ComponentKey kEnteredComponents[] = {ComponentKey::status, ComponentKey::statMultipliers, ComponentKey::stamina};
+constexpr ComponentKey kEnteredComponents[] = {ComponentKey::status, ComponentKey::statMultipliers, ComponentKey::stamina,
+                                                ComponentKey::faction, ComponentKey::social};
 /**
  * The component states of a spell entity (stage 3.3b-S2a; stage 3.3b-S2b: the place of a slice with no Spell component, the vitals
  * of a summon or a trap). A codec gives no fragment for a state that the slice of the spell does not have.
@@ -67,6 +68,7 @@ World::World(const WorldClock& clock,
       m_inventory(*this, store, options.itemCatalog),
       m_progress(*this, store, options.progressionTables),
       m_skills(*this, store, options.progressionTables),
+      m_factions(*this, store, options.progressionTables),
       m_ownership(*this, store, options.progressionTables),
       m_navigation(*this, options.navigationData, options.terrain, options.navigationThread),
       m_creatures(*this, options.creatureData),
@@ -265,6 +267,8 @@ Entity& World::make_entity(const state::Character& character) {
     m_inventory.load(entity);
     m_progress.load(entity);
     m_skills.load(entity);
+    // Stage QG7: the faction, before the quests (their gates read it).
+    m_factions.load(entity);
     m_abilities.entered(entity);
     // The statuses, the item cooldowns, the charge, and the values of the equipment (stages 1.3b and 3.3b-S1): the gear
     // values need the statuses, and the gear refresh gives the statuses of the items again.
@@ -795,6 +799,8 @@ Entity& World::spawn_object(const ObjectBody& body, const state::WorldPosition& 
 }
 
 void World::remove_object(EntityId id) {
+    // Code review of stage QG5c5, finding QG5C5R-R5: the completion claim of an encounter start object goes with it.
+    m_gathering.object_removed(id);
     const Entity* entity = find(id);
     if (entity != nullptr && entity->kind == EntityKind::object && entity->object.spawned) {
         remove_entity(id);

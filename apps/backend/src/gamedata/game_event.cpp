@@ -153,9 +153,21 @@ QuestGameEvent read_game_event(const std::string& key, const EventCells& cells) 
             event.unpaid.push_back("CategoricalProgressionReward " + text + (id.empty() ? std::string{} : " (" + id + ")"));
         }
     }
+    // Stage QG7: FactionReputation and FactionTokens go to the faction of the character (Quests::reward_join). A text that is not a whole
+    // number of 0 to 1e9 stays unpaid.
+    for (const auto& [column, target] : {std::pair<const char*, std::uint64_t*>{"FactionReputation", &event.factionReputation},
+                                         std::pair<const char*, std::uint64_t*>{"FactionTokens", &event.factionTokens}}) {
+        if (const std::string text = trimmed(cell(cells, column)); !text.empty()) {
+            const std::optional<double> value = whole_number(text);
+            if (value && *value >= 0.0 && std::floor(*value) == *value && *value <= 1e9) {
+                *target = static_cast<std::uint64_t>(*value);
+            } else {
+                event.unpaid.push_back(std::string(column) + " " + text);
+            }
+        }
+    }
     // The rewards with no owner in the backend yet (research quest-engine.md Q6; stage 1.8d and later).
-    for (const char* column : {"FactionReputation", "FactionTokens", "UmbralCurrency", "PvpXp", "PVPXP",
-                               "SeasonsXp", "AzothSalt", "CursedSilvers", "CursedCrowns"}) {
+    for (const char* column : {"UmbralCurrency", "PvpXp", "PVPXP", "SeasonsXp", "AzothSalt", "CursedSilvers", "CursedCrowns"}) {
         const std::string text = trimmed(cell(cells, column));
         const std::optional<double> value = number(text);
         if (!text.empty() && (!value || *value != 0.0)) {

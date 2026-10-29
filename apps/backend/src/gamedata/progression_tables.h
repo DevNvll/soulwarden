@@ -168,6 +168,53 @@ struct TerritoryCard {
  */
 [[nodiscard]] float card_bonus(const TerritoryCard& card, std::uint32_t level);
 
+/** Stage QG7: the factions of the client enum (registrar 0x30BDA90; the faction state, slot 49, type 3152). 0 is no faction. */
+inline constexpr std::uint8_t kNoFaction = 0;
+inline constexpr std::uint8_t kFactionCount = 3;
+
+/**
+ * Stage QG7: one faction (the member `factions` of the file; docs/systems/factions.md) [data: the categorical rows with ProgressionType
+ * FactionReputation and FactionCurrency, their rank tables, the faction table (FactionData), and the Progression Validation Achievement Data
+ * of playerbaseattributes.pbadb]. The reputation and the tokens are two categorical progressions of the character (slot 65): the points are a
+ * total (the screen shows them as they are), and the cap is the MaximumInfluence of the rank of the progression (AutoRankUp false,
+ * AllowOverflow false: no rank-up by points).
+ */
+struct FactionRow {
+    /** The number of the faction: 1 Syndicate, 2 Marauder, 3 Covenant. */
+    std::uint8_t faction{0};
+    /** The id text of the reputation progression ("Syndicate"; the id on the wire is its CRC-32), and of its token progression. */
+    std::string reputation;
+    std::uint32_t reputationId{0};
+    std::string token;
+    std::uint32_t tokenId{0};
+    /** Entry R: MaximumInfluence of the rank R of the reputation table (MerchantGuild) and RequiredLevel of that rank. */
+    std::vector<std::uint32_t> reputationCaps;
+    std::vector<std::uint32_t> requiredLevels;
+    /** Entry R: MaximumInfluence of the rank R of the token table. */
+    std::vector<std::uint32_t> tokenCaps;
+    /** MaxLevel and Expansion01MaxLevel of the reputation row (the token row has the same; the tool checks both against their tables). */
+    std::uint32_t maxRank{0};
+    std::uint32_t expansionMaxRank{0};
+    /** RequiredAchievementId and RequiredLegacyAchievementId of the faction table: the recruitment of the faction. */
+    std::string achievement;
+    std::string legacyAchievement;
+    /**
+     * <Name>RankupTrialAchievements and <Name>RankupObjectiveIds of the base attributes: two lists of the same length. Entry 0 of both is the
+     * recruitment; the rank-up objective K + 1 follows the trial achievement K (the ObjectiveReward of each trial row names it).
+     */
+    std::vector<std::string> trials;
+    std::vector<std::string> rankUps;
+};
+
+/** Stage QG7: the change rules of Faction Data of playerbaseattributes.pbadb (u32 members +0x80 to +0x90 of FactionData, 0x5C9BBB0). */
+struct FactionChange {
+    std::uint32_t cooldownSeconds{0};
+    std::uint32_t costLevel{0};
+    std::uint32_t costMin{0};
+    std::uint32_t costMax{0};
+    std::uint32_t costIncrement{0};
+};
+
 /** One row of the expansion table of the game (Expansions): the limits of a player who owns the expansion (stage 1.1b). */
 struct ExpansionRow {
     /** "None" (no expansion) or "Expansion2023" (Rise of the Angry Earth). */
@@ -287,6 +334,12 @@ struct ProgressionData {
     std::vector<StandingRow> standings;
     /** Stage QG1 (format 4): the cards of the territory pools. Empty in an older file: the card choice is refused. */
     std::vector<TerritoryCard> territoryCards;
+    /**
+     * Stage QG7 (a new member of format 4; an older file has none): the three factions, in the order of their numbers, and the change rules.
+     * Empty: the faction system refuses a request of a client and each reputation or token rule (docs/systems/factions.md).
+     */
+    std::vector<FactionRow> factions;
+    FactionChange factionChange;
 };
 
 class ProgressionTables {
@@ -400,6 +453,24 @@ public:
         return m_data.territoryCards;
     }
 
+    /** Stage QG7: @return The faction with this number (1 to 3), or null (no faction data, or 0). */
+    [[nodiscard]] const FactionRow* faction(std::uint8_t number) const;
+    /**
+     * Stage QG7: @return The faction whose reputation or token progression has this id on the wire, or null. `token` (when not null) is set
+     *         to true for the token progression.
+     */
+    [[nodiscard]] const FactionRow* faction_of_progression(std::uint32_t wireId, bool* token = nullptr) const;
+    [[nodiscard]] std::span<const FactionRow> factions() const {
+        return m_data.factions;
+    }
+    [[nodiscard]] const FactionChange& faction_change() const {
+        return m_data.factionChange;
+    }
+    /** Stage QG7: @return The largest rank of a faction progression of a player: Expansion01MaxLevel with the owned expansion (0x3CB38E0). */
+    [[nodiscard]] std::uint32_t faction_rank_cap(const FactionRow& row) const {
+        return owned_expansion() != nullptr && row.expansionMaxRank != 0 ? row.expansionMaxRank : row.maxRank;
+    }
+
     /** @return The node with this id on the wire, or null. */
     [[nodiscard]] const AbilityNode* node(std::uint32_t wireId) const;
     [[nodiscard]] const AbilityNode* node(std::string_view id) const;
@@ -416,6 +487,8 @@ private:
     std::unordered_map<std::uint32_t, std::size_t> m_standingKeys;
     std::unordered_map<std::uint32_t, std::size_t> m_standingPoolKeys;
     std::unordered_map<std::uint32_t, std::size_t> m_cardKeys;
+    /** Stage QG7: the id of a reputation or token progression to its faction (the index) and true for the token progression. */
+    std::unordered_map<std::uint32_t, std::pair<std::size_t, bool>> m_factionKeys;
     /** The index of the owned expansion in m_data.expansions; no row: the size of the list or more. */
     std::size_t m_owned{static_cast<std::size_t>(-1)};
     std::unordered_map<std::uint32_t, std::size_t> m_progressionKeys;

@@ -98,9 +98,6 @@ std::string hex(std::uint64_t value) {
     return text;
 }
 
-/** The faction of a character with no faction (the client enum: 0 unaligned, 1 Syndicate, 2 Marauder, 3 Covenant; roadmap 4.5 adds it). */
-constexpr std::uint8_t kNoFaction = 0;
-
 /** @return The faction test of the eligibility (0x3A4C166): bit 0 of the mask bypasses it, else the bit of the faction. */
 bool faction_allowed(std::uint8_t mask, std::uint8_t faction) {
     return (mask & 0x1U) != 0 || ((mask >> faction) & 0x1U) != 0;
@@ -500,6 +497,14 @@ struct Quests::Plan {
     std::uint64_t azothCap{0};
     /** Stage QG5b: the categorical progression experience of the plan (a trade skill id of the tables and the experience). */
     std::vector<std::pair<std::string, std::uint64_t>> progressions;
+    /** Stage QG7: the faction rewards of the plan: the ranks of ProgressionReward (with their points) and the points of the events. */
+    struct FactionRank {
+        std::uint32_t progression{0};
+        std::uint32_t rank{0};
+        std::uint64_t points{0};
+    };
+    std::vector<FactionRank> factionRanks;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> factionPoints;
     /** Stage 1.8d: the repeat rows that the plan writes (a completion of a repeatable objective with a schedule) and removes (a reset). */
     std::vector<state::QuestRepeatRow> repeatWrites;
     std::vector<std::string> repeatDeletes;
@@ -662,7 +667,7 @@ struct Quests::Plan {
         return !task.enforceLocation || task.poiTags.empty() || in_place(task);
     }
     /** @return The value of a predicate task now (its progress), or no value for a task that is not a predicate. */
-    std::optional<std::uint32_t> predicate(const QuestTask& task, const gamedata::QuestNode& node) const {
+    std::optional<std::uint32_t> predicate(const QuestTask& task, const gamedata::QuestNode& node, const QuestObjective* objective) const {
         // EnforceLocationRequirement (0x825DAD0, 0x825E860): a possession or an equip task counts only in its place (code review of stage
         // 1.8c, finding QR8C-R6; the index has these tasks under "place" too).
         if (gamedata::is_possession(task.type)) {
@@ -686,13 +691,25 @@ struct Quests::Plan {
         if (task.type == task_type::kHaveLevel) {
             // Stage QG2a (research quest-gaps.md section 8): with a blank ItemName the level of the character (activation 0x3B04F40); the
             // callback 0x3B073A0 compares the level index with TargetQty - 1 (unsigned): satisfied at the level of the screen TargetQty or
-            // more (a TargetQty of 0 never). With an ItemName the points or the rank of a categorical progression (a faction): no owner in
-            // the backend (roadmap 4.5), the task waits.
-            if (!trimmed_text(task.itemName).empty()) {
-                return std::nullopt;
-            }
+            // more (a TargetQty of 0 never). Stage QG7: with an ItemName the categorical progression of that id (the CRC-32 of the lower-case
+            // text; the faction reputations Covenant, Marauder, Syndicate in the data): its points with ShouldCheckPoints (callback
+            // 0x3B07100), else its rank (0x3B07140); satisfied at TargetQty or more. A progression that the character does not have has
+            // rank 0 and 0 points (the getters 0x3CB6330, 0x3CB5E60).
             const std::int64_t target = task.targetQty.value_or(0);
+            if (const std::string id = trimmed_text(task.itemName); !id.empty()) {
+                const ProgressionRank entry = Skills::progression_of(entity.skills, gamedata::progression_id(id));
+                const std::uint64_t value = task.checkPoints ? entry.points : entry.rank;
+                return target >= 0 && value >= static_cast<std::uint64_t>(target) ? node.target : 0U;
+            }
             return target >= 1 && static_cast<std::int64_t>(entity.progression.level) >= target ? node.target : 0U;
+        }
+        if (task.type == task_type::kChooseFaction) {
+            // Stage QG7: TaskChooseFaction of a recruitment (docs/systems/factions.md): satisfied while the character has the faction of the
+            // recruitment of its objective (the faction whose RequiredAchievementId is the completion achievement of the objective), or any
+            // faction for an objective of no recruitment.
+            const std::uint8_t wanted = objective != nullptr ? owner.m_world.factions().recruitment_faction(objective->achievement) : 0;
+            const std::uint8_t have = entity.faction.faction;
+            return have != 0 && (wanted == 0 || wanted == have) ? node.target : 0U;
         }
         if (task.type == task_type::kTriggerArea) {
             // Stage 1.8b: the accepted position of the character in a volume of the tag of the task (the client sends no message for these
@@ -891,7 +908,7 @@ struct Quests::Plan {
             break;
         }
         // A predicate: its value at the activation (a possession, an equip, a place, an achievement: 0x825EB30, 0x825EBF0, 0x825F310).
-        if (const std::optional<std::uint32_t> value = predicate(task, node)) {
+        if (const std::optional<std::uint32_t> value = predicate(task, node, objective_of(quest))) {
             set_progress(quest, index, *value);
             return;
         }
@@ -1402,6 +1419,11 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
             if (task.type == task_type::kHaveLevel && trimmed_text(task.itemName).empty()) {
                 subscriptions.add("level", entry);
             }
+            // Stage QG7: TaskHaveLevel of a categorical progression and TaskChooseFaction look again at a change of the categorical
+            // progressions or of the faction of the character.
+            if ((task.type == task_type::kHaveLevel && !trimmed_text(task.itemName).empty()) || task.type == task_type::kChooseFaction) {
+                subscriptions.add("prog", entry);
+            }
             if (!open) {
                 continue; // The counters and the drops need an Active task.
             }
@@ -1519,8 +1541,31 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     }
     // The territory standing (stage 1.8d): one plan of the skill system (the owner of the categorical progressions).
     std::optional<Skills::Plan> standing;
-    if (!plan.standing.empty() || plan.azoth > 0 || !plan.progressions.empty()) {
+    if (!plan.standing.empty() || plan.azoth > 0 || !plan.progressions.empty() || !plan.factionRanks.empty() || !plan.factionPoints.empty()) {
         standing = m_world.skills().plan_none(entity.characterId);
+        // Stage QG7: the faction rewards (docs/systems/factions.md): the rank of ProgressionReward (a lower rank stays), its points, then
+        // the points of the events, each with the cap of the rank of its progression.
+        for (const Plan::FactionRank& reward : plan.factionRanks) {
+            const ProgressionRank have = Skills::progression_of(standing->skills, reward.progression);
+            ProgressError error = have.rank >= reward.rank ? ProgressError::none
+                                                           : m_world.skills().set_faction_rank(*standing, reward.progression, reward.rank);
+            if (error == ProgressError::none && reward.points > 0) {
+                error = m_world.skills().add_faction_points(*standing, reward.progression, static_cast<std::int64_t>(reward.points));
+            }
+            if (error != ProgressError::none) {
+                log::write("quests: the faction rank %u of %08X for character %s cannot be given (%s): no change", reward.rank, reward.progression,
+                           entity.characterId.c_str(), progress_error_text(error));
+                return QuestError::cannotPay;
+            }
+        }
+        for (const auto& [id, amount] : plan.factionPoints) {
+            if (const ProgressError error = m_world.skills().add_faction_points(*standing, id, static_cast<std::int64_t>(amount));
+                error != ProgressError::none) {
+                log::write("quests: the faction points %llu of %08X for character %s cannot be given (%s): no change",
+                           static_cast<unsigned long long>(amount), id, entity.characterId.c_str(), progress_error_text(error));
+                return QuestError::cannotPay;
+            }
+        }
         // Stage 1.8e: AzothReward goes into the same plan (the Azoth balance is a categorical progression too); a gain stops at the cap.
         if (plan.azoth > 0) {
             if (const ProgressError error = m_world.skills().add_balance(*standing, kAzothCurrency, static_cast<std::int64_t>(plan.azoth), plan.azothCap);
@@ -1726,6 +1771,9 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     m_world.ownership().quest_achievements(entity, unlocks, locks);
     if (!unlocks.empty() || !locks.empty()) {
         m_pushDirty.insert(entity.id); // Stage QG2a: the bits of a quest change (a completion, an action, an undo) are a change of the push.
+        if (entity.faction.faction != 0) {
+            m_rankUpsDirty.insert(entity.id); // Stage QG7: the trial achievements of the validation lists.
+        }
     }
     m_world.touch(entity.id, ComponentKey::objectives);
     // The index before the items (code review of stage 1.8c, finding QR8C-R14): the item change of this plan marks the possession tasks
@@ -1749,6 +1797,20 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     }
     for (const std::string& note : plan.notes) {
         log::write("quests: character %s: %s", entity.characterId.c_str(), note.c_str());
+    }
+    // Stage QG7: a self completing row whose root is done completes at the next tick (its hand-in, with its rewards); a completion of a
+    // character with a faction can make its next rank-up row due (the validation lists).
+    for (const std::uint64_t instance : plan.changed) {
+        for (const QuestInstance& quest : entity.quests.active) {
+            if (quest.instance != instance) {
+                continue;
+            }
+            const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
+            if (objective != nullptr && self_completes(*objective) && ready(quest)) {
+                m_selfHandIns[entity.id].insert(instance);
+            }
+            break;
+        }
     }
     return QuestError::none;
 }
@@ -1892,8 +1954,20 @@ void Quests::entered(Entity& entity) {
         m_world.touch(entity.id, ComponentKey::objectives);
     }
     run_pending(entity);
-    // The items, the place, and the bits can have changed while the character was away (a template, the DLC, a command).
-    refresh(entity, true, true, true, true, "entry");
+    // The items, the place, and the bits can have changed while the character was away (a template, the DLC, a command). Stage QG7: and
+    // the categorical progressions and the faction (a command).
+    refresh(entity, true, true, true, true, "entry", true);
+    // Stage QG7: the next rank-up row of the faction (the validation lists of the base attributes; docs/systems/factions.md), and a self
+    // completing row whose root is done (a ready row of an earlier run).
+    if (entity.faction.faction != 0) {
+        m_rankUpsDirty.insert(entity.id);
+    }
+    for (const QuestInstance& quest : entity.quests.active) {
+        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
+        if (objective != nullptr && self_completes(*objective) && ready(quest)) {
+            m_selfHandIns[entity.id].insert(quest.instance);
+        }
+    }
     // Stage QG2a: the push of PushObjectiveOnReqMet when the saved state of the character is ready (a project rule: the schedule of the
     // original server is not known).
     push_changed(entity, true, "entry");
@@ -1907,6 +1981,9 @@ void Quests::left(const Entity& entity) {
     m_placesDirty.erase(entity.id);
     m_levelsDirty.erase(entity.id);
     m_pushDirty.erase(entity.id);
+    m_progressionsDirty.erase(entity.id);
+    m_rankUpsDirty.erase(entity.id);
+    m_selfHandIns.erase(entity.id);
     m_pushWatch.erase(entity.id);
     m_equips.erase(entity.id);
 }
@@ -2034,8 +2111,12 @@ void Quests::achievements_changed(Entity& entity) {
     if (data() == nullptr || !entity.quests.loaded) {
         return;
     }
-    // Stage QG2a: a change of the bits is a change of the push rows (the next tick looks at the rows of the changed bits).
+    // Stage QG2a: a change of the bits is a change of the push rows (the next tick looks at the rows of the changed bits). Stage QG7: and of
+    // the next rank-up row of the faction of the character (the trial achievements of the validation lists).
     m_pushDirty.insert(entity.id);
+    if (entity.faction.faction != 0) {
+        m_rankUpsDirty.insert(entity.id);
+    }
     if (entity.quests.active.empty()) {
         return;
     }
@@ -2043,7 +2124,7 @@ void Quests::achievements_changed(Entity& entity) {
     refresh(entity, false, false, true, false, "achievement change");
 }
 
-void Quests::refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause) {
+void Quests::refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause, bool progressions) {
     if (data() == nullptr || !entity.quests.loaded) {
         return;
     }
@@ -2089,7 +2170,7 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
                 continue;
             }
             const QuestObjective* objective = plan.objective_of(*seen);
-            const std::optional<std::uint32_t> value = plan.predicate(*task, objective->nodes[entry.index]);
+            const std::optional<std::uint32_t> value = plan.predicate(*task, objective->nodes[entry.index], objective);
             if (!value) {
                 continue;
             }
@@ -2109,6 +2190,9 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
     }
     if (levels) {
         look("level");
+    }
+    if (progressions) {
+        look("prog"); // Stage QG7: TaskHaveLevel of a categorical progression, TaskChooseFaction.
     }
     // Code review of stage QG5b, finding QG5BR-R2: a task change of this refresh (an item, a place, a level) can change an ObjectiveFlow of an
     // NPA (the task states), thus the indexed achievement waits of the character are settled again too (the fixed point of the plan).
@@ -2837,6 +2921,101 @@ void Quests::level_changed(const Entity& entity) {
     }
 }
 
+void Quests::progression_changed(const Entity& entity) {
+    if (data() != nullptr && entity.quests.loaded) {
+        m_progressionsDirty.insert(entity.id);
+    }
+}
+
+bool Quests::self_completes(const QuestObjective& objective) {
+    return trimmed_text(objective.destination).empty() && objective.type.rfind("FactionStory_", 0) == 0;
+}
+
+bool Quests::choose_faction_active(const Entity& entity, std::uint8_t faction) const {
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const gamedata::FactionRow* row = tables != nullptr && tables->loaded() ? tables->faction(faction) : nullptr;
+    if (m_data == nullptr || row == nullptr || row->achievement.empty()) {
+        return false;
+    }
+    const std::string achievement = lower_text(row->achievement);
+    // The active quests of one character (MP-8), each tree 255 nodes at most.
+    for (const QuestInstance& quest : entity.quests.active) {
+        const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
+        if (objective == nullptr || lower_text(objective->achievement) != achievement) {
+            continue;
+        }
+        for (std::size_t index = 0; index < objective->nodes.size() && index < quest.tasks.size(); ++index) {
+            const std::uint8_t state = quest.tasks[index].state;
+            if (objective->nodes[index].task != gamedata::kNoTask && m_data->task(objective->nodes[index].task).type == task_type::kChooseFaction
+                && (state == quest_state::kActive || state == quest_state::kCompleteActive)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+const QuestObjective* Quests::next_rank_up(const Entity& entity) const {
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const gamedata::FactionRow* row = tables != nullptr && tables->loaded() ? tables->faction(entity.faction.faction) : nullptr;
+    if (m_data == nullptr || row == nullptr) {
+        return nullptr;
+    }
+    // The last trial achievement of the list that the character has (entry 0 is the recruitment); the rank-up row after it.
+    for (std::size_t index = row->trials.size(); index-- > 0;) {
+        if (!row->trials[index].empty() && conditional(entity, row->trials[index])) {
+            return index + 1 < row->rankUps.size() ? m_data->objective(row->rankUps[index + 1]) : nullptr;
+        }
+    }
+    return nullptr;
+}
+
+void Quests::grant_rank_up(Entity& entity) {
+    const QuestObjective* objective = next_rank_up(entity);
+    if (objective == nullptr || available(entity, *objective) != QuestError::none) {
+        return; // Active, completed, or its gates do not pass now.
+    }
+    const QuestResult result = grant(entity, objective->id, "faction", 0);
+    log::write("quests: the next rank-up row %s of the faction of character %s: %s", objective->id.c_str(), entity.characterId.c_str(),
+               result.ok() ? "granted" : quest_error_text(result.error));
+}
+
+void Quests::faction_changed(Entity& entity, std::uint8_t before) {
+    if (data() == nullptr || !entity.quests.loaded) {
+        return;
+    }
+    // The faction callback of the client (0x3A571A0): each active objective of the set of ShouldResetOnFactionChange (the loader 0x445E890,
+    // the set +0xAE0) and each active objective whose RequiredFaction does not pass now is removed (the reason changed_faction, 0x3A60C60).
+    // The server ends them with the abandon rules (the undo of their unlocks, no reward); their completion achievements stay
+    // [client; agent for the end rules: docs/systems/factions.md].
+    {
+        (void)before;
+        Plan plan(*this, entity, now_ns());
+        std::vector<std::uint64_t> ends;
+        for (const QuestInstance& quest : entity.quests.active) {
+            const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
+            if (objective != nullptr && (objective->resetOnFactionChange || !faction_allowed(objective->factionMask, entity.faction.faction))) {
+                ends.push_back(quest.instance);
+            }
+        }
+        for (const std::uint64_t instance : ends) {
+            end_instance(plan, instance, false, "a faction change");
+        }
+        if (!ends.empty()) {
+            const auto found = m_subscriptions.find(entity.id);
+            plan.settle(found != m_subscriptions.end() ? found->second.get() : nullptr);
+            const QuestError error = commit(entity, plan, {});
+            log::write("quests: the faction change of character %s ends %zu objective(s) with ShouldResetOnFactionChange: %s",
+                       entity.characterId.c_str(), ends.size(), error == QuestError::none ? "done" : quest_error_text(error));
+        }
+    }
+    m_progressionsDirty.insert(entity.id);
+    m_pushDirty.insert(entity.id);
+    if (entity.faction.faction != 0) {
+        m_rankUpsDirty.insert(entity.id);
+    }
+}
+
 bool Quests::pushed(const QuestObjective& objective) {
     return objective.pushOnRequirement && std::none_of(kPushExcluded.begin(), kPushExcluded.end(), [&](const char* id) {
                return lower_text(objective.id) == lower_text(id);
@@ -3019,8 +3198,39 @@ void Quests::died(Entity& entity) {
 }
 
 void Quests::tick() {
-    if (m_itemsDirty.empty() && m_placesDirty.empty() && m_levelsDirty.empty() && m_pushDirty.empty() && m_equips.empty()) {
+    if (m_itemsDirty.empty() && m_placesDirty.empty() && m_levelsDirty.empty() && m_pushDirty.empty() && m_equips.empty()
+        && m_progressionsDirty.empty() && m_rankUpsDirty.empty() && m_selfHandIns.empty()) {
         return;
+    }
+    // Stage QG7: the predicates of the categorical progressions and of the faction, then the self completing rows, then the next rank-up
+    // row (a completion of this tick can make it due: the next tick grants it).
+    std::set<EntityId> progressions;
+    progressions.swap(m_progressionsDirty);
+    for (const EntityId id : progressions) {
+        Entity* entity = m_world.find(id);
+        if (entity != nullptr && entity->kind == EntityKind::player) {
+            refresh(*entity, false, false, false, false, "change of the faction progressions", true);
+        }
+    }
+    std::map<EntityId, std::set<std::uint64_t>> handIns;
+    handIns.swap(m_selfHandIns);
+    for (const auto& [id, instances] : handIns) {
+        Entity* entity = m_world.find(id);
+        for (const std::uint64_t instance : instances) {
+            if (entity != nullptr && entity->kind == EntityKind::player) {
+                const HandInResult done = hand_in(*entity, instance);
+                log::write("quests: the self completing instance %016llx of character %s: %s", static_cast<unsigned long long>(instance),
+                           entity->characterId.c_str(), done.ok() ? "completed" : quest_error_text(done.error));
+            }
+        }
+    }
+    std::set<EntityId> rankUps;
+    rankUps.swap(m_rankUpsDirty);
+    for (const EntityId id : rankUps) {
+        Entity* entity = m_world.find(id);
+        if (entity != nullptr && entity->kind == EntityKind::player) {
+            grant_rank_up(*entity);
+        }
     }
     // Stage QG4: the grants of the equipped artifacts first (a build preset gives the completion achievement of its artifacts in its
     // transaction, before this tick: no grant then).
@@ -3259,9 +3469,9 @@ QuestError Quests::available(const Entity& entity, const QuestObjective& objecti
     if (!objective.required.empty() && !conditional(entity, objective.required)) {
         return QuestError::notAvailable;
     }
-    // RequiredFaction: bit 0 of the mask bypasses the test, else the bit of the faction of the character (0x3A4C166). The backend has no
-    // faction of a character yet (roadmap 4.5): each character is unaligned (faction 0).
-    if (!faction_allowed(objective.factionMask, kNoFaction)) {
+    // RequiredFaction: bit 0 of the mask bypasses the test, else the bit of the faction of the character (0x3A4C166 to 0x3A4C1B6: the
+    // getter 0x281C2D0, then bt). Stage QG7: the faction of the character (world/factions.h).
+    if (!faction_allowed(objective.factionMask, entity.faction.faction)) {
         return QuestError::wrongFaction;
     }
     return QuestError::none;
@@ -3301,7 +3511,8 @@ QuestError Quests::reward_join(const Entity& entity, const QuestObjective& objec
     // client takes the territory of its context, and with no context territory the detected territory of the player (0x31F6D2B to
     // 0x31F6D63, GetDetectedTerritoryId); the writer of the context of an objective completion is not known (static read of stage QG1,
     // Q1a), and the mission data has its own flag GrantRewardsToOriginTerritory (0x39C609E). Outside each territory: the origin territory.
-    return reward_join_of(entity.characterId, nullptr, objective, standing_territory(m_world.territory_of(entity), originTerritory), join, detail);
+    return reward_join_of(entity.characterId, nullptr, objective, standing_territory(m_world.territory_of(entity), originTerritory), join, detail,
+                          entity.faction.faction);
 }
 
 std::uint16_t Quests::standing_territory(std::uint16_t handIn, std::uint16_t originTerritory) const {
@@ -3313,12 +3524,12 @@ std::uint16_t Quests::standing_territory(std::uint16_t handIn, std::uint16_t ori
 }
 
 QuestError Quests::reward_join(const SkillSet& skills, const QuestObjective& objective, std::uint16_t originTerritory, RewardJoin& join,
-                               std::string& detail) const {
-    return reward_join_of(std::string{}, &skills, objective, originTerritory, join, detail);
+                               std::string& detail, std::uint8_t faction) const {
+    return reward_join_of(std::string{}, &skills, objective, originTerritory, join, detail, faction);
 }
 
 QuestError Quests::reward_join_of(const std::string& characterId, const SkillSet* skills, const QuestObjective& objective,
-                                  std::uint16_t originTerritory, RewardJoin& join, std::string& detail) const {
+                                  std::uint16_t originTerritory, RewardJoin& join, std::string& detail, std::uint8_t faction) const {
     join = RewardJoin{};
     // The rewards (research quest-engine.md Q6): the success event (UniversalExpAmount, CurrencyReward with CoinRewardChance, ItemReward with
     // ItemRewardQty and GearScoreRange, AchievementId, TerritoryStanding), the row (ExperienceReward, ItemRewardName with ItemRewardQty,
@@ -3336,8 +3547,41 @@ QuestError Quests::reward_join_of(const std::string& characterId, const SkillSet
     if (event != nullptr && !event->unpaid.empty()) {
         return refuse(QuestError::cannotPay, "the reward " + event->unpaid.front() + " of " + event->id + " has no owner in the backend");
     }
+    // Stage QG7: ProgressionReward (the parser 0x4469B00: the text split at spaces; the id as the CRC-32 of the lower-case text, the rank a
+    // u16, the points an optional i64): a faction progression of the tables (docs/systems/factions.md). Another id has no owner.
+    const gamedata::ProgressionTables* progression = m_world.options().progressionTables;
     if (!objective.progressionReward.empty()) {
-        return refuse(QuestError::cannotPay, "the reward ProgressionReward " + objective.progressionReward + " has no owner in the backend");
+        std::vector<std::string> parts;
+        for (std::size_t start = 0; start < objective.progressionReward.size();) {
+            const std::size_t end = std::min(objective.progressionReward.find(' ', start), objective.progressionReward.size());
+            if (end > start) {
+                parts.push_back(objective.progressionReward.substr(start, end - start));
+            }
+            start = end + 1;
+        }
+        const auto whole = [](const std::string& text, std::uint64_t limit) -> std::optional<std::uint64_t> {
+            if (text.empty() || text.size() > 12 || !std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+                return std::nullopt;
+            }
+            const std::uint64_t value = std::stoull(text);
+            return value <= limit ? std::optional<std::uint64_t>(value) : std::nullopt;
+        };
+        const std::optional<std::uint64_t> rank = parts.size() >= 2 ? whole(parts[1], 0xFFFF) : std::nullopt;
+        const std::optional<std::uint64_t> points = parts.size() >= 3 ? whole(parts[2], 1000000000ULL) : std::optional<std::uint64_t>(0);
+        const std::uint32_t id = parts.empty() ? 0 : gamedata::progression_id(parts[0]);
+        const gamedata::FactionRow* owner = progression != nullptr && progression->loaded() ? progression->faction_of_progression(id) : nullptr;
+        if (parts.size() < 2 || parts.size() > 3 || !rank || !points || owner == nullptr) {
+            return refuse(QuestError::cannotPay, "the reward ProgressionReward " + objective.progressionReward
+                                                     + " is not a faction progression of the progression tables (ID RANK [POINTS]): no owner");
+        }
+        if (*rank > progression->faction_rank_cap(*owner)) {
+            return refuse(QuestError::cannotPay, "the reward ProgressionReward " + objective.progressionReward + " names a rank above the largest rank "
+                                                     + std::to_string(progression->faction_rank_cap(*owner)));
+        }
+        join.rankReward = parts[0];
+        join.rankRewardId = id;
+        join.rankRewardRank = static_cast<std::uint32_t>(*rank);
+        join.rankRewardPoints = *points;
     }
     // Code review of stage 1.8b, finding QR8B-R9: a next objective (ObjectiveReward) that the quest data does not have refuses the hand-in.
     join.next = objective.objectiveReward.empty() ? nullptr : m_data->objective(objective.objectiveReward);
@@ -3417,6 +3661,31 @@ QuestError Quests::reward_join_of(const std::string& characterId, const SkillSet
             join.azoth = event->azoth;
             join.azothCap = currency->cap;
             join.azothGain = have >= currency->cap ? 0 : std::min(event->azoth, currency->cap - have);
+        }
+        // Stage QG7: FactionReputation and FactionTokens go to the progressions of the faction of the character (the grant 0x31F5400 asks
+        // the Faction component for the ids, 0x30B2810 and 0x30B28A0; faction None has the id 0, and the grant skips it at 0x31F6DFE and
+        // 0x31F7197: no reward, and the hand-in goes on). The reputation has the GainFactionRep card of the territory of the hand-in (an added
+        // part of the multiplier, 0x31F6D98 to 0x31F6E08; f32 and the floor); the tokens have no card (javelin.territory-bonus-rep-affects-
+        // tokens is false, 0x617665C). The global progression modifier of the reputation rows (UsesGlobalProgressionMod) is not applied
+        // [agent: its value is not found; the rule of stage QG5b].
+        join.faction = faction;
+        if ((event->factionReputation > 0 || event->factionTokens > 0) && faction != 0) {
+            const gamedata::FactionRow* row = progression != nullptr && progression->loaded() ? progression->faction(faction) : nullptr;
+            if (row == nullptr) {
+                return refuse(QuestError::cannotPay, "the faction rewards of " + event->id + " need the faction data (progression-tables.json)");
+            }
+            join.factionReputation = event->factionReputation;
+            join.factionTokens = event->factionTokens;
+            if (event->factionReputation > 0) {
+                const SkillSet* set = skills;
+                const Entity* character = set == nullptr ? m_world.find_character(characterId) : nullptr;
+                join.reputationBonus = set != nullptr ? m_world.skills().territory_bonus(*set, originTerritory, gamedata::TerritoryBonus::gainFactionRep)
+                                       : character != nullptr
+                                           ? m_world.skills().territory_bonus(character->skills, originTerritory, gamedata::TerritoryBonus::gainFactionRep)
+                                           : 0.0F;
+                join.reputationGain = static_cast<std::uint64_t>(
+                    std::floor(static_cast<float>(event->factionReputation) * (1.0F + join.reputationBonus)));
+            }
         }
         // Stage QG5b: CategoricalProgressionReward goes to its progression when the skill system owns it: a trade skill of the progression
         // tables (AzothStaff of 10 main story events: 1 experience, and each rank of its table needs 1). A faction, an event, or a riding
@@ -3544,6 +3813,24 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
         result.progression = join.progression;
         result.progressionAmount = join.progressionAmount;
     }
+    // Stage QG7: the faction rewards in the same skills plan: the rank of ProgressionReward first (its points and the points of the event
+    // have the cap of the new rank), then the points.
+    if (join.rankRewardId != 0) {
+        plan.factionRanks.push_back(Plan::FactionRank{join.rankRewardId, join.rankRewardRank, join.rankRewardPoints});
+        result.rankReward = join.rankReward;
+        result.rankRewardRank = join.rankRewardRank;
+    }
+    if (const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+        join.faction != 0 && tables != nullptr && tables->faction(join.faction) != nullptr) {
+        if (join.reputationGain > 0) {
+            plan.factionPoints.emplace_back(tables->faction(join.faction)->reputationId, join.reputationGain);
+            result.reputation = join.reputationGain;
+        }
+        if (join.factionTokens > 0) {
+            plan.factionPoints.emplace_back(tables->faction(join.faction)->tokenId, join.factionTokens);
+            result.tokens = join.factionTokens;
+        }
+    }
     plan.experience += objective->experienceReward;
     result.experience = plan.experience;
     result.coin = plan.coin;
@@ -3601,6 +3888,13 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
         result.progressionRank = entity.skills.rank(gamedata::progression_id(result.progression));
         progression = ", " + std::to_string(result.progressionAmount) + " " + result.progression + " experience (rank "
                       + std::to_string(result.progressionRank) + ")";
+    }
+    // Stage QG7: the faction rewards (the reputation after its card, the tokens, the rank of ProgressionReward).
+    if (result.reputation != 0 || result.tokens != 0) {
+        progression += ", faction reputation " + std::to_string(result.reputation) + ", faction tokens " + std::to_string(result.tokens);
+    }
+    if (!result.rankReward.empty()) {
+        progression += ", rank " + std::to_string(result.rankRewardRank) + " of " + result.rankReward;
     }
     log::write("quests: character %s handed in %s (instance %016llx): %llu experience, %llu coin units, items [%s], standing %llu of the "
                "territory %u, Azoth %llu%s%s%s",

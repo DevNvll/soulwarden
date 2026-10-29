@@ -59,6 +59,8 @@ inline constexpr std::uint8_t kRefineRecipe = 42;
 inline constexpr std::uint8_t kEquipItem = 45;
 /** Stage QG2a: TaskHaveLevel (factory 0x4461150, case 48; research quest-gaps.md section 8). */
 inline constexpr std::uint8_t kHaveLevel = 48;
+/** Stage QG7: TaskChooseFaction (the factory case of the recruitment JoinFaction tasks; docs/systems/factions.md). */
+inline constexpr std::uint8_t kChooseFaction = 81;
 inline constexpr std::uint8_t kCutsceneComplete = 49;
 inline constexpr std::uint8_t kCinematicStart = 50;
 inline constexpr std::uint8_t kCinematicComplete = 51;
@@ -244,6 +246,8 @@ struct QuestObjective {
     /** ProgressionReward (a categorical progression: faction tokens or reputation; a later stage) and ObjectiveReward (the next objective). */
     std::string progressionReward;
     std::string objectiveReward;
+    /** Stage QG7: ShouldResetOnFactionChange (the faction trials and rank-up rows: "1"); docs/systems/factions.md. */
+    bool resetOnFactionChange{false};
     // Stage 1.8d: the availability of the row (the eligibility of the client 0x3A4BFE0) and its repeat. A blank cell has no rule.
     /** RequiredLevel: the level of the screen (the level index plus 1, client 0x3A4C13E). 0: none. */
     std::uint32_t requiredLevel{0};

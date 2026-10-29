@@ -245,6 +245,10 @@ SkillResult Skills::finish(Plan& plan, const char* what) {
             // assignment, a reset of a tree) refreshes them after the stored change (code review of stage 3.3b-S5, finding F5).
             m_world.gear().refresh(*entity);
         }
+        if (touched.ranks) {
+            // Stage QG7: TaskHaveLevel of a categorical progression (the points or the rank of a faction) looks again at the change.
+            m_world.quests().progression_changed(*entity);
+        }
     }
     log::write("skills: %s of character %s: done (%s)",
                what,
@@ -410,6 +414,112 @@ ProgressError Skills::add_balance(Plan& plan, std::string_view id, std::int64_t 
     }
     plan.touched.ranks = true;
     return ProgressError::none;
+}
+
+ProgressionRank Skills::progression_of(const SkillSet& skills, std::uint32_t progressionId) {
+    const auto found = skills.progressions.find(progressionId);
+    return found != skills.progressions.end() ? found->second : ProgressionRank{};
+}
+
+ProgressError Skills::add_faction_points(Plan& plan, std::uint32_t progressionId, std::int64_t delta, std::int64_t* gained) const {
+    if (!plan.ok()) {
+        return plan.error;
+    }
+    if (tables() == nullptr) {
+        return ProgressError::noTables;
+    }
+    bool token = false;
+    const gamedata::FactionRow* row = tables()->faction_of_progression(progressionId, &token);
+    if (row == nullptr) {
+        return ProgressError::unknownProgression;
+    }
+    // The cap of the rank of the progression (MaximumInfluence; AllowOverflow false). The rank of the entry is at most the largest rank (the
+    // loader checks a row for each rank to the largest one).
+    const std::vector<std::uint32_t>& caps = token ? row->tokenCaps : row->reputationCaps;
+    ProgressionRank entry = progression_of(plan.skills, progressionId);
+    const std::uint64_t cap = caps[std::min<std::size_t>(entry.rank, caps.size() - 1)];
+    std::uint64_t next = entry.points;
+    if (delta < 0) {
+        if (entry.points < static_cast<std::uint64_t>(-delta)) {
+            return ProgressError::notEnoughBalance;
+        }
+        next = entry.points - static_cast<std::uint64_t>(-delta);
+    } else if (entry.points < cap) {
+        next = std::min<std::uint64_t>(entry.points + static_cast<std::uint64_t>(delta), cap);
+    }
+    if (gained != nullptr) {
+        *gained = static_cast<std::int64_t>(next) - static_cast<std::int64_t>(entry.points);
+    }
+    entry.points = next;
+    if (entry.rank == 0 && entry.points == 0) {
+        plan.skills.progressions.erase(progressionId);
+    } else {
+        plan.skills.progressions[progressionId] = entry;
+    }
+    plan.touched.ranks = true;
+    return ProgressError::none;
+}
+
+ProgressError Skills::set_faction_rank(Plan& plan, std::uint32_t progressionId, std::uint32_t rank) const {
+    if (!plan.ok()) {
+        return plan.error;
+    }
+    if (tables() == nullptr) {
+        return ProgressError::noTables;
+    }
+    bool token = false;
+    const gamedata::FactionRow* row = tables()->faction_of_progression(progressionId, &token);
+    if (row == nullptr) {
+        return ProgressError::unknownProgression;
+    }
+    if (rank > tables()->faction_rank_cap(*row)) {
+        return ProgressError::badRank;
+    }
+    const std::vector<std::uint32_t>& caps = token ? row->tokenCaps : row->reputationCaps;
+    ProgressionRank entry = progression_of(plan.skills, progressionId);
+    entry.rank = static_cast<std::uint16_t>(rank);
+    entry.points = std::min<std::uint64_t>(entry.points, caps[rank]);
+    if (entry.rank == 0 && entry.points == 0) {
+        plan.skills.progressions.erase(progressionId);
+    } else {
+        plan.skills.progressions[progressionId] = entry;
+    }
+    plan.touched.ranks = true;
+    return ProgressError::none;
+}
+
+SkillResult Skills::set_faction_progress(const std::string& characterId, std::uint32_t progressionId, std::uint32_t rank, std::uint64_t points) {
+    Plan plan = plan_none(characterId);
+    if (plan.ok()) {
+        plan.error = set_faction_rank(plan, progressionId, rank);
+    }
+    if (plan.ok()) {
+        // The points of the command: at most the cap of the rank (the rule of a gain).
+        ProgressionRank entry = progression_of(plan.skills, progressionId);
+        const std::int64_t delta = static_cast<std::int64_t>(points) - static_cast<std::int64_t>(entry.points);
+        plan.error = add_faction_points(plan, progressionId, delta);
+        entry = progression_of(plan.skills, progressionId);
+        if (plan.ok() && entry.points != points) {
+            plan.error = ProgressError::badAmount;
+        }
+    }
+    if (!plan.ok()) {
+        SkillResult result;
+        result.error = plan.error;
+        result.inWorld = plan.inWorld;
+        return result;
+    }
+    if (!write(plan)) {
+        SkillResult result;
+        result.error = ProgressError::storeFailed;
+        result.inWorld = plan.inWorld;
+        return result;
+    }
+    const ProgressionRank entry = progression_of(plan.skills, progressionId);
+    SkillResult result = finish(plan, "a faction progression command");
+    result.rank = entry.rank;
+    result.points = entry.points;
+    return result;
 }
 
 ProgressError Skills::add_standing(Plan& plan, std::uint16_t territory, std::uint64_t amount, StandingGain* gain) const {

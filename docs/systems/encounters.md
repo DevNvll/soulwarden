@@ -202,6 +202,12 @@ data does not decide), [user] a decision of the user, [review] a correction of a
 - Stage QG5c5, a destroyed objective with a tracked slice counts a start object of an earlier stage of the manager order (its stage ended)
   that has that slice [data: "Look through Spyglass" of Scallywag Shore tracks the spyglass that the timed setup spawns; agent: the rule,
   only for a start object; live QG5c5 L3].
+- Code review of stage QG5c5 (corrected in stage QG7; `tests/review_qg5c5_tests.cpp`): a DestroySliceAction also removes a group part
+  whose selected creature has the body path of the action [review QG5C5R-R2; case QGR5C5B]. The count of a start object of an earlier
+  stage takes the object only when no KillSpawnsAction or DestroySliceAction of the stages between removes it before the stage of the
+  consumer; else the recipe is refused (the runner and `tools/gamedata/encounters.py`, case `removed-earlier` of
+  `check_encounters_tool.py`) [review QG5C5R-R3; case QGR5C5C; `encounter-data.json` does not change]. The end of a parent stage runs
+  the end actions (killSpawnsAtEnd, destroyAtEnd) of each started child stage that it ends [review QG5C5R-R4; case QGR5C5D].
 - Stage QG5c5 (live QG5c5 L2): a death counts only for the stages that ran when it came. The end of a sub-wave starts its next sibling (a
   transition that counts each death of a member) in the same step, and that stage does not count the same death.
 - Code review of stage QG5c4: a trigger meets only its own objective; the stage ends when each objective is met [review QG5C4R-R2]. The

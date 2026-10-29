@@ -7732,6 +7732,72 @@ field 0 of the root Objectives := 02 01 00 01 sequence:size64 count:size (G:u64 
   the ship), and the end of the corruption and of the red sky at the cleanup. A part of a group, a pylon or a core (a start object of an
   ordinary row with its VariationData state), and a core shell (the record of a stationary target, 4.14) need no new state.
 
+### 4.63 The Faction state, the join and the change 3161, the empty Social state (live proof of stage QG7; static proof for the client code and the game data; the join with the time 0, the same-faction refusal, and the completion of TaskChooseFaction are project rules)
+
+Research: the static read of stage QG7 (`~/Games/soulwarden/work/evidence/quests/qg7/implement/static/FACTION-STATIC.md`), the live runs
+of stage QG7 (`~/Games/soulwarden/work/evidence/quests/qg7/implement/RESULT.md`). The addresses are image-relative (client build
+1.400.6031.6004151). The rules of the backend: [Factions](systems/factions.md).
+
+**The Faction state** (slot 49 of the player slice and of the remote player slice, type 3152,
+`MB::FactionComponentReplicatedState`) [static: the constructor 0x30A7910, the initializer 0x30B6BA0, the apply 0x30B6210, the setter
+0x30C0A40; live: the join of stage QG7]. Four groups; group 0 has no field.
+
+| Group | Field | Name | Value | Reader |
+| ---: | ---: | --- | --- | --- |
+| 1 | 3 | lastFactionChangeTimepoint | u64 big-endian, the wall clock in Unix nanoseconds | 0x279E480 |
+| 1 | 4 | factionChangeCount | u16 big-endian | 0x2A42E10 |
+| 2 | 0 | faction | u8: 0 None, 1 Syndicate, 2 Marauder, 3 Covenant | 0x17B3C60 |
+
+- Group 1 has the owner as its only target; group 2 has no target list (each observer gets it); group 3 has the null target
+  [static 0x30B6BA0]. The backend sends no PvP field.
+- The bytes of the owner (time 0, count 0, Syndicate): `06 18 0000000000000000 0000 01 01`. The bytes of an observer: `04 01 01`
+  [test case QG7A].
+- The apply republishes the faction on the HUD at each received faction field, also with the same value [static 0x30B6210 to
+  0x30C2E50]. The client publishes the faction of its own request before the answer (0x30C00B0). So the answer to a refused request is
+  the Faction state again [static; test case QG7B; no live refusal of 3161: in the wait the client refuses each change itself].
+- The wait of a change: `lastFactionChangeTimepoint + Faction Change Cooldown Seconds × 10^9` against the CRT wall clock of the client
+  (`_Xtime_get_ticks` × 100, 0x172DCF0) [static 0x30B1DE0, 0x30AD478]. The value is Unix nanoseconds [live: with the time of the
+  server now, the button "Change Faction" of the Bio tab says "Cannot change factions while on cooldown. 30d", also after a restart;
+  the static read did not prove the epoch]. With the time 0 the button is active. Live too: the recruiter Astrid selects the state
+  `9826_RepAstrid_CooldownMultiple_b` ("We cannot recruit you at this time.").
+- The name plate of an observer reads the faction through `marker.luac` (callback 0.6.18, `FactionType`) [static; the live check with a
+  second client is not done: the bytes are in test case QG7G].
+
+**The request** [static: the sender 0x30C00B0, the enum validator 0x2E6A8A0; live: the join of stage QG7]:
+
+| Type | Name | Body | Answer |
+| ---: | --- | --- | --- |
+| 3161 | `FactionComponentServerFacet_RequestSetFaction` | `target:u64 entity:u64 faction:u8` (17 bytes) | the Faction state (also after a refusal) |
+
+- The target is the component `Social/2bbb6c0d-28a5-4c6c-9e02-1b28ebd8170c` (the component Faction of the entity Social of the
+  character). The client validator accepts the faction 0 to 4; the backend refuses 0, 4, and a larger value.
+- The client sends it from the faction poster of a recruiter ("Join this faction?" of `changefaction/changefactionposter.luac`) with the
+  achievement check off, and from the change button of the Bio tab with the check on [static: CanSetFactionWithResults 0x30AD140].
+- Live: a join from the poster of Astrid (`shots/15`, `shots/16`): the backend log has the request 3161 and the Syndicate (time 0,
+  count 0); the HUD shows the crest of the Syndicate, Astrid shows the marker of the Syndicate (`shots/22`). A change from the Bio
+  panel (`shots/52` to `shots/54`): the panel greys out a faction with no recruitment achievement; after "Yes" the client sends 3161
+  (faction 2), and the Bio shows the Marauders with their own rank and tokens. In the wait the panel greys out each other faction and
+  the client sends nothing (`shots/56`).
+
+**The empty Social state** (slot 55 of the player slice, type 4176, `MB::SocialReplicatedState`) [static: the constructor 0x3ED7110,
+the apply 0x3EF4450 then 0x3EF3E40; live: stage QG7]:
+
+```text
+group 0 field 0  the title          u32 (0: no title)
+group 0 field 1  the pronoun        u8
+group 0 field 2  the chatting state u32
+group 1 fields 0, 4, 5, 6  the war, friend, invite, and block maps: each an empty full snapshot 00 01 01 00
+bytes with the slot and the type (31): 37 90 41 03 07 00000000 00 00000000 71 00010100 00010100 00010100 00010100
+```
+
+- Without this state the client crashes when it opens the faction poster or the options of a conversation: an access at 0xD08 in the
+  vector size getter 0x2F2D50, from `JavSocialComponentBus.GetFriends` of the poster (`Show`, `RefreshStats`:
+  `GetFriendCountInFaction`) [live: two crashes of stage QG7 with the faction state alone]. The backend sends it to the owner one time,
+  after the first 2709 of the session (the rule of the late owner states). An observer gets no fragment.
+
+**What is not proved**: the message 467 (the client validation after a faction change) has no send site [static]; the PvP fields of
+the Faction state (group 1 other fields, group 3); the request 3817 (`RequestPurchaseRankIncrease`, the faction shops).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

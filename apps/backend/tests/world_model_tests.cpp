@@ -338,7 +338,7 @@ void encoder_views(const Options&) {
         return fields_text(decode_state(codec.type, codec.encode(entity, view, clock)));
     };
     const std::span<const StateCodec> codecs = player_codecs();
-    check(codecs.size() == 30 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
+    check(codecs.size() == 32 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
               && codecs[2].slot == 16 && codecs[2].type == 11 && codecs[3].slot == 41 && codecs[3].type == 15
               && codecs[4].slot == 47 && codecs[4].type == 1652 && codecs[5].slot == 12 && codecs[5].type == 1195
               && codecs[6].slot == 19 && codecs[6].type == 3133 && codecs[7].slot == 66 && codecs[7].type == 3210
@@ -360,7 +360,10 @@ void encoder_views(const Options&) {
               && codecs[28].slot == 73 && codecs[28].type == 5606 && codecs[28].key == world::ComponentKey::seasons && codecs[28].ownerOnly
               && codecs[28].afterObjectivesEnable && codecs[29].slot == 22 && codecs[29].type == 3857
               && codecs[29].key == world::ComponentKey::objectives && codecs[29].ownerOnly && codecs[29].afterObjectivesEnable
-              && std::count_if(codecs.begin(), codecs.end(), [](const StateCodec& codec) { return codec.afterObjectivesEnable; }) == 2,
+              && codecs[30].slot == 49 && codecs[30].type == 3152 && codecs[30].key == world::ComponentKey::faction && !codecs[30].ownerOnly
+              && !codecs[30].afterObjectivesEnable && codecs[31].slot == 55 && codecs[31].type == 4176
+              && codecs[31].key == world::ComponentKey::social && codecs[31].ownerOnly && codecs[31].afterObjectivesEnable
+              && std::count_if(codecs.begin(), codecs.end(), [](const StateCodec& codec) { return codec.afterObjectivesEnable; }) == 3,
           "one encoder for each component state: metadata (0, 10), player (9, 3935), movement (16, 11), vitals (41, 15), "
           "mana (47, 1652, user test 1), appearance (12, 1195), from stage 1.1b the entitlements (19, 3133) and the "
           "achievements (66, 3210) before the level, from stage 1.3 progression (70, 899), currency (60, 3786), "
@@ -372,7 +375,9 @@ void encoder_views(const Options&) {
           "of a dash for the observers (16, 11), from stage 2.5a the Interactor (26, 3752, owner and observers), and from stage 3.5b.1 "
           "the LootTracker (33, 982) and the Gathering state (36, 81), owner only, and from stage 3.5b.2 the selected Container (76, "
           "1755) and the GlobalStorage map (77, 2938), owner only, and from stage 3.7b the Crafting state (63, 205), owner only, and from "
-          "stage 1.8a the seasons readiness (73, 5606) and the Objectives state (22, 3857), owner only, after the first 2709");
+          "stage 1.8a the seasons readiness (73, 5606) and the Objectives state (22, 3857), owner only, after the first 2709, and from "
+          "stage QG7 the Faction state (49, 3152, owner and observers) and the empty Social state (55, 4176, owner only, after the first "
+          "2709)");
     check(!codecs[0].ownerOnly && !codecs[1].ownerOnly && !codecs[2].ownerOnly && !codecs[3].ownerOnly
               && codecs[4].ownerOnly && !codecs[5].ownerOnly && codecs[6].ownerOnly && codecs[7].ownerOnly && !codecs[8].ownerOnly
               && codecs[9].ownerOnly && !codecs[10].ownerOnly && codecs[11].ownerOnly && codecs[12].ownerOnly && codecs[13].ownerOnly

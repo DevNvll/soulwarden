@@ -233,6 +233,9 @@ The source of each rule is in brackets: game data, client code, live check (the 
   at the completion the encounter counts it. A row with the loot table Empty or none of an encounter object has no roll, as a quest row
   (`Gathering::no_roll`) [agent; live QG5c5 L3: with no such rule the spyglass was refused: "the loot tables have no table of the root of
   the row"]. The gathering tool reads the alias assets (`sharedassets/genericassets/aliasassets/`) for the spawns of an alias.
+- Code review of stage QG5c5 (corrected in stage QG7; case QGR5C5E) [review QG5C5R-R5]: the first completed gather of an encounter object
+  with an ordinary row claims the object (`Gathering::m_claimedObjects`); a second gather of the same object is contested (no second
+  reward). The claim ends when the object goes (`World::remove_object` calls `Gathering::object_removed`).
 
 ## Commands
 

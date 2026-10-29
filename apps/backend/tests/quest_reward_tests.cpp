@@ -4,7 +4,8 @@
 // instance ids (QD10). Made-up data only.
 //
 //   QD1   the reward join: experience, coin, an item with its perk roll, the gear score of GearScoreRange, a loot container item, the
-//         completion achievement, the territory standing of the origin territory (D3 option B), a rank-up and a faction reward refused
+//         completion achievement, the territory standing of the origin territory (D3 option B), a rank-up refused, a faction reward of a
+//         character with no faction paid as nothing (stage QG7)
 //   QD2   the open of a loot container (1733): the roll of its table, the cause OpenRewardChest, a wrong facet, a lock, a quantity, a full bag
 //   QD3   the availability: RequiredLevel, the faction masks of the parser, a negated NPA, a gate with no rule, a variant with the same
 //         completion achievement, the state of the person (3772)
@@ -202,10 +203,11 @@ void reward_join(const Options&) {
               && shop.standing(kCharacterA).points == 10 && a->skills.free_tokens(gamedata::progression_id("TerritoryRankBonus_6")) == 1
               && questfix::quest_of(*a, "Qd_Rankup") == nullptr,
           "stage QG1: a standing that gives a new rank is paid: rank 1 with 10 points, one token, 10 + 100 experience");
-    // A faction reward (roadmap 4.5) stays refused; a standing with no origin territory too.
+    // Stage QG7: a faction reward of a character with no faction pays nothing (the grant of the client skips the id 0 of faction None,
+    // 0x31F6DFE), and the hand-in completes; a standing with no origin territory stays refused.
     const world::HandInResult faction = shop.host.world.quests().hand_in(*a, shop.ready(kCharacterA, "Qd_Faction"));
-    check(faction.error == world::QuestError::cannotPay && faction.detail.find("FactionReputation") != std::string::npos,
-          "FactionReputation has no owner: the hand-in is refused");
+    check(faction.ok() && faction.reputation == 0 && faction.tokens == 0,
+          "FactionReputation of a character with no faction: no faction reward, and the hand-in completes (stage QG7)");
 }
 
 /** @return POI data of the format 2 with the bounds of one territory: a square of 100 m around a place (stage QG1). */

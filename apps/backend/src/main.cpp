@@ -294,14 +294,16 @@ int main(int argc, char** argv) {
     if (progressionTables.load(progressionTablesPath)) {
         const gamedata::ExpansionRow* expansion = progressionTables.owned_expansion();
         log::write("backend: progression tables loaded from %s (%zu levels, the largest level of a player is %u, %zu "
-                   "weapon masteries and trade skills, %zu nodes of the weapon trees, %zu territory standings, %zu territory cards)",
+                   "weapon masteries and trade skills, %zu nodes of the weapon trees, %zu territory standings, %zu territory cards, %zu "
+                   "factions)",
                    progressionTablesPath.c_str(),
                    progressionTables.data().levels.size(),
                    progressionTables.level_cap(),
                    progressionTables.progressions().size(),
                    progressionTables.nodes().size(),
                    progressionTables.standings().size(),
-                   progressionTables.territory_cards().size());
+                   progressionTables.territory_cards().size(),
+                   progressionTables.factions().size());
         if (expansion != nullptr) {
             log::write("backend: each player owns the expansion %s and the DLC packs (%zu entitlements of each account): the "
                        "largest level %u, equip gear score %u, craft gear score %u, trade skill level %u",

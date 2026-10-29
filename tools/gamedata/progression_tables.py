@@ -52,7 +52,10 @@ Output: {"format": 3, "levelCap": N, "tradeSkillCap": N,
 "progressions": [[id, kind, maxRank, rankTable, expansionMaxRank], ...],
 "abilities": [[table, node, tree, row, column, active, requiredNode], ...],
 "standings": [[territory, maxRank, rankTable, pointPool, autoRankUp, xpModifier], ...],
-"territoryCards": [[id, category, bonusId, maxLevel, doNotSpend, requiredRank, initialBonus, reduction, minValue], ...]}.
+"territoryCards": [[id, category, bonusId, maxLevel, doNotSpend, requiredRank, initialBonus, reduction, minValue], ...],
+"factions": {"change": [cooldownSeconds, costLevel, costMin, costMax, costIncrement],
+             "rows": [[faction, reputation, repTable, token, tokenTable, maxRank, expansionMaxRank, achievement, legacyAchievement,
+                       [trial, ...], [rankUp, ...]], ...], "rankTables": {"<name>": {"experience": [...], "requiredLevel": [...]}, ...}}}.
 Stage 1.8d (format 3): `standings` has the territory standing rows of CategoricalProgression (the rank table Territory_Standing; the id
 is the decimal territory id), and `rankTables` the table Territory_Standing with MaximumInfluence as `experience` and XpReward as
 `xpReward`. A file of format 2 has no standing: the backend then refuses a quest reward of standing.
@@ -67,6 +70,12 @@ the Territory Bonus Data, a value is not finite or is below 0, or a territory of
 Stage QG4 (format 4 with a new member; an older file of format 4 has none): entry K of `equipGearScores` is MaxEquippableGearScore and
 IgnoreItemRarity of the row K of XPLevels: the item level of a gear score is K + 1 for the first K whose value admits it (an artifact of
 gear score 700: 65; research quest-engine.md Q7, client 0x5C4C960 and 0x4403360). The tool stops when the column goes down.
+Stage QG7 (format 4 with a new member; docs/systems/factions.md): `factions` has the Faction Data of playerbaseattributes.pbadb (`change`),
+one row for each faction in the order 1 to 3 (the reputation and the token progressions of CategoricalProgression with their rank tables,
+MaxLevel and Expansion01MaxLevel, the RequiredAchievementId and RequiredLegacyAchievementId of the FactionData table, and the lists of the
+Progression Validation Achievement Data: entry 0 of both is the recruitment, trial K leads to rank-up K + 1), and the six rank tables
+(MaximumInfluence as `experience`, RequiredLevel). The tool stops when a faction row has AutoRankUp, the two lists have different lengths,
+or a row is missing.
 Entry K of `levels` (from 0) is the level K + 1 of the screen. `levelCap` is a level of the
 screen. Entry K of `constitutionHealth` is the value `minimum` + K. `abilities` (stage 3.5b.2) has, for each attribute, the
 threshold abilities of the EquipAbilities column: a character with the attribute at VALUE or above has them (the backend reads
@@ -138,10 +147,21 @@ TERRITORY_POOL_CATEGORY = "Territory"
 STANDING_CARD_COLUMNS = tuple(f"AvailableProgressionPoint{index}" for index in range(1, 5))
 BASE_ATTRIBUTES = "sharedassets/genericassets/playerbaseattributes.pbadb"
 BONUS_DATA = "Territory Bonus Data"
+# Stage QG7: the factions. The categorical rows of the reputation and of the tokens (ProgressionType), the faction table (FactionData:
+# the recruitment achievements), and two lists of the base attributes file: the change rules (Faction Data) and the trial achievements
+# and the rank-up objectives of each faction (Progression Validation Achievement Data).
+FACTION_TYPE = "FactionData"
+FACTION_REPUTATION = "FactionReputation"
+FACTION_CURRENCY = "FactionCurrency"
+FACTION_NAMES = {1: "Syndicate", 2: "Marauder", 3: "Covenant"}
+FACTION_DATA = "Faction Data"
+FACTION_CHANGE_FIELDS = ("Faction Change Cooldown Seconds", "Faction Change Cost Level", "Faction Change Cost Min",
+                         "Faction Change Cost Max", "Faction Change Cost Increment")
+VALIDATION_DATA = "Progression Validation Achievement Data"
 # The table types that this tool reads the cells of.
 USED_TYPES = ("ExperienceData", "ExpansionData", "AttributeDefinition", "VitalsBaseData",
               "CategoricalProgressionData", "ProgressionPointData", ABILITY_TYPE, ENTITLEMENT_TYPE,
-              ACHIEVEMENT_TYPE, TERRITORY_TYPE) + RANK_TYPES
+              ACHIEVEMENT_TYPE, TERRITORY_TYPE, FACTION_TYPE) + RANK_TYPES
 # The DLC packs of Steam (stage 1.1b; research dlc-entitlements.md, Q1): the Steam-named entitlement
 # rows of the retail bonus set. A row with the reward type "Entitlement" gives the entitlements of its
 # Reward(s) too (the tool adds them). Not in the list: the alpha test title (STEAM_APP_ID.1266160, a
@@ -294,6 +314,118 @@ def read_territory_bonus(assets: Path) -> dict[str, list]:
     return bonus
 
 
+def read_faction_base(assets: Path) -> dict:
+    """@return Stage QG7: the faction values of the base attributes file: {"change": [the five values of FACTION_CHANGE_FIELDS (u32)],
+    "trials": {faction: [achievement, ...]}, "rankUps": {faction: [objective, ...]}} (the lists <Name>RankupTrialAchievements and
+    <Name>RankupObjectiveIds of the Progression Validation Achievement Data; the client names them Syndicate, Marauder, Covenant)."""
+    from creature_data import Sources, walk  # noqa: PLC0415 (the object stream reader: only for this file)
+    from interactions import child_of, text_of  # noqa: PLC0415
+
+    sources = Sources(assets, (BASE_ATTRIBUTES,))
+    roots = sources.stream(BASE_ATTRIBUTES)
+    if roots is None:
+        sources.check_complete()
+        raise Failure(f"{BASE_ATTRIBUTES} has no source")
+    elements = [element for root in roots for element in walk(root)]
+
+    def one(name: str):
+        wanted = field_id(name)
+        found = next((element for element in elements if element.name == wanted), None)
+        if found is None:
+            raise Failure(f"{BASE_ATTRIBUTES} has no element \"{name}\"")
+        return found
+
+    change = []
+    data = one(FACTION_DATA)
+    for name in FACTION_CHANGE_FIELDS:
+        element = child_of(data, field_id(name))
+        if element is None or element.value is None or len(element.value) != 4:
+            raise Failure(f"the value \"{name}\" of \"{FACTION_DATA}\" is not a number of 4 bytes")
+        change.append(int.from_bytes(element.value, "big"))
+    validation = one(VALIDATION_DATA)
+
+    def texts(name: str) -> list[str]:
+        element = child_of(validation, field_id(name))
+        if element is None:
+            raise Failure(f"\"{VALIDATION_DATA}\" has no list \"{name}\"")
+        values = []
+        for entry in element.children:
+            # A list of texts, or of EditCrc values (the text is the member m_valueStr).
+            text = text_of(entry) if entry.value is not None else text_of(child_of(entry, field_id("m_valueStr")))
+            values.append(text.strip())
+        return values
+
+    trials = {faction: texts(f"{name}RankupTrialAchievements") for faction, name in FACTION_NAMES.items()}
+    rank_ups = {faction: texts(f"{name}RankupObjectiveIds") for faction, name in FACTION_NAMES.items()}
+    return {"change": change, "trials": trials, "rankUps": rank_ups}
+
+
+def faction_rows(sheets: dict[str, Sheet], kinds: dict[str, str], progression_sheet: Sheet, base: dict | None) -> dict | None:
+    """@return Stage QG7: the member `factions` of the file, or None when the categorical table has no reputation row (made-up tables)."""
+    reputations = {}
+    currencies = {}
+    for row in range(progression_sheet.row_count):
+        kind = str(progression_sheet.cell(row, "ProgressionType") or "").strip() if "ProgressionType" in progression_sheet.columns else ""
+        if kind == FACTION_REPUTATION:
+            reputations[str(progression_sheet.cell(row, "CategoricalProgressionId"))] = row
+        elif kind == FACTION_CURRENCY:
+            currencies[str(progression_sheet.cell(row, "CategoricalProgressionId"))] = row
+    if not reputations:
+        return None
+    if base is None:
+        raise Failure(f"the table {PROGRESSION_TABLE} has faction rows, and {BASE_ATTRIBUTES} gave no faction values")
+    table = one_of_type(sheets, kinds, FACTION_TYPE)
+    factions = {}
+    for row in range(table.row_count):
+        kind = str(table.cell(row, "FactionType"))
+        if kind.startswith("Faction") and kind[7:].isdigit():
+            factions[int(kind[7:])] = row
+
+    def ranks(name: str, levels: bool) -> dict:
+        sheet = one_table(sheets, name)
+        caps, required = [], []
+        for rank in range(sheet.row_count):
+            if whole(sheet.cell(rank, "Rank")) != rank:
+                raise Failure(f"row {rank} of the rank table {name} is not the rank {rank}")
+            caps.append(whole(sheet.cell(rank, "MaximumInfluence")))
+            required.append(whole(sheet.cell(rank, "RequiredLevel")))
+        if not caps or any(caps[rank] < caps[rank - 1] or caps[rank] == 0 for rank in range(1, len(caps))) or caps[0] == 0:
+            raise Failure(f"the MaximumInfluence column of the rank table {name} is 0 or goes down")
+        return {"experience": caps, "requiredLevel": required} if levels else {"experience": caps}
+
+    rows = []
+    tables = {}
+    for faction, name in FACTION_NAMES.items():
+        if name not in reputations:
+            raise Failure(f"the table {PROGRESSION_TABLE} has no reputation row {name}")
+        row = reputations[name]
+        token = str(progression_sheet.cell(row, "ProgressionCurrencyId") or "").strip()
+        if token not in currencies:
+            raise Failure(f"the reputation row {name} names the currency {token}, which is not a FactionCurrency row of {PROGRESSION_TABLE}")
+        if faction not in factions:
+            raise Failure(f"the table {table.name} has no row Faction{faction}")
+        reputation_table = str(progression_sheet.cell(row, "RankTableId"))
+        token_table = str(progression_sheet.cell(currencies[token], "RankTableId"))
+        tables[reputation_table] = ranks(reputation_table, True)
+        tables[token_table] = ranks(token_table, False)
+        largest = whole(progression_sheet.cell(row, "MaxLevel"))
+        expansion_largest = whole(progression_sheet.cell(row, "Expansion01MaxLevel"))
+        for identifier, source, rank_table in ((name, row, reputation_table), (token, currencies[token], token_table)):
+            if flag(progression_sheet.cell(source, "AutoRankUp")):
+                raise Failure(f"the faction row {identifier} has AutoRankUp: the backend has only the rank-up of the objectives")
+            for column in ("MaxLevel", "Expansion01MaxLevel"):
+                if whole(progression_sheet.cell(source, column)) >= len(tables[rank_table]["experience"]):
+                    raise Failure(f"the {column} of {identifier} has no row in its rank table {rank_table}")
+        trials = base["trials"].get(faction, [])
+        rank_ups = base["rankUps"].get(faction, [])
+        if len(trials) != len(rank_ups):
+            raise Failure(f"the faction {name} has {len(trials)} trial achievements and {len(rank_ups)} rank-up objectives")
+        rows.append([faction, name, reputation_table, token, token_table, largest, expansion_largest,
+                     str(table.cell(factions[faction], "RequiredAchievementId") or "").strip(),
+                     str(table.cell(factions[faction], "RequiredLegacyAchievementId") or "").strip(), trials, rank_ups])
+    return {"change": base["change"], "rows": rows, "rankTables": tables}
+
+
 def territory_xp_modifiers(sheets: dict[str, Sheet], kinds: dict[str, str]) -> dict[int, float]:
     """@return TerritoryStandingXpModifier of each row of the TerritoryDefinition tables that has the column (stage QG1), by TerritoryID."""
     modifiers: dict[int, float] = {}
@@ -334,7 +466,7 @@ def territory_cards(point_sheet: Sheet, bonus: dict[str, list]) -> list:
     return cards
 
 
-def build_tables(contents: list[bytes], bonus: dict[str, list] | None = None) -> dict:
+def build_tables(contents: list[bytes], bonus: dict[str, list] | None = None, faction_base: dict | None = None) -> dict:
     sheets: dict[str, Sheet] = {}
     kinds: dict[str, str] = {}
     for data in contents:
@@ -530,12 +662,15 @@ def build_tables(contents: list[bytes], bonus: dict[str, list] | None = None) ->
                           str(point_sheet.cell(row, "RequiredProgressionPointId"))])
     if not abilities:
         raise Failure(f"the table {POINT_TABLE} has no node of a weapon tree")
+    # Stage QG7: the factions (a new member of format 4; made-up tables with no reputation row have none).
+    factions = faction_rows(sheets, kinds, progression_sheet, faction_base)
+    extra = {"factions": factions} if factions is not None else {}
     return {"format": 4, "levelCap": level_cap, "tradeSkillCap": trade_skill_cap, "expansions": expansion_rows,
             "entitlements": entitlements, "achievements": achievements, "levels": levels, "equipGearScores": equip_gear_scores,
             "attributes": {"minimum": minimum, "maximum": minimum + len(health) - 1, "constitutionHealth": health,
                            "abilities": attribute_abilities},
             "vitals": vitals, "rankTables": rank_tables, "progressions": progressions, "abilities": abilities,
-            "standings": standings, "territoryCards": cards}
+            "standings": standings, "territoryCards": cards, **extra}
 
 
 def main() -> int:
@@ -552,7 +687,7 @@ def main() -> int:
     try:
         entries = table_entries(game / "assets")
         source = tables_of_paks(entries) or tables_of_folder(extracted, entries)
-        tables = build_tables(source[0], read_territory_bonus(game / "assets"))
+        tables = build_tables(source[0], read_territory_bonus(game / "assets"), read_faction_base(game / "assets"))
         target.parent.mkdir(parents=True, exist_ok=True)
         # The backend must not read a file that is not complete: write, then rename.
         temporary = target.with_name(target.name + ".tmp")
@@ -574,7 +709,8 @@ def main() -> int:
           f"{len(tables['attributes']['constitutionHealth'])} values of an attribute, {weapons} weapon masteries, "
           f"{len(tables['progressions']) - weapons} trade skills (the largest level is {tables['tradeSkillCap']}), "
           f"{len(tables['rankTables'])} rank tables, {len(tables['abilities'])} nodes of the weapon trees, "
-          f"{len(tables['standings'])} territory standings, {len(tables['territoryCards'])} territory cards "
+          f"{len(tables['standings'])} territory standings, {len(tables['territoryCards'])} territory cards, "
+          f"{len((tables.get('factions') or {}).get('rows', []))} factions "
           f"(source: {source[1]})")
     return 0
 

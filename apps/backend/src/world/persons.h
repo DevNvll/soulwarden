@@ -30,8 +30,8 @@
 //
 // The conversation state (client 0x37AC710, 0x37AB440, 0x37AB7A0; the rules of each requirement: the static read of stage 2.5c and
 // docs/systems/persons.md): the states of the NPC row in reverse, the first whose requirements pass; then the topics of that state whose
-// requirements pass, and the passing ProvidedTopics of each of them. The backend has no faction and no faction change of a character: a
-// named faction and a faction cooldown do not pass. The selection is a value of the character (Entity::conversation) with the revision of
+// requirements pass, and the passing ProvidedTopics of each of them. Stage QG7: a named faction is the faction of the character, and a faction
+// cooldown is the wait of its last change (world/factions.h). The selection is a value of the character (Entity::conversation) with the revision of
 // the state of the character; a topic request after a change of that state makes the selection again (a stale revision).
 //
 // The topics (3158 during the conversation, 5397 at its close): a topic of the selection of the character at its source counts one time

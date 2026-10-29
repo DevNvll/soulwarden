@@ -52,6 +52,7 @@
 #include "world/rewards.h"
 #include "world/runes.h"
 #include "world/skills.h"
+#include "world/factions.h"
 #include "world/projectiles.h"
 #include "world/persons.h"
 #include "world/quest_objects.h"
@@ -816,6 +817,13 @@ public:
     [[nodiscard]] Skills& skills() {
         return m_skills;
     }
+    /** Stage QG7: the faction system (world/factions.h). */
+    [[nodiscard]] Factions& factions() {
+        return m_factions;
+    }
+    [[nodiscard]] const Factions& factions() const {
+        return m_factions;
+    }
     /** @return The ownership system (stage 1.1b): the entitlements of each account and the achievements of each character. */
     [[nodiscard]] Ownership& ownership() {
         return m_ownership;
@@ -1055,6 +1063,8 @@ private:
     Inventory m_inventory;
     Progress m_progress;
     Skills m_skills;
+    /** Stage QG7: the factions of the characters. */
+    Factions m_factions;
     Ownership m_ownership;
     Navigation m_navigation;
     Creatures m_creatures;

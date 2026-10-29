@@ -206,7 +206,13 @@ standings, the free tokens, the cards with their levels and values, and the terr
 CHARACTER` lists them too), `standing CHARACTER TERRITORY AMOUNT` (a gain of standing with the rules of a reward: the GainStanding card,
 the ranks, a token for each rank, the experience of the ranks; route `POST /v1/dev/progress/standing`, admin command `give_standing`),
 and `card CHARACTER TERRITORY CARD` (one card choice with the rules of the message 4040; route `POST /v1/dev/progress/card`, admin command
-`choose_territory_card`); the two changes are harness commands (they refuse with no `SOULWARDEN_HARNESS=1`, also as admin commands). A
+`choose_territory_card`); the two changes are harness commands (they refuse with no `SOULWARDEN_HARNESS=1`, also as admin commands);
+stage QG7 ([Factions](systems/factions.md)): `faction CHARACTER` (the faction, the time and the count of the last change, the wait that
+is left, the cost of a change, and the reputation and the tokens of each faction), `faction CHARACTER NAME [--changed now|clear|NS]
+[--changes N]` (set the faction with no check: `none`, `syndicate`, `marauder`, `covenant`; route `POST /v1/dev/progress/faction`, admin
+command `set_faction`), and `reputation|tokens CHARACTER FACTION RANK POINTS` (the rank and the points of a faction progression, at most
+the cap of the rank; route `POST /v1/dev/progress/faction-progress`, admin command `set_faction_progress`); the changes are harness
+commands too. A
 command for a character that is not in the world changes its rows in the database. For the objects of the world (stage 2.5a):
 `interactions CHARACTER [METERS]`, `object CHARACTER KEY on|off`, and `interaction cancel
 CHARACTER`; stage 2.5b: `fixture CHARACTER NAME [DX DY DZ] [--yaw D] [--permission N]` (a

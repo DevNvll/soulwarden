@@ -131,6 +131,12 @@ bool enforces_location(std::uint8_t type) {
     }
 }
 
+/** Stage QG7: @return The text with no spaces at its two ends. */
+std::string trimmed_copy(const std::string& text) {
+    const std::size_t first = text.find_first_not_of(" \t");
+    return first == std::string::npos ? std::string{} : text.substr(first, text.find_last_not_of(" \t") - first + 1);
+}
+
 /** @return True for a blank cell text. */
 bool trimmed_blank(const std::string& text) {
     return text.find_first_not_of(" \t") == std::string::npos;
@@ -314,6 +320,11 @@ std::uint32_t artifact_level(const WorldOptions& options, const std::string& ite
 /** The indexes of the world content that the rows name (one pass over the data at the start of a manifest). */
 struct QuestSupport::Index {
     const gamedata::QuestData* quests{nullptr};
+    /**
+     * Stage QG7: the rank-up rows of the validation lists of the base attributes (entry K + 1 of RankupObjectiveIds; lower case): the
+     * faction system grants each one after the trial achievement K (Quests::next_rank_up).
+     */
+    std::unordered_set<std::string> rankUpRows;
     /** The table path of each objective (the developer rows: the folders of the developer worlds). */
     std::vector<std::string> tables;
     /** The person slots of each NPC id (lower case): the binding and the object. */
@@ -480,6 +491,13 @@ void QuestSupport::build() {
     const auto& objectives = data.objectives();
     index.tables.reserve(objectives.size());
     index.gives.assign(objectives.size(), {});
+    if (const gamedata::ProgressionTables* tables = options.progressionTables; tables != nullptr && tables->loaded()) {
+        for (const gamedata::FactionRow& faction : tables->factions()) {
+            for (std::size_t at = 1; at < faction.rankUps.size(); ++at) {
+                index.rankUpRows.insert(lower_text(faction.rankUps[at]));
+            }
+        }
+    }
     for (std::uint32_t at = 0; at < objectives.size(); ++at) {
         const QuestObjective& objective = objectives[at];
         index.tables.push_back(lower_text(objective.table));
@@ -578,6 +596,15 @@ void QuestSupport::build() {
             for (const gamedata::CreatureKind* kind : placement.kinds) {
                 if (kind != nullptr) {
                     placed[static_cast<std::size_t>(kind - creatures->kinds().data())] = true;
+                }
+            }
+            // Code review of stage QG5c5, finding QG5C5R-R1: each resolved part of a group member is a creature of the world too (the runner
+            // spawns one entity for each part kind; the group entry of `kinds` is null).
+            for (const auto& parts : placement.partKinds) {
+                for (const gamedata::CreatureKind* kind : parts) {
+                    if (kind != nullptr) {
+                        placed[static_cast<std::size_t>(kind - creatures->kinds().data())] = true;
+                    }
                 }
             }
         }
@@ -988,6 +1015,10 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                       "an artifact with no item level");
         }
     }
+    // Stage QG7: the rank-up row of the validation lists (the faction system grants it after the trial achievement before it).
+    if (index.rankUpRows.count(id) != 0) {
+        add_grant("faction", "the rank-up row after a trial achievement (Progression Validation Achievement Data)", true, "");
+    }
     if (row.kind == "missionTemplate") {
         add_grant("mission", objective.type, false, "the mission boards and the mission definitions have no contract (roadmap 4.5, 5.4)");
     } else if (row.kind == "communityGoal") {
@@ -997,10 +1028,12 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
         // Stage QG4: the kind of a row with no source, by its Type [data]: a rank-up row of a faction story (the faction rank system grants
         // it: the faction stage, roadmap 4.5), a mount race row (QuickCourseData names it; no grant row: the mount race system).
         if (objective.type.rfind("FactionStory_", 0) == 0) {
+            // Stage QG7: the validation lists name one rank-up row of each rank (9806_*); the rows 9804_*, 9809_*, 9812_* of the same rank
+            // have no source in the data.
             add_grant("none", objective.type, false,
-                      "a rank-up row of a faction story (Type " + objective.type + "): the faction rank system grants it, which has no owner "
-                      "(the faction stage, roadmap 4.5)",
-                      "a faction rank-up row (the faction stage)");
+                      "a rank-up row of a faction story (Type " + objective.type + ") that the validation lists of the base attributes do not "
+                      "name: no source grants it (the faction system grants the rows of the lists)",
+                      "a faction rank-up row that the validation lists do not name");
         } else if (data_rules::same_text(objective.type, "MountRace")) {
             add_grant("none", objective.type, false,
                       "a mount race row (Type MountRace; QuickCourseData names it): no grant row of the data; the mount race system has no owner",
@@ -1022,11 +1055,7 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
     if (!objective.requiredProgression.empty()) {
         row.gates.push_back("RequiredProgression " + objective.requiredProgression + " has no rule");
     }
-    // The faction test of the eligibility (0x3A4C166) for a character with no faction: bit 0 of the mask (bit 1 is Syndicate; the second
-    // computation of the counts found the test of bit 1 here).
-    if ((objective.factionMask & 0x1U) == 0) {
-        row.gates.push_back("RequiredFaction needs a faction (each character is unaligned: roadmap 4.5)");
-    }
+    // Stage QG7: RequiredFaction is a gate of a history (the faction that it joins): no gate of the row (each faction can join).
     if (objective.requiredLevel > index.levelCap) {
         row.gates.push_back("RequiredLevel " + std::to_string(objective.requiredLevel) + " is above the level cap " + std::to_string(index.levelCap));
     }
@@ -1399,13 +1428,30 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
         case task_type::kHaveLevel:
             // Stage QG2a (research quest-gaps.md section 8; client 0x3B04F40, 0x3B073A0): a blank ItemName is the level of the character; an
             // ItemName is the points or the rank of a categorical progression (Covenant, Marauder, Syndicate: a faction, roadmap 4.5).
+            // Stage QG7: a faction progression of the progression tables (its points or its rank; the history decides).
             if (!trimmed_blank(task.itemName)) {
-                block("TaskHaveLevel of the categorical progression " + task.itemName + " (" + (task.checkPoints ? "points" : "rank") + " "
-                      + std::to_string(task.targetQty.value_or(0)) + "): the faction progression has no owner in the backend (roadmap 4.5)");
+                const gamedata::ProgressionTables* tables = options.progressionTables;
+                const bool faction = tables != nullptr && tables->loaded()
+                                     && tables->faction_of_progression(gamedata::progression_id(trimmed_copy(task.itemName))) != nullptr;
+                if (!faction) {
+                    block("TaskHaveLevel of the categorical progression " + task.itemName + " (" + (task.checkPoints ? "points" : "rank") + " "
+                          + std::to_string(task.targetQty.value_or(0)) + "): not a faction progression of the progression tables (no owner)");
+                } else {
+                    fact.supplier = "the " + std::string(task.checkPoints ? "points" : "rank") + " of the faction progression " + task.itemName + " ("
+                                    + std::to_string(task.targetQty.value_or(0)) + " or more; the history decides)";
+                }
             } else if (task.targetQty.value_or(0) < 1) {
                 block("TaskHaveLevel with the TargetQty " + std::to_string(task.targetQty.value_or(0)) + " never completes (client 0x3B073A0)");
             } else {
                 fact.supplier = "the level of the character (" + std::to_string(*task.targetQty) + " or more; the history decides)";
+            }
+            break;
+        case task_type::kChooseFaction:
+            // Stage QG7: the faction choice of a recruitment (3161 with the Faction_Selection service of the person; docs/systems/factions.md).
+            if (m_world.factions().recruitment_faction(objective.achievement) == 0) {
+                block("TaskChooseFaction of an objective that is not the recruitment of a faction of the faction data");
+            } else {
+                fact.supplier = "the faction choice of the recruitment (3161 with the Faction_Selection service of " + task.itemName + ")";
             }
             break;
         case task_type::kObjective:
@@ -1553,6 +1599,17 @@ std::vector<SupportProfile> QuestSupport::default_profiles() const {
         }
         profiles.push_back(std::move(profile));
     }
+    // Stage QG7: the first new character once more for each faction (SupportProfile::faction): the history joins only that faction. The
+    // first history (the primary one) joins the faction of the first recruitment that it completes.
+    if (!profiles.empty()) {
+        for (std::uint8_t faction = 1; faction <= gamedata::kFactionCount; ++faction) {
+            SupportProfile joined = profiles.front();
+            joined.id += ":" + std::string(faction_name(faction));
+            joined.group = "new character, faction " + std::string(faction_name(faction));
+            joined.faction = faction;
+            profiles.push_back(std::move(joined));
+        }
+    }
     SupportProfile none;
     none.id = "level60:none";
     none.group = "no template (decision D2 option A)";
@@ -1590,6 +1647,7 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
     history.scratch.characterId = "support-manifest";
     history.scratch.quests.loaded = true;
     history.scratch.progression.level = profile.level;
+    history.scratch.faction.faction = 0; // Stage QG7: a history joins its faction at a recruitment (SupportProfile::faction).
     for (const std::string& achievement : profile.achievements) {
         if (const std::optional<std::uint32_t> bit = ownership.achievement_bit(achievement)) {
             history.bits.insert(*bit);
@@ -1642,6 +1700,9 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
     // territory of the character at the hand-in, Quests::reward_join), or 0.
     const auto hand_in_cause = [&](const QuestObjective& objective, const std::set<std::uint32_t>& bits, std::uint16_t& territory) -> std::string {
         territory = 0;
+        if (Quests::self_completes(objective)) {
+            return std::string{}; // Stage QG7: a faction story row with no NpcDestinationId completes at its root (docs/systems/factions.md).
+        }
         if (objective.destination.empty()) {
             return "the hand-in: the objective has no NpcDestinationId (the hand-in needs the person of the conversation)";
         }
@@ -1898,10 +1959,29 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                     if (!first && !other) {
                         continue;
                     }
-                    // Stage QG2a: TaskHaveLevel of the level of the character: the level of the history (Quests::Plan::predicate).
-                    if (task.type == task_type::kHaveLevel
+                    // Stage QG2a: TaskHaveLevel of the level of the character: the level of the history (Quests::Plan::predicate). Stage
+                    // QG7: of a faction progression: its points or its rank in the skills of the history.
+                    if (task.type == task_type::kHaveLevel && trimmed_blank(task.itemName)
                         && static_cast<std::int64_t>(history.scratch.progression.level) < task.targetQty.value_or(0)) {
                         continue;
+                    }
+                    if (task.type == task_type::kHaveLevel && !trimmed_blank(task.itemName)) {
+                        const ProgressionRank have = Skills::progression_of(skills, gamedata::progression_id(trimmed_copy(task.itemName)));
+                        if (static_cast<std::int64_t>(task.checkPoints ? have.points : have.rank) < task.targetQty.value_or(0)) {
+                            continue;
+                        }
+                    }
+                    // Stage QG7: the faction choice: a history with no faction joins the faction of the recruitment (the faction of the
+                    // profile only, when it has one); a history of that faction has it; else the task waits (the decline branch).
+                    if (task.type == task_type::kChooseFaction) {
+                        const std::uint8_t wanted = m_world.factions().recruitment_faction(objective.achievement);
+                        std::uint8_t& have = history.scratch.faction.faction;
+                        if (have == 0 && (profile.faction == 0 || profile.faction == wanted)) {
+                            have = wanted;
+                        }
+                        if (have != wanted) {
+                            continue;
+                        }
                     }
                     if (task.type == task_type::kConversationTopic && conversations != nullptr) {
                         if (const std::optional<std::uint32_t> topic = conversations->topic_of_crc(gamedata::quest_crc(task.screen));
@@ -1952,8 +2032,33 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         // territory), then the completion achievements; the temporary unlocks revert.
         RewardJoin join;
         std::string detail;
-        if (quests.reward_join(skills, objective, quests.standing_territory(handInTerritory, origin), join, detail) != QuestError::none) {
+        if (quests.reward_join(skills, objective, quests.standing_territory(handInTerritory, origin), join, detail,
+                               history.scratch.faction.faction) != QuestError::none) {
             return "rewards: " + detail;
+        }
+        // Stage QG7: the faction rewards go into the skills of the history: the rank of ProgressionReward (a lower rank stays) and its
+        // points, then the reputation and the tokens of the event for the faction of the history.
+        {
+            Skills::Plan plan;
+            plan.skills = skills;
+            if (join.rankRewardId != 0) {
+                if (Skills::progression_of(plan.skills, join.rankRewardId).rank < join.rankRewardRank) {
+                    (void)m_world.skills().set_faction_rank(plan, join.rankRewardId, join.rankRewardRank);
+                }
+                if (join.rankRewardPoints > 0) {
+                    (void)m_world.skills().add_faction_points(plan, join.rankRewardId, static_cast<std::int64_t>(join.rankRewardPoints));
+                }
+            }
+            const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+            if (const gamedata::FactionRow* row = join.faction != 0 && tables != nullptr && tables->loaded() ? tables->faction(join.faction) : nullptr) {
+                if (join.reputationGain > 0) {
+                    (void)m_world.skills().add_faction_points(plan, row->reputationId, static_cast<std::int64_t>(join.reputationGain));
+                }
+                if (join.factionTokens > 0) {
+                    (void)m_world.skills().add_faction_points(plan, row->tokenId, static_cast<std::int64_t>(join.factionTokens));
+                }
+            }
+            skills = plan.skills;
         }
         if (join.standing > 0) {
             Skills::Plan plan;
@@ -2056,6 +2161,13 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
             if (!origin && Quests::pushed(objective) && objective.exclusiveTerritory.value_or(0) == 0) {
                 origin = 0;
             }
+            // Stage QG7: the next rank-up row of the faction of the history (Quests::next_rank_up, the validation lists).
+            if (!origin && index.rankUpRows.count(id) != 0 && history.scratch.faction.faction != 0) {
+                sync();
+                if (quests.next_rank_up(history.scratch) == &objective) {
+                    origin = 0;
+                }
+            }
             if (!origin) {
                 if (history.cause[at].empty()) {
                     history.cause[at] = "no source grants it in this history"; // A refusal of an earlier round stays the cause.
@@ -2073,8 +2185,10 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
             SkillSet skills = history.skills;
             std::set<std::string> items = history.items;
             std::vector<std::uint32_t> done;
+            const std::uint8_t factionBefore = history.scratch.faction.faction;
             if (const std::string cause = run(at, *origin, bits, skills, items, done, 0); !cause.empty()) {
                 history.cause[at] = cause;
+                history.scratch.faction.faction = factionBefore; // Stage QG7: a recruitment that does not complete joins no faction.
                 continue;
             }
             history.bits = std::move(bits);

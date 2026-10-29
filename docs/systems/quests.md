@@ -306,10 +306,11 @@ research is `~/Games/soulwarden/work/research/scratch/quests-18d/` (rules Q1 to 
   AchievementId, TerritoryStanding) and the row (ExperienceReward, ItemRewardName with ItemRewardQty, AchievementId, ObjectiveReward)
   [data; research quest-engine.md Q6]. The hand-in pays all of it in one transaction (the plan of the quest, the inventory, the wallet, the
   progress, the skills, the achievement rows, the repeat row), or nothing.
-- The rewards that stay refused (no owner in the backend): FactionReputation, FactionTokens, CategoricalProgressionReward, Azoth,
+- The rewards that stay refused (no owner in the backend): CategoricalProgressionReward, Azoth,
   UmbralCurrency, PvpXp, SeasonsXp, AzothSalt, CursedSilvers, CursedCrowns that is not 0, an EntitlementId, a StatusEffectId, a
-  ProgressionReward of the row, a GearScoreRange or a TerritoryStanding that the reader cannot read ("#REF!"), an item that the catalog does
-  not have, a negative quantity, a next objective that the quest data does not have [brief of stage 1.8d; roadmap 4.5 for the factions].
+  ProgressionReward of the row that is not a faction progression, a GearScoreRange or a TerritoryStanding that the reader cannot read ("#REF!"), an item that the catalog does
+  not have, a negative quantity, a next objective that the quest data does not have [brief of stage 1.8d]. Stage QG7 pays FactionReputation,
+  FactionTokens, and the ProgressionReward of a faction ([Factions](factions.md)); a character with no faction gets no faction reward.
   The refusal names the reward (`tools/world quest rewards`).
 - The items: ItemReward and ItemRewardName have the rules of a new instance of stage 1.3b (`Rewards::grant_items`: GearScoreOverride of the
   item table, the fixed perks, the free perk places with the level of the character and ForceRarity of the layout); the rolled perks go into
@@ -342,8 +343,8 @@ research is `~/Games/soulwarden/work/research/scratch/quests-18d/` (rules Q1 to 
   0x3A4C0A3 to 0x3A4C0E6; research quest-gaps-qg2b.md section 1]; stage QG2a: QuestArcTag (row +0x20) is no gate (the eligibility 0x3A4BFE0
   does not read it); RequiredLevel against the level of the screen [client 0x3A4C13E]; RequiredAchievementId as a conditional (with `!`,
   `&&`, `||`, and the NPA rows) [client]; RequiredFaction as a mask [client parser 0x445CA30: blank or None 0xF, Any 0xE, Syndicate 0x2,
-  Marauder 0x4, Covenant 0x8; a leading `!` gives the complement in the four bits; bit 0 bypasses the test at 0x3A4C166]. The backend has
-  no faction of a character yet (roadmap 4.5): each character is unaligned (faction 0) [agent].
+  Marauder 0x4, Covenant 0x8; a leading `!` gives the complement in the four bits; bit 0 bypasses the test at 0x3A4C166]. The faction of
+  the character comes from the faction system (stage QG7, [Factions](factions.md)); a character with no faction has the faction 0.
 - The client shows no locked offer: it hides an offer that fails a check [client; live I2 of stage 1.8d: Urda shows no offer before the
   hand-in of 06_skinningknife and the offer of 06_boarfeast after it]. The person system offers only what `available` permits.
 - PushObjectiveOnReqMet: stage QG2a pushes 18 of the 21 rows (the rules of the section of stage QG2a; decision B of the orchestrator, the
@@ -470,7 +471,7 @@ live checks are in `~/Games/soulwarden/work/evidence/quests/qg2a/implement/RESUL
   constructor passes 1 to the base task and keeps TargetQty at +0x550). It looks at its activation and at each change of the level
   (`Progress::finish` calls `Quests::level_changed`; the next tick looks at the tasks of the key "level"). With an ItemName (Covenant,
   Marauder, Syndicate: 24 of the 30 tasks of the data) it is the points (ShouldCheckPoints) or the rank of a categorical progression of a
-  faction: no owner in the backend (roadmap 4.5), the task waits.
+  faction (stage QG7, [Factions](factions.md): at least TargetQty; a change of the points or the rank looks at the task again).
 - The salvage event of a loot container (`SalvageGameEventID` of the item row: the coin purses `QuestReward_MB_Coin_Purse2` and
   `QuestReward_WW_Coin_Purse2` name `MB_CoinPurse2_Event`, CurrencyReward 2500; `Coin_Stack_500` 50000) [data; research quest-gaps.md
   section 8]: the open pays the CurrencyReward of the event (with CoinRewardChance; a blank chance is 1) for each unit, in the transaction
@@ -617,7 +618,8 @@ The research is `~/Games/soulwarden/work/research/quest-gaps.md` (QG0, section 3
   group of the first grant that the backend does not run (`(a person of an instance)`, `(a person with no placement in the data)`, `(a
   faction rank-up row (the faction stage))`, `(a mount race row (no grant))`, `(an artifact with no item level)`).
 - A row with no grant source, by its Type [data]: `FactionStory_*` (the 12 rank-up rows `9804_*`, `9806_*`, `9809_*`, `9812_*`) is a
-  rank-up of the faction rank system (no owner: the faction stage, roadmap 4.5); `MountRace` (the 4 rows `MountRace_ScaleTest_*`) is a
+  rank-up of the faction rank system (stage QG7: the rows that the validation lists name have the grant source "faction"; the others
+  keep "a faction rank-up row that the validation lists do not name"); `MountRace` (the 4 rows `MountRace_ScaleTest_*`) is a
   course of QuickCourseData with no grant row. The other rows with no source keep "the data of the backend has no source"
   (`06A_S_02_PowerSpheres`, `09A_S8_FixAncientWiring`, `S_getoffbeach`, `Quest_08015`, `Quest_08016`); the seasonal rows
   (`Quest_03193`, `Quest_03195`, `Quest_03198`) keep their gate RequiredWorldTags; the developer rows keep their kind. No spawn is made for
@@ -826,6 +828,17 @@ QG5c2: `tests/review_qg5c2_tests.cpp`).
   counts. The second computation (a copy of `support_check.py` in `~/Games/soulwarden/work/evidence/quests/qg5c5/implement/scripts/`
   with its own code of the rules of stage QG5c5 and of the finding QG5C4R-R4) has the same counts: 54 recipes taken, 548 supported, 0
   row, fact, history, and group differences.
+- The build (stage QG7, [Factions](factions.md)): 548 supported rows before, 573 after (2,147 rows); none is lost. The 25 new ones: the
+  first rank-up row of each faction (`9806_S_0001_RankUp`, `9806_M_0001_RankUp`, `9806_C_0001_RankUp`), the 12 rank-up rows `98_*_0102`
+  to `98_*_0405`, and 10 trials (for example `98_S_01_theexperiment`, `98_M_02_ultimatewarrior`, `98_C_01_theapostate`). The histories
+  have a faction: the three new profiles `new:Archetype_Soldier:Syndicate`, `:Marauder`, and `:Covenant` (the groups "new character,
+  faction NAME") join at the first TaskChooseFaction and complete 68 each; the unaligned new character completes 68 (no change); 28 groups
+  (25 before). The first reasons: "ProgressionReward has no owner" 10 to 0, "TaskHaveLevel of a faction progression" 20 to 0, and the new
+  "a faction rank-up row that the validation lists do not name" 5 (`9804_S_0001_RankUp`, `9809_S_0001_RankUp`, and the three rows
+  `9812_*_0001_RankUp`). The second
+  computation (a copy of `support_check.py` in `~/Games/soulwarden/work/evidence/quests/qg7/implement/scripts/` with its own code of the
+  faction rules and of the finding QG5C5R-R1) has the same counts: 573 supported, 0 row differences, 0 of 6,762 own facts differ, 309
+  histories and 28 groups with 0 differences.
 
 ### The support manifest (stage 1.8e)
 
@@ -1028,6 +1041,22 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   QG5BR-R3 in the evidence of the stage: a ranked producer with an item needs the rank, then the item fact) gives the same counts: 2,147
   rows, 527 supported, 0 row differences, 0 of 6,759 own facts differ, 306 histories with 0 differences, 25 groups, the new Soldier completes
   66; on the manifest of before with the new data it finds 5 row differences and 10 own fact differences.
+
+### The corrections of the code review of stage QG5c5 (in stage QG7)
+
+The findings QG5C5R-R1 to QG5C5R-R5 (`~/Games/soulwarden/work/evidence/quests/qg5c5/code-review/FINDINGS.md`) are corrected in stage QG7;
+each case fails on the tree of stage QG5c5 and passes now (`tests/review_qg5c5_tests.cpp`). The rules of R2 to R4 are in
+[Encounters](encounters.md), the rule of R5 in [Gathering](gathering.md).
+
+- QG5C5R-R1 (QGR5C5A): the kinds of the parts of a group member (`placement.partKinds`) are kill sources of the manifest. No count
+  changes.
+- QG5C5R-R2 (QGR5C5B): DestroySliceAction removes a group part also through the body path of the selected creature.
+- QG5C5R-R3 (QGR5C5C): a count of an earlier object is refused when a KillSpawnsAction or a DestroySliceAction removes that object before
+  the stage of the consumer (the runner and the exporter `tools/gamedata/encounters.py`, case `removed-earlier` of
+  `check_encounters_tool.py`). `encounter-data.json` of the game data does not change.
+- QG5C5R-R4 (QGR5C5D): the end of a parent stage runs the end actions (killSpawnsAtEnd, destroyAtEnd) of a started child that it ends.
+- QG5C5R-R5 (QGR5C5E): one reward for two gathers of an encounter object with an ordinary row: the first completion claims the object,
+  and a claimed object is contested until it goes.
 
 ### The corrections of the code review of stage QG5b (in stage QG5c1)
 

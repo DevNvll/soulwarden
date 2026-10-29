@@ -203,6 +203,12 @@ python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/
   a settings file; since the code review of stage 3.3b-S6), RK11 `check_projectile_tool.py`, RK12 `check_spell_tool.py`, and
   DL9 `tools/gamedata/check_progression_tool.py` (stage 1.1b): with no Python 3 these cases fail. `check_dev_sound.py TREE`
   checks a different tree (the proof of finding S6-R1 on the tree of stage 3.3b-S6: status 1).
+- Stage QG7 adds the cases QG7A to QG7J (`tests/faction_tests.cpp`: the factions; [Factions](../systems/factions.md)) and QGR5C5A to
+  QGR5C5F (`tests/review_qg5c5_tests.cpp`: the corrections of the code review of stage QG5c5, findings QG5C5R-R1 to R5, and one control
+  case; each correction case fails on the tree of stage QG5c5). QG7I runs `check_progression_tool.py` (the faction cases), and QG7J
+  changes `SOULWARDEN_HARNESS` of the test process for its scope. The state decoder knows the states 3152 (Faction) and 4176 (Social):
+  a record with a state that the decoder does not know gives no fragment, and a case that counts the Objectives state of the same record
+  fails (QG3, QG10, QRV1 after the Social state came). B11 checks the schema version 18 (the table `character_factions`).
 - Stage 3.3b-S5 adds the cases CH1 to CH10 (`tests/crit_tests.cpp`: the critical hits), PS1 to PS7
   (`tests/passive_tests.cpp`: the evaluator of the passive rules), and RD1 to RD6 (`tests/review_dlc_tests.cpp`: the
   corrections of the code review of stage 1.1b). The passive fixture (`tests/support/passive_fixture.h`) has rows of the

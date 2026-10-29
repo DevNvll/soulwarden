@@ -90,7 +90,9 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
 - The first record of a character has the states of the world that it has at the entry: the
   world marks the status state and the speed table at each entry (`kEnteredComponents` in
   `world/world.cpp`; code review of stage 3.3b-S1, finding F2, test case RS2). A status that
-  runs stays through a leave and comes in the first record of the next session.
+  runs stays through a leave and comes in the first record of the next session. Stage QG7 adds the Faction state (slot 49, type
+  3152: the owner and each observer) and the empty Social state (slot 55, type 4176: the owner, after the first 2709) to
+  this list ([Factions](factions.md)); the player codecs are 32 now. `touch_all` does not send the states of this list.
 - The movement of a character for its observers (stage 3.3b-S4, [Forced movement](forced-movement.md)): the state
   `motion` (`ComponentKey::motion`, slot 16, type 11) is the observer view of the movement state with the place, the
   direction (`Entity::facing`), and the action of layer 0; its encoder gives the owner no fragment (the client of the

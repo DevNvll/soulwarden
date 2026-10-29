@@ -448,6 +448,16 @@ backend. The tool of each system is also in the document of that system.
   refuses a list of a wrong size, a row that is not a number and a flag, and a list that goes down; a file with no member has no item level
   (an artifact grants no objective). An older backend reads the file of stage QG4 (it does not know the member). `check_progression_tool.py`
   has the case `equip-gear-scores`; case QG4C.
+- `progression-tables.json`, stage QG7 (still format 4, a new member; [Factions](../systems/factions.md)): `factions` has `change` (the five
+  values of Faction Data of `sharedassets/genericassets/playerbaseattributes.pbadb`: `[cooldownSeconds, costLevel, costMin, costMax,
+  costIncrement]`, `[2592000, 20, 0, 0, 50]`), `rows` (one for each faction, in the order 1 to 3: `[faction, reputation, repTable, token,
+  tokenTable, maxRank, expansionMaxRank, achievement, legacyAchievement, trials, rankUps]`; the achievements of the FactionData table;
+  `trials` and `rankUps` from Progression Validation Achievement Data, entry 0 of both is the recruitment), and `rankTables` (the
+  experience caps and the RequiredLevel of the rank tables of the six progressions). The tool stops for AutoRankUp on a faction row,
+  for lists of different lengths, and for a missing row. The loader refuses a wait of 0, rows out of order, a cap that goes down, a
+  largest rank with no row, and lists of different lengths; a file with no member has no faction data (each request 3161 is refused,
+  `noData`). An older backend reads the file of stage QG7 (it does not know the member). `check_progression_tool.py` has the cases
+  `factions`, `faction-bad-lists`, and `faction-auto-rank-up`; case QG7I.
 - `gathering-data.json`, stage QG5a: the member `children` (`{UUID/ENTITY: [TEMPLATE, ROW, TAG, ONLY_ON_QUEST]}`: the quest children of the
   spawners of the placements; the loader refuses a key of a wrong form and a key of a capital), the quest tables Gatherables_NPCRescue_01
   and Gatherable_Quest_AncientGlyph, the quest placements of any slice path, the direct bindings of the quest form, the tool type AzothStaff,
@@ -641,6 +651,11 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   47 `encounterObjects`; the `gathering/` folder has the same bytes). `tools/gamedata/creature_slices.json` has the three core shells in its
   list `targets`. A backend of stage QG5c4 must not take the new files: it reads a group member as one creature and has no rule for the
   new members (the season, the aliases, the waiting child stages). Put the backend and the files together (`tools/release.sh` takes both).
+
+- Stage QG7 changes `progression-tables.json` (the member `factions`, above; still format 4; the other members are the same as the file of
+  stage QG5c5). Write it again (`tools/gamedata/progression.sh`): with the file of before the backend has no faction data, and the
+  recruiters refuse each join. The correction of the finding QG5C5R-R3 changes `tools/gamedata/encounters.py`, but `encounter-data.json` of
+  the supported build is the same bytes (a compare of the two files). `tools/release.sh` takes the file with the game data folder.
 
 - Stage BT2 changes `creatures.json` (still format 4, `tools/gamedata/creatures.sh`): each slice that names a server tree has the member
   `serverTrees` (the asset paths of `m_behaviorTreeAssets` of its `BehaviorTreeComponent`, the entity "AI Functionality"; lower case, with

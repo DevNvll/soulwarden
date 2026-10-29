@@ -395,6 +395,64 @@ void Encounters::resolve(EncounterPlacement& placement) {
         }
         return true;
     };
+    // Code review of stage QG5c5, finding QG5C5R-R3: a member of an earlier stage counts for a later stage only when it can still wait at its
+    // start: no KillSpawnsAction and no DestroySliceAction that names it (its slice or its alias) in the end actions of the top stage of its
+    // owner and of its child stages, in the start and the end actions of each top stage between (with its child stages), and in the start
+    // actions of the top stage of the consumer.
+    const auto top_of = [&](std::uint32_t index) {
+        std::int32_t top = static_cast<std::int32_t>(index);
+        while (recipe.stages[static_cast<std::size_t>(top)].parent >= 0) {
+            top = recipe.stages[static_cast<std::size_t>(top)].parent;
+        }
+        return static_cast<std::uint32_t>(top);
+    };
+    const auto subtree = [&](std::uint32_t root) {
+        std::vector<std::uint32_t> out;
+        std::vector<std::uint32_t> pending{root};
+        while (!pending.empty()) {
+            const std::uint32_t current = pending.back();
+            pending.pop_back();
+            if (current >= recipe.stages.size() || std::find(out.begin(), out.end(), current) != out.end()) {
+                continue;
+            }
+            out.push_back(current);
+            pending.insert(pending.end(), recipe.stages[current].children.begin(), recipe.stages[current].children.end());
+        }
+        return out;
+    };
+    const auto survives = [&](std::uint32_t owner, const gamedata::EncounterSpawn& spawn, std::uint32_t consumer) {
+        const auto names = [&](const std::vector<gamedata::EncounterDestroy>& actions) {
+            return std::any_of(actions.begin(), actions.end(), [&](const gamedata::EncounterDestroy& action) {
+                for (const std::string* path : {&spawn.member, &spawn.alias}) {
+                    if (!path->empty() && (*path == action.slice || *path == action.alias
+                                           || std::find(action.aliasSlices.begin(), action.aliasSlices.end(), *path) != action.aliasSlices.end())) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+        };
+        const std::uint32_t first = top_of(owner);
+        const std::uint32_t last = top_of(consumer);
+        for (const std::uint32_t at : subtree(first)) {
+            if (recipe.stages[at].killSpawnsAtEnd || names(recipe.stages[at].destroyAtEnd)) {
+                return false;
+            }
+        }
+        const auto from = std::find(recipe.stageOrder.begin(), recipe.stageOrder.end(), first);
+        for (auto top = from == recipe.stageOrder.end() ? from : std::next(from); top != recipe.stageOrder.end(); ++top) {
+            if (*top == last) {
+                return !(recipe.stages[*top].killSpawnsAtStart || names(recipe.stages[*top].destroyAtStart));
+            }
+            for (const std::uint32_t at : subtree(*top)) {
+                const gamedata::EncounterStage& between = recipe.stages[at];
+                if (between.killSpawnsAtStart || between.killSpawnsAtEnd || names(between.destroyAtStart) || names(between.destroyAtEnd)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
     placement.anyMember.assign(recipe.stages.size(), false);
     placement.fills.assign(recipe.stages.size(), {});
     for (std::uint32_t index = 0; index < recipe.stages.size(); ++index) {
@@ -422,7 +480,7 @@ void Encounters::resolve(EncounterPlacement& placement) {
             if (objective.kind == gamedata::EncounterObjectiveKind::destroyed && !objective.tracked.empty()) {
                 for (const auto& [owner, spawn] : before) {
                     if (spawn->memberIndex < members.size() && members[spawn->memberIndex].kind == gamedata::EncounterMemberKind::object
-                        && comes(owner, *spawn)) {
+                        && comes(owner, *spawn) && survives(owner, *spawn, index)) {
                         possible += spawn->count * tally(objective, *spawn).first;
                     }
                 }
@@ -1532,6 +1590,12 @@ void Encounters::end_stage(EncounterInstance& instance, std::uint32_t index, boo
         if (run.started && !run.ended) {
             run.ended = true;
             stage_status(instance, child, success ? encounter_rules::kStageSucceeded : encounter_rules::kStageFailed);
+            // Code review of stage QG5c5, finding QG5C5R-R4: the end actions of the child run one time when its parent ends it (the client
+            // runs them at the end status too). No start of a sibling: the parent ends.
+            if (recipe.stages[child].killSpawnsAtEnd) {
+                remove_members(instance, false, true);
+            }
+            destroy_slices(instance, recipe.stages[child].destroyAtEnd);
         }
         pending.insert(pending.end(), recipe.stages[child].children.begin(), recipe.stages[child].children.end());
     }
@@ -1695,8 +1759,15 @@ void Encounters::destroy_slices(EncounterInstance& instance, const std::vector<g
         if (member != nullptr && run.part >= 0 && static_cast<std::size_t>(run.part) < member->parts.size()) {
             body = member->parts[static_cast<std::size_t>(run.part)].body;
         }
+        // Code review of stage QG5c5, finding QG5C5R-R2: the body that the runner selected for the entity (a part with a body alias has the
+        // alias path as its body text, and its creature the slice of the alias that the spawn chose). Not the other slices of the alias.
+        const Entity* live = run.noEntity ? nullptr : m_world.find(entity);
+        const std::string selected = live != nullptr && live->kind == EntityKind::creature && live->creature.body != nullptr
+                                         ? live->creature.body->path
+                                         : std::string();
         const bool hit = std::any_of(actions.begin(), actions.end(), [&](const gamedata::EncounterDestroy& action) {
-            return named(action, spawn.member) || named(action, spawn.alias) || named(action, body);
+            return named(action, spawn.member) || named(action, spawn.alias) || named(action, body)
+                   || (!selected.empty() && selected == action.slice);
         });
         if (!hit) {
             continue;

@@ -77,6 +77,18 @@ std::optional<TerritoryPointRequest> read_territory_point_request(std::span<cons
     return request;
 }
 
+std::optional<SetFactionRequest> read_set_faction_request(std::span<const std::uint8_t> body) {
+    hub::Reader reader(body);
+    SetFactionRequest request;
+    request.call = read_call(reader);
+    request.faction = reader.u8();
+    // The enum validator of the client field reader (0x2E6A8A0) accepts 0 (None) to 4 (Any).
+    if (!reader.ok() || reader.left() != 0 || request.faction > 4) {
+        return std::nullopt;
+    }
+    return request;
+}
+
 std::optional<BarRequest> read_bar_request(std::span<const std::uint8_t> body) {
     hub::Reader reader(body);
     BarRequest request;

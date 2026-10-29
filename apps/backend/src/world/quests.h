@@ -236,6 +236,11 @@ struct HandInResult {
     std::uint32_t progressionRank{0};
     /** Stage 1.8d: the reset of a repeatable objective (Unix nanoseconds of the world clock; 0: no repeat). */
     std::uint64_t resetNs{0};
+    /** Stage QG7: the faction rewards that the hand-in gave (the reputation after its card, the tokens) and the rank of ProgressionReward. */
+    std::uint64_t reputation{0};
+    std::uint64_t tokens{0};
+    std::string rankReward;
+    std::uint32_t rankRewardRank{0};
     [[nodiscard]] bool ok() const {
         return error == QuestError::none;
     }
@@ -281,6 +286,26 @@ struct RewardJoin {
      */
     std::string progression;
     std::uint64_t progressionAmount{0};
+    /**
+     * Stage QG7 (docs/systems/factions.md, the rewards): the faction of the character, and the FactionReputation and the FactionTokens of
+     * the success event for it (the grant 0x31F5400: no faction, no faction reward); the reputation after the GainFactionRep card of the
+     * territory of the hand-in (floor of f32(raw x (1 + bonus)), 0x31F6D98 to 0x31F6E08; the tokens have no card: the setting
+     * javelin.territory-bonus-rep-affects-tokens is false, 0x617665C).
+     */
+    std::uint8_t faction{0};
+    std::uint64_t factionReputation{0};
+    std::uint64_t reputationGain{0};
+    float reputationBonus{0.0F};
+    std::uint64_t factionTokens{0};
+    /**
+     * Stage QG7: ProgressionReward of the row (the parser 0x4469B00: "ID RANK [POINTS]"): a faction progression of the tables, its rank,
+     * and its points. The hand-in raises the rank to RANK (a lower rank stays) and then adds POINTS to it (the cap of the rank) [agent: the
+     * client preview shows the rank name and adds the points to the reward lines; the grant of the original server is not found].
+     */
+    std::string rankReward;
+    std::uint32_t rankRewardId{0};
+    std::uint32_t rankRewardRank{0};
+    std::uint64_t rankRewardPoints{0};
     /** ObjectiveReward (null: none). */
     const gamedata::QuestObjective* next{nullptr};
     /** A repeatable row: the kind of its schedule (none: not repeated, decision D4 of the user is open for a row with no schedule). */
@@ -561,6 +586,34 @@ public:
      */
     void level_changed(const Entity& entity);
     /**
+     * Stage QG7: a categorical progression of a character changed (Skills::finish: the points or the rank of a faction): its TaskHaveLevel
+     * tasks of a progression and its TaskChooseFaction tasks look again at the next tick.
+     */
+    void progression_changed(const Entity& entity);
+    /**
+     * Stage QG7: the faction of a character changed (Factions::apply; docs/systems/factions.md, the quests): a change from a faction ends the
+     * active objectives with ShouldResetOnFactionChange; TaskChooseFaction and the faction gates look again; the next rank-up row of the
+     * faction is due (rank_up_due); the push rows look again.
+     */
+    void faction_changed(Entity& entity, std::uint8_t before);
+    /**
+     * Stage QG7: @return True when the character has the recruitment objective of a faction active (its completion achievement is the
+     *         RequiredAchievementId of the faction) with its TaskChooseFaction task Active or CompleteActive (the rule of the states
+     *         98xx_Rep*_01: RequiredActiveObjectiveId and RequiredActiveTaskId, IsTaskActiveById 0x3A49520).
+     */
+    [[nodiscard]] bool choose_faction_active(const Entity& entity, std::uint8_t faction) const;
+    /**
+     * Stage QG7: @return The next rank-up objective of the faction of a character (docs/systems/factions.md, the ranks): the lists of the
+     *         Progression Validation Achievement Data, entry K + 1 of RankupObjectiveIds after the last trial achievement K that the
+     *         character has. Null: no faction, no data, no achievement of the list, or the last trial.
+     */
+    [[nodiscard]] const gamedata::QuestObjective* next_rank_up(const Entity& entity) const;
+    /**
+     * Stage QG7: @return True for a row that completes when its root is done (no hand-in at a person): a faction story row (Type
+     *         FactionStory_*) with no NpcDestinationId: the recruitments and the rank-up rows [agent: docs/systems/factions.md].
+     */
+    [[nodiscard]] static bool self_completes(const gamedata::QuestObjective& objective);
+    /**
      * Stage QG2a: @return True for an objective that the push rule grants (PushObjectiveOnReqMet, decision B of the orchestrator: each row of
      * the data but the three rows of kPushExcluded).
      */
@@ -618,7 +671,7 @@ public:
      * `originTerritory` is the territory of the standing (the manifest gives the territory of the hand-in person, else the origin).
      */
     [[nodiscard]] QuestError reward_join(const SkillSet& skills, const gamedata::QuestObjective& objective, std::uint16_t originTerritory,
-                                         RewardJoin& join, std::string& detail) const;
+                                         RewardJoin& join, std::string& detail, std::uint8_t faction = 0) const;
     /**
      * Stage QG1: @return The territory of the standing of a hand-in: the territory of the hand-in (the territory of the character, or of the
      *         destination person in the manifest) when it has a standing row, else the origin territory of the instance (0: none).
@@ -690,7 +743,9 @@ private:
      * The predicates of the indexed tasks of some kinds (items, places, achievements, stage QG2a: the level) of a character: one plan when one
      * changed.
      */
-    void refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause);
+    void refresh(Entity& entity, bool items, bool places, bool achievements, bool levels, const char* cause, bool progressions = false);
+    /** Stage QG7: grants the next rank-up row of the faction of a character (next_rank_up) when it is available. */
+    void grant_rank_up(Entity& entity);
     /**
      * Ends an instance (abandon, reset, failure) in a plan: the undo, the returns, the pin. `completed` (the hand-in, stage 1.8b): only the
      * undo of a temporary unlock (client 0x8260590; an unlock or a lock reverts only at a reset or an abandon: 0x8260730, 0x8260880), and
@@ -703,7 +758,7 @@ private:
     void remember(std::uint64_t result);
     /** The reward join of a character (`skills` null: the skills of the store) or of a skill set of a history (stage 1.8e). */
     [[nodiscard]] QuestError reward_join_of(const std::string& characterId, const SkillSet* skills, const gamedata::QuestObjective& objective,
-                                            std::uint16_t originTerritory, RewardJoin& join, std::string& detail) const;
+                                            std::uint16_t originTerritory, RewardJoin& join, std::string& detail, std::uint8_t faction) const;
     /** @return The active quest of an instance id of a character (the index of the character; finding QR8C-R11), or null. */
     [[nodiscard]] const QuestInstance* instance_of(const Entity& entity, std::uint64_t instance);
     /**
@@ -735,6 +790,13 @@ private:
     /** Stage QG2a: the characters whose level changed, and the characters whose bits changed (the push looks at the next tick). */
     std::set<EntityId> m_levelsDirty;
     std::set<EntityId> m_pushDirty;
+    /**
+     * Stage QG7: the characters whose categorical progressions or faction changed (TaskHaveLevel of a progression, TaskChooseFaction), whose
+     * next rank-up row is due, and the ready instances of the rows that complete themselves (self_completes): each at the next tick.
+     */
+    std::set<EntityId> m_progressionsDirty;
+    std::set<EntityId> m_rankUpsDirty;
+    std::map<EntityId, std::set<std::uint64_t>> m_selfHandIns;
     /** Stage QG4: the equips of an artifact of each character since the last tick (the item id and its gear score), in their order. */
     std::map<EntityId, std::vector<std::pair<std::string, std::uint32_t>>> m_equips;
     std::unique_ptr<PushIndex> m_push;

@@ -262,7 +262,7 @@ void giver_manifest(const Options&) {
               && blocked("Qg4_Nowhere").find("(a person with no placement in the data)") != std::string::npos,
           "the line of the grant block names the group of the cause (the first reasons of the counts)");
     check(grant("Qg4_RankUp", "none").value("reason", std::string{}).find("rank-up row of a faction story") != std::string::npos
-              && blocked("Qg4_RankUp").find("(a faction rank-up row (the faction stage))") != std::string::npos
+              && blocked("Qg4_RankUp").find("(a faction rank-up row that the validation lists do not name)") != std::string::npos
               && grant("Qg4_Race", "none").value("reason", std::string{}).find("mount race row") != std::string::npos,
           "a row with no source: a faction rank-up row (Type FactionStory_) and a mount race row (Type MountRace) have their reasons");
     check(grant(kCaged, "offer").value("supported", false), "the offer of a person with a slot and a presence rule is a grant of a kind that the backend runs");

@@ -380,6 +380,88 @@ WorldCommand give_standing(const std::string& character, const Arguments& argume
     };
 }
 
+WorldCommand set_faction(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    if (!harness_gate()) {
+        refusal = message(403, "set_faction is a harness command: the backend needs SOULWARDEN_HARNESS=1");
+        return {};
+    }
+    const auto text = arguments.text("faction");
+    const std::optional<std::uint8_t> faction = text ? world::faction_number(*text) : std::nullopt;
+    const auto changed = arguments.text("changed");
+    const auto changes = arguments.text("changes") ? arguments.integer("changes", 0, 0xFFFF) : std::nullopt;
+    std::optional<std::uint64_t> changedNs;
+    bool now = false;
+    if (changed) {
+        if (*changed == "now") {
+            now = true;
+        } else if (*changed == "clear") {
+            changedNs = 0;
+        } else if (const auto number = arguments.integer("changed", 0, 0x7FFFFFFFFFFFFFFFLL)) {
+            changedNs = static_cast<std::uint64_t>(*number);
+        }
+    }
+    if (!faction || (changed && !now && !changedNs) || (arguments.text("changes") && !changes)) {
+        refusal = message(400, "give faction=NAME (none, syndicate, marauder, covenant, or 0 to 3), and optionally changed=now|clear|NS (the "
+                               "wall time of the last change in Unix nanoseconds) and changes=N (0 to 65535)");
+        return {};
+    }
+    return [character, faction = *faction, changedNs, now, changes](world::World& target) {
+        world::FactionCommand command;
+        command.faction = faction;
+        command.changedNs = now ? std::optional<std::uint64_t>(target.factions().now_ns()) : changedNs;
+        if (changes) {
+            command.changes = static_cast<std::uint16_t>(*changes);
+        }
+        const world::FactionResult result = target.factions().set(character, command);
+        if (!result.ok()) {
+            return json_reply(result.error == world::FactionError::unknownCharacter ? 404 : 400,
+                              json{{"message", world::faction_error_text(result.error)}}.dump());
+        }
+        return json_reply(200, json{{"message", "done"},
+                                    {"applied", result.inWorld ? "world" : "stored"},
+                                    {"before", world::faction_name(result.before)},
+                                    {"faction", world::faction_name(result.state.faction)},
+                                    {"lastChangeNs", result.state.changedNs},
+                                    {"changes", result.state.changes},
+                                    {"waitSeconds", target.factions().wait_left(result.state) / 1000000000ULL}}
+                                   .dump());
+    };
+}
+
+WorldCommand set_faction_progress(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    if (!harness_gate()) {
+        refusal = message(403, "set_faction_progress is a harness command: the backend needs SOULWARDEN_HARNESS=1");
+        return {};
+    }
+    const auto text = arguments.text("faction");
+    const std::optional<std::uint8_t> faction = text ? world::faction_number(*text) : std::nullopt;
+    const auto kind = arguments.text("kind");
+    const auto rank = arguments.integer("rank", 0, 0xFFFF);
+    const auto points = arguments.integer("points", 0, 1000000000);
+    if (!faction || *faction == 0 || !kind || (*kind != "reputation" && *kind != "tokens") || !rank || !points) {
+        refusal = message(400, "give faction=NAME (syndicate, marauder, covenant), kind=reputation|tokens, rank=N, and points=N (at most the "
+                               "cap of the rank)");
+        return {};
+    }
+    return [character, faction = *faction, tokens = *kind == "tokens", rank = static_cast<std::uint32_t>(*rank),
+            points = static_cast<std::uint64_t>(*points)](world::World& target) {
+        const gamedata::FactionRow* row = target.factions().row(faction);
+        if (row == nullptr) {
+            return json_reply(503, json{{"message", world::faction_error_text(world::FactionError::noData)}}.dump());
+        }
+        const world::SkillResult result = target.skills().set_faction_progress(character, tokens ? row->tokenId : row->reputationId, rank, points);
+        if (!result.ok()) {
+            return json_reply(status_of(result.error), json{{"message", world::progress_error_text(result.error)}}.dump());
+        }
+        return json_reply(200, json{{"message", "done"},
+                                    {"applied", result.inWorld ? "world" : "stored"},
+                                    {"progression", tokens ? row->token : row->reputation},
+                                    {"rank", result.rank},
+                                    {"points", result.points}}
+                                   .dump());
+    };
+}
+
 WorldCommand choose_territory_card(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
     if (!harness_gate()) {
         refusal = message(403, "choose_territory_card is a harness command: the backend needs SOULWARDEN_HARNESS=1");
@@ -913,12 +995,35 @@ std::optional<json> progress_view(world::World& target, const std::string& chara
                              {"tokens", skills->skills.free_tokens(row.poolId)},
                              {"cards", cards}});
     }
+    // Stage QG7: the faction of the character (the time and the count of the last change, the wait that is left, the cost of a change) and
+    // the reputation and the tokens of each faction (the rank, the points, the cap of the rank).
     const world::Entity* entity = target.find_character(character);
+    json faction = json::object();
+    if (const std::optional<world::FactionState> state = target.factions().view(character)) {
+        json balances = json::array();
+        for (const gamedata::FactionRow& row : loaded ? tables->factions() : std::span<const gamedata::FactionRow>{}) {
+            const world::ProgressionRank reputation = world::Skills::progression_of(skills->skills, row.reputationId);
+            const world::ProgressionRank tokens = world::Skills::progression_of(skills->skills, row.tokenId);
+            balances.push_back({{"faction", world::faction_name(row.faction)},
+                                {"reputation", {{"id", row.reputation}, {"rank", reputation.rank}, {"points", reputation.points},
+                                                {"cap", row.reputationCaps[std::min<std::size_t>(reputation.rank, row.reputationCaps.size() - 1)]}}},
+                                {"tokens", {{"id", row.token}, {"rank", tokens.rank}, {"points", tokens.points},
+                                            {"cap", row.tokenCaps[std::min<std::size_t>(tokens.rank, row.tokenCaps.size() - 1)]}}}});
+        }
+        faction = {{"faction", state->faction},
+                   {"name", world::faction_name(state->faction)},
+                   {"lastChangeNs", state->changedNs},
+                   {"changes", state->changes},
+                   {"waitSeconds", target.factions().wait_left(*state) / 1000000000ULL},
+                   {"changeCost", entity != nullptr ? target.factions().change_cost(*entity) : 0},
+                   {"balances", balances}};
+    }
     return json{{"character", character},
                 {"inWorld", progress->inWorld},
                 {"tables", loaded},
                 {"territory", entity != nullptr ? target.territory_of(*entity) : 0},
                 {"standings", standings},
+                {"faction", faction},
                 {"level", progress->progression.level},
                 {"experience", progress->progression.experience},
                 {"levelExperience", progress->levelExperience},

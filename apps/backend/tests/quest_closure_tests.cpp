@@ -273,8 +273,11 @@ void support_manifest(const Options&) {
     check(shop.host.quests.load_text(manifest_document().dump()), "control: the manifest data loads");
     world::QuestSupport support(shop.host.world);
     const std::vector<world::SupportProfile> profiles = support.default_profiles();
-    check(profiles.size() == 3 && profiles[0].id == "new:Archetype_Soldier" && profiles[1].id == "level60:none" && profiles[2].id == "template:Level60_Qf",
-          "the profiles: the new Soldier first, a level 60 character with no template, and each template");
+    check(profiles.size() == 6 && profiles[0].id == "new:Archetype_Soldier" && profiles[1].id == "new:Archetype_Soldier:Syndicate"
+              && profiles[1].faction == 1 && profiles[3].id == "new:Archetype_Soldier:Covenant" && profiles[3].faction == 3
+              && profiles[4].id == "level60:none" && profiles[5].id == "template:Level60_Qf",
+          "the profiles: the new Soldier first, the new Soldier once more for each faction (stage QG7), a level 60 character with no "
+          "template, and each template");
     const json first = support.manifest(profiles);
     const json second = support.manifest(profiles);
     check(first.dump() == second.dump(), "two manifests of the same world are the same bytes (deterministic)");
@@ -303,7 +306,8 @@ void support_manifest(const Options&) {
         }
         return false;
     };
-    check(faction_gate("Qf_J") && !faction_gate("Qf_K"), "the faction gate: Syndicate needs a faction; !Covenant does not");
+    check(!faction_gate("Qf_J") && !faction_gate("Qf_K"),
+          "stage QG7: RequiredFaction is a gate of a history (its faction), not of a row: Syndicate and !Covenant have no row gate");
     check(row("Qf_A")["supported"] == true && row("Qf_B")["supported"] == true && row("Qf_I")["supported"] == true && row("Qf_G")["supported"] == true
               && row("Qf_H")["supported"] == true && counts["supported"] == 5,
           "5 supported rows: A (the territory start), B (ObjectiveReward of A), I (the child of B), G (ObjectiveReward of H), H (a template start)");
@@ -313,8 +317,8 @@ void support_manifest(const Options&) {
               && row("Qf_F")["kind"] == "missionTemplate",
           "the exact reasons: no evaluator (fishing), no trigger volume, a reward with no owner (Azoth), a mission template");
     const json& newCharacter = first["profiles"][0];
-    const json& noTemplate = first["profiles"][1];
-    const json& withTemplate = first["profiles"][2];
+    const json& noTemplate = first["profiles"][4];
+    const json& withTemplate = first["profiles"][5];
     check(newCharacter["completable"] == 3 && newCharacter["played"] == json::array({"Qf_A", "Qf_I", "Qf_B"}),
           "the new character plays A (start), then B with its child I (B waits for the bit of A, then grants I): 3");
     check(noTemplate["completable"] == 0 && withTemplate["completable"] == 0 && row("Qf_H")["blocked"].empty(),

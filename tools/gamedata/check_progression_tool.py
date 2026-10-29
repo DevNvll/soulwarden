@@ -35,6 +35,11 @@ packs and the entitlements that they give), and compares the result of each case
   unknown-offer-card    a rank offers a card that is not a territory card: status 1, the old file stays (stage QG1)
   no-bonus-row          a territory card has no row of the Territory Bonus Data: status 1, the old file stays (stage QG1)
   no-xp-modifier        the territory of a standing has no TerritoryStandingXpModifier: status 1, the old file stays (stage QG1)
+  factions              stage QG7: the member factions: the three factions with their reputation and token rows, the caps and the
+                        RequiredLevel of their rank tables, the recruitment achievements of the faction table, the change rules and the
+                        validation lists of the base attributes
+  faction-bad-lists     a faction with a trial list and a rank-up list of different lengths: status 1, the old file stays (stage QG7)
+  faction-auto-rank-up  a faction row with AutoRankUp: status 1, the old file stays (stage QG7)
 
 The attribute tables of the entry point have one row for each value 5 to 100 (the range of Constitution).
 
@@ -127,8 +132,39 @@ BONUS = {"tb_gainstanding": [1, 0.05000000074505806, 0.13500000536441803, 0.0024
          "tb_purchasehouse": [10, 1.0, 0.0, 0.0]}
 
 
+FACTIONS = (("Syndicate", "SyndicateTokens", "MerchantGuild", "Faction1", "FactionIntro_Syndicate_Recruitment"),
+            ("Marauder", "MarauderTokens", "ProcurerGuild", "Faction2", "FactionIntro_Marauders_Recruitment"),
+            ("Covenant", "CovenantTokens", "ExplorerGuild", "Faction3", "FactionIntro_Covenant_Recruitment"))
+# Stage QG7: the faction values of the base attributes file (made up, with the shape of the game data).
+FACTION_BASE = {"change": [2592000, 20, 0, 0, 50],
+                "trials": {1: ["FactionIntro_Syndicate_Recruitment", "syndicate_faction_quest_01"], 2: ["FactionIntro_Marauders_Recruitment"],
+                           3: ["FactionIntro_Covenant_Recruitment"]},
+                "rankUps": {1: ["FactionIntro_Syndicate_Recruitment", "9806_S_0001_RankUp"], 2: ["FactionIntro_Marauders_Recruitment"],
+                            3: ["FactionIntro_Covenant_Recruitment"]}}
+
+
+def faction_sources(case: str) -> list:
+    """Stage QG7: the made-up faction tables: the six categorical rows, the six rank tables, and the faction table."""
+    rows, sheets = [], []
+    for name, token, table, kind, achievement in FACTIONS:
+        rows.append({"CategoricalProgressionId": name, "RankTableId": table, "MaxLevel": 4, "Expansion01MaxLevel": 5,
+                     "ProgressionType": "FactionReputation", "ProgressionCurrencyId": token,
+                     "AutoRankUp": case == "faction-auto-rank-up" and name == "Covenant"})
+        rows.append({"CategoricalProgressionId": token, "RankTableId": token, "MaxLevel": 4, "Expansion01MaxLevel": 5,
+                     "ProgressionType": "FactionCurrency", "AutoRankUp": False})
+        sheets.append(("CategoricalProgressionRankData", FakeSheet(table, [
+            {"Rank": rank, "MaximumInfluence": cap, "RequiredLevel": level}
+            for rank, (cap, level) in enumerate(zip((3000, 11000, 26000, 49000, 85000, 85000), (10, 20, 35, 50, 60, 61)))])))
+        sheets.append(("CategoricalProgressionRankData", FakeSheet(token, [
+            {"Rank": rank, "MaximumInfluence": cap} for rank, cap in enumerate((15000, 30000, 45000, 75000, 150000, 300000))])))
+    sheets.append(("FactionData", FakeSheet("Factions", [{"FactionType": "None"}] + [
+        {"FactionType": kind, "RequiredAchievementId": achievement, "RequiredLegacyAchievementId": f"S_{name.lower()}quest_1"}
+        for name, token, table, kind, achievement in FACTIONS])))
+    return rows, sheets
+
+
 def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None, standing_rank: int = 2,
-                 card_case: str = "") -> tuple[dict, dict]:
+                 card_case: str = "", faction_case: str = "") -> tuple[dict, dict]:
     """@return The made-up tables of the entry point of the tool (the reviewer's probe RDT1 of stage 1.1b). `thresholds`: the attribute
     tables have the column EquipAbilities (stage 3.5b.2: Focus 100 gives Foc_Bonus_100_1). `missing`: the table and the value of a row
     that the source does not have (stage 2.2, finding LB-R7). `standing_rank`: the MaxLevel of the standing row of the territory 6 (stage
@@ -174,6 +210,12 @@ def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] 
              "PoolCategory": "Territory", "TerritoryBonusCategory": "GainStanding", "MaxLevel": 102, "RequiredCategoricalProgressionLevel": 0},
             {"PointPoolId": "", "ProgressionPointId": "TB_PurchaseHouse", "RequiredProgressionPointId": "", "DoNotSpendPoint": True,
              "PoolCategory": "Territory", "TerritoryBonusCategory": "HousePurchase", "MaxLevel": 1, "RequiredCategoricalProgressionLevel": 1}]))]
+    if faction_case:
+        faction_rows, faction_sheets = faction_sources(faction_case)
+        progression = next(sheet for kind, sheet in additions if sheet.name == tool.PROGRESSION_TABLE)
+        additions = [entry for entry in additions if entry[1] is not progression]
+        additions.append(("CategoricalProgressionData", FakeSheet(tool.PROGRESSION_TABLE, progression._rows + faction_rows)))
+        additions.extend(faction_sheets)
     for kind, sheet in additions:
         tables[sheet.name] = sheet
         kinds[sheet.name] = kind
@@ -181,10 +223,13 @@ def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] 
 
 
 def run_ranks(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None, standing_rank: int = 2,
-              card_case: str = "") -> tuple[int, bool, object]:
+              card_case: str = "", faction_case: str = "") -> tuple[int, bool, object]:
     """@return The status of the entry point, True when the old file stayed, and the Mining cap with the expansion (with the document:
     run_ranks.document)."""
-    tables, kinds = rank_sources(short, thresholds, missing, standing_rank, card_case)
+    tables, kinds = rank_sources(short, thresholds, missing, standing_rank, card_case, faction_case)
+    base = json.loads(json.dumps(FACTION_BASE), object_hook=lambda item: {int(key) if key.isdigit() else key: value for key, value in item.items()})
+    if faction_case == "faction-bad-lists":
+        base["rankUps"][2] = ["FactionIntro_Marauders_Recruitment", "9806_M_0001_RankUp"]
     bonus = {key: value for key, value in BONUS.items() if not (card_case == "no-bonus-row" and key == "tb_purchasehouse")}
     with tempfile.TemporaryDirectory(prefix="soulwarden-progression-check-") as folder:
         target = Path(folder) / "progression-tables.json"
@@ -195,6 +240,7 @@ def run_ranks(short: bool, thresholds: bool = True, missing: tuple[str, int] | N
                 patch.object(tool, "sheet_type", side_effect=lambda data: kinds[data.decode()]), \
                 patch.object(tool, "Sheet", side_effect=lambda data: tables[data.decode()]), \
                 patch.object(tool, "read_territory_bonus", return_value=bonus), \
+                patch.object(tool, "read_faction_base", return_value=base), \
                 patch.object(sys, "argv", ["progression_tables.py", str(target)]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             status = tool.main()
@@ -259,6 +305,26 @@ def main() -> int:
         status, kept, mining = run_ranks(False, card_case=case)
         passed = status == 1 and kept
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, old file {'kept' if kept else 'replaced'} (stage QG1)")
+        failures += 0 if passed else 1
+    # Stage QG7: the factions.
+    status, kept, mining = run_ranks(False, faction_case="factions")
+    factions = run_ranks.document.get("factions") or {}
+    expected_rows = [[1, "Syndicate", "MerchantGuild", "SyndicateTokens", "SyndicateTokens", 4, 5, "FactionIntro_Syndicate_Recruitment",
+                      "S_syndicatequest_1", FACTION_BASE["trials"][1], FACTION_BASE["rankUps"][1]],
+                     [2, "Marauder", "ProcurerGuild", "MarauderTokens", "MarauderTokens", 4, 5, "FactionIntro_Marauders_Recruitment",
+                      "S_marauderquest_1", FACTION_BASE["trials"][2], FACTION_BASE["rankUps"][2]],
+                     [3, "Covenant", "ExplorerGuild", "CovenantTokens", "CovenantTokens", 4, 5, "FactionIntro_Covenant_Recruitment",
+                      "S_covenantquest_1", FACTION_BASE["trials"][3], FACTION_BASE["rankUps"][3]]]
+    passed = status == 0 and factions.get("change") == [2592000, 20, 0, 0, 50] and factions.get("rows") == expected_rows \
+        and factions.get("rankTables", {}).get("MerchantGuild") == {"experience": [3000, 11000, 26000, 49000, 85000, 85000],
+                                                                    "requiredLevel": [10, 20, 35, 50, 60, 61]} \
+        and factions.get("rankTables", {}).get("CovenantTokens") == {"experience": [15000, 30000, 45000, 75000, 150000, 300000]}
+    print(f"{'ok  ' if passed else 'FAIL'}  factions: the member factions (stage QG7): status {status}, {factions.get('rows')}")
+    failures += 0 if passed else 1
+    for case in ("faction-bad-lists", "faction-auto-rank-up"):
+        status, kept, mining = run_ranks(False, faction_case=case)
+        passed = status == 1 and kept
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, old file {'kept' if kept else 'replaced'} (stage QG7)")
         failures += 0 if passed else 1
     status, kept, mining = run_ranks(False, standing_rank=3)
     passed = status == 1 and kept

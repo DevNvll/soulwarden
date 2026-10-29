@@ -394,6 +394,10 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_spend_territory_point(body);
         break;
+    case kTypeRequestSetFaction:
+        check_route(route, type, body, firstOfType);
+        handle_set_faction(body);
+        break;
     case kTypeApplyAbilityPoints:
         check_route(route, type, body, firstOfType);
         handle_apply_ability_points(body);
@@ -3071,6 +3075,29 @@ void RepSession::handle_spend_territory_point(std::span<const std::uint8_t> body
                result.ok() ? "done" : world::progress_error_text(result.error),
                result.ok() ? result.rank : 0U,
                result.freePoints);
+}
+
+void RepSession::handle_set_faction(std::span<const std::uint8_t> body) {
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_set_faction_request(body);
+    if (!request) {
+        log::write("rep: faction request (type %u, %zu bytes) does not have the form of the request: no change", kTypeRequestSetFaction,
+                   body.size());
+        // The client published a faction on its HUD before it sent the request: the owner gets the faction of the server again.
+        m_world.touch(own->id, world::ComponentKey::faction);
+        return;
+    }
+    // Stage QG7: the character is the character of the session, and the target is its Faction component (the entity Social).
+    if (!own_facet(*own, request->call.target, request->call.entity, kFactionComponentName, kTypeRequestSetFaction, "faction request")) {
+        m_world.touch(own->id, world::ComponentKey::faction);
+        return;
+    }
+    const world::FactionResult result = m_world.factions().request(*own, request->faction);
+    log::write("rep: faction request (type %u, faction %u): %s, the faction is %s", kTypeRequestSetFaction, request->faction,
+               result.ok() ? "done" : world::faction_error_text(result.error), world::faction_name(result.state.faction));
 }
 
 void RepSession::handle_apply_ability_points(std::span<const std::uint8_t> body) {

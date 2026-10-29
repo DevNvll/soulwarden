@@ -785,8 +785,11 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
     // (The base checked the use again before this call: the source, a creature body that went away, the life, the range.)
     const auto node = m_nodes.find(work.node);
     const Entity* body = work.kind == NodeKind::body ? m_world.find(work.group) : nullptr;
+    // Code review of stage QG5c5, finding QG5C5R-R5: an encounter start object with an ordinary row gives its reward one time (the first
+    // completion after its commit claims it).
+    const bool claimed = work.kind == NodeKind::encounter && !row.quest && m_claimedObjects.count(work.group) != 0;
     if ((node != m_nodes.end() && (node->second.depleted || node->second.generation != work.nodeGeneration))
-        || (body != nullptr && body->kind == EntityKind::creature && body->creature.skinState == gathering_rules::kDepleted)) {
+        || (body != nullptr && body->kind == EntityKind::creature && body->creature.skinState == gathering_rules::kDepleted) || claimed) {
         ++m_counts.contested;
         log::write("world: gathering: the node %s was depleted before the gather of character %s ended: no reward", work.node.c_str(),
                    characterId.c_str());
@@ -934,6 +937,9 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
         // system removes it in its next tick (its stage counts it: SliceDestroyedObjective). No LootTracker entry: the object goes. Stage
         // QG5c5: also a start object with an ordinary row (the pylons and the cores of the Darkness: the items of its loot table and the
         // trade skill experience of the row, as a node; then the encounter counts it).
+        if (!row.quest) {
+            m_claimedObjects.insert(target->group); // Finding QG5C5R-R5: the reward of the object is given (the rows are written).
+        }
         ++m_counts.completions;
         m_counts.itemsGiven += given.size();
         set_gather(character, gathering_rules::kStatusDone, 0.0F, work.parts.speed, false, kNoTarget);
@@ -1236,6 +1242,10 @@ void Gathering::load_stored() {
 
 void Gathering::body_removed(EntityId creature) {
     m_nodes.erase("body/" + hex64(creature));
+}
+
+void Gathering::object_removed(EntityId object) {
+    m_claimedObjects.erase(object);
 }
 
 void Gathering::respawn(GatherNode& node) {

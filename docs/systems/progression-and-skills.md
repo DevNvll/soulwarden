@@ -108,7 +108,13 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   locks) come from the hand-ins of 5 main story quests (`99A_MSQ_11_ForgeStaff`, `99B_MSQ_10_cleansefort`, `99C_MSQ_12_Vector`,
   `99E_MSQ_09_TheMotherwell`, `99G_MSQ_SM_PrepareWarfare`; the data has 5 more events with this reward that no objective of the build names). The id on the wire is the CRC-32
   of the lower case text (AzothStaff: 0xC92581E4, static read A7 of stage QG5b). The global progression modifier of the row
-  (UsesGlobalProgressionMod) is not applied [agent: its value is not found]. A faction or an event progression stays refused (later stages).
+  (UsesGlobalProgressionMod) is not applied [agent: its value is not found]. A faction or an event progression stays refused here (later
+  stages); the faction rewards of stage QG7 come from FactionReputation, FactionTokens, and the ProgressionReward of a row.
+- The faction progressions (stage QG7, [Factions](factions.md)): the reputation (`Syndicate`, `Marauder`, `Covenant`) and the tokens
+  (`SyndicateTokens`, `MarauderTokens`, `CovenantTokens`) of each faction are categorical progressions of slot 65. The points are a total;
+  a gain stops at the cap of the current rank (AutoRankUp false, AllowOverflow false), and only a rank-up row changes the rank
+  (`Skills::add_faction_points`, `Skills::set_faction_rank`; the largest rank 4, with the expansion 5). A negative change refuses a
+  balance that is too low. A change of the points or of a rank looks at the TaskHaveLevel tasks of the quests again.
 - The territory standing (stage 1.8d, [Quests](quests.md)) [data: the rows of the territories in CategoricalProgressionData, the rank
   table `Territory_Standing`; live I0 of stage 1.8d]: the standing of a territory is the entry of the categorical progression whose
   name is the territory number ("6": CRC-32 `1DB87A14`) in the state 911, with its rank and its points in the rank (MaximumInfluence
@@ -146,8 +152,9 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   standing rank) is `trunc(f32(experience * (1 + bonus)))` (`Skills::card_experience`) [client 0x3CEC0CA, 0x3CF04A9; the backend has no
   other term of the multiplier]; the command `tools/world xp` has no card (the reason Debug of the client). GainGatherRate: one more part
   of the speed sum of a gather [agent: no client formula was found; the data calls it "gathering speed"; [Gathering](gathering.md)]. The
-  other cards (GainStorage, TradingTax, StationTax, PropertyTax, GainFactionRep, GainHousePoints, HousePurchase) are stored for their
-  later systems (storage 5.2, governance and taxes 5.4, factions 4.5, housing); no system reads them now.
+  card GainFactionRep adds to the reputation of a faction reward (stage QG7: `floor(f32(raw) × (1 + bonus))`, [Factions](factions.md)).
+  The other cards (GainStorage, TradingTax, StationTax, PropertyTax, GainHousePoints, HousePurchase) are stored for their later systems
+  (storage 5.2, governance and taxes 5.4, housing); no system reads them now.
 - The territory of a character (stage QG1) [data: `objects/worldprisms/bounds/territory/*.vshapec` with TerritoryId, in `poi-data.json`
   of the format 2; client: the claim territory and the detected territory of the player, research map.md 2.6, 0x29F77A0]:
   `World::territory_of` is the territory whose bounds hold the position of the character (0 outside each bounds, or with a POI file of the

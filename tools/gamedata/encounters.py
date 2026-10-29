@@ -295,6 +295,36 @@ def earlier_stages(recipe: dict, index: int) -> list[dict]:
     return [recipe["stages"][at] for start in before for at in descendants(recipe, start)]
 
 
+def survives(recipe: dict, owner: int, spawn: dict, consumer: int) -> bool:
+    """Code review of stage QG5c5, finding QG5C5R-R3: @return True when a member of an earlier stage can still wait when the stage `consumer`
+    starts: no KillSpawnsAction and no DestroySliceAction that names it (its slice or its alias) in the end actions of the top stage of its
+    owner and of its child stages, in the start and the end actions of each top stage between (with its child stages), and in the start
+    actions of the top stage of the consumer."""
+    order = manager_order(recipe)
+    first = top_of(recipe, owner)
+    last = top_of(recipe, consumer)
+    names = {spawn["member"], spawn.get("alias")} - {None, ""}
+
+    def removes(actions: list[dict]) -> bool:
+        for action in actions:
+            if action["type"] == "KillSpawnsAction":
+                return True
+            if action["type"] == "DestroySliceAction" and names & ({action.get("slice"), action.get("alias")} | set(action.get("aliasSlices") or [])):
+                return True
+        return False
+
+    if any(removes(recipe["stages"][at]["endActions"]) for at in descendants(recipe, first)):
+        return False
+    if first not in order or last not in order:
+        return True
+    for top in order[order.index(first) + 1:]:
+        if top == last:
+            return not removes(recipe["stages"][top]["startActions"])
+        if any(removes(recipe["stages"][at]["startActions"] + recipe["stages"][at]["endActions"]) for at in descendants(recipe, top)):
+            return False
+    return True
+
+
 def later_stages(recipe: dict, index: int) -> list[dict]:
     """@return The stages of the manager order after the top stage of `index`, with their child stages (stage QG5c5)."""
     order = manager_order(recipe)
@@ -304,9 +334,10 @@ def later_stages(recipe: dict, index: int) -> list[dict]:
 
 
 def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracked: str | None, below: list[dict], members: dict[str, dict],
-                     earlier: list[dict] | None = None) -> list[str]:
+                     earlier: list[dict] | None = None, consumer: int | None = None) -> list[str]:
     """@return The causes of one objective of the stage `name` (the rules of the docstring); `below` is the stage and its child stages, and
-    `earlier` the stages before it (stage QG5c5: an objective with a tracked slice counts a member of an earlier stage too)."""
+    `earlier` the stages before it (stage QG5c5: an objective with a tracked slice counts a member of an earlier stage too; finding
+    QG5C5R-R3: only one that survives to the stage `consumer`)."""
     earlier = earlier or []
     causes: list[str] = []
     if kind == STATE:
@@ -336,8 +367,11 @@ def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracke
         # before it.
         reach = [(part, spawn) for part in below for spawn in part["spawns"]]
         if tracked and kind == DESTROYED:
+            # Code review of stage QG5c5, finding QG5C5R-R3: an earlier object counts only when no action removes it before the stage.
+            owners = {id(stage): at for at, stage in enumerate(recipe["stages"])}
             reach += [(part, spawn) for part in earlier for spawn in part["spawns"]
-                      if members.get(spawn["member"], {}).get("kind") == "object"]
+                      if members.get(spawn["member"], {}).get("kind") == "object"
+                      and (consumer is None or survives(recipe, owners[id(part)], spawn, consumer))]
         if tracked and not any(tracks(objective, spawn, members) for _, spawn in reach):
             causes.append(f"the stage {name} tracks a slice that it, its child stages, and the stages before it do not spawn")
         # Code review of stage QG5c2, finding QG5C2R-R3: the spawns that can count for the objective (its own and those of its child
@@ -429,7 +463,7 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
             if kind == WAIT_PARENT and index in manager_order(recipe):
                 # Stage QG5c5: a WaitForParentObjective of a stage of the manager has no parent that ends it.
                 causes.append(f"the stage {name} waits for its parent, and it is a stage of the manager")
-            causes.extend(objective_causes(recipe, label, objective, kind, tracked, below, members, earlier))
+            causes.extend(objective_causes(recipe, label, objective, kind, tracked, below, members, earlier, index))
             if objective.get("failureCondition"):
                 causes.append(f"a failure condition of the stage {label}")
             if objective.get("background"):
