@@ -203,7 +203,7 @@ def build(sources: Sources) -> dict:
                 return
             cells = tables.rows[facts["entry"].lower()][1]
             destructible = facts["kind"] == "destructible" and destructible_form(cells, tables.task_events)
-            if not destructible and not quest_form(cells, f"the direct gatherable row {facts['entry']}"):
+            if not destructible and not quest_form(cells, f"the direct gatherable row {facts['entry']}", tables.empty_loot):
                 counts["directNotQuest"] = counts.get("directNotQuest", 0) + 1
                 return
             gatherable, tag, only_on_quest, radius = facts["entry"], "", False, facts["sphere"] or 0.0

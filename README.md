@@ -116,6 +116,16 @@ This is an independent project with no connection to Amazon Games. The repositor
   mission). The support list has 609 quests now (574 before), and 1,835 board missions can run (36 before). Not yet: the projects of a
   town (the upgrades), the PvP and outpost missions (the faction board shows no PvP part), and the patrol missions (each patrol row of
   the game data is a PvP mission).
+- More quest items (stage QG8). A quest that asks you to bring an item from a quest object gives the item when you use the object: for
+  example the wine bottles of `12A_Side_14_CollectWine` on the beach of Monarch's Bluffs (press E at a bottle; the HUD counts "1/3"),
+  the coffins of `02A_Side08_02_LostReturned`, the grain sacks and the vegetable crates of `06A_MSQ_05_FixWindmills` in Windsward, and
+  the pirate crates of `06A_MSQ_11_LootPirateCrates` and the rune tablet of `12A_MSQ_08_DestroyRune` that you destroy. The stone
+  tablets, the crystal cluster, the ancient map, and the bear urine of more quests can be used now. A quest whose game event gives a
+  random item gives it: the work order lottery of `C10A_Q1_Build` in Cutlass Keys gives one of three tickets at the start. The support
+  list has 652 quests now (609 before), and a new character completes 80 (71 before). Not yet: the items of the creatures of a dungeon
+  or of an encounter that the server does not run, the chests of a place with no shape, the artifacts of season 8, the work orders of a
+  crafting quest, and the soul fragments of the lost memories (`Quest_42000`). A faction mission of the old faction cannot be handed in
+  after a faction change, and the faction board shows "Daily Bonuses Available 3/3" again at 00:00 UTC with no new open.
 - Territory standing (stage QG1). The standing of a territory goes up to rank 300: the points above a rank go to the next rank, and each new rank gives character experience (for example 125 at rank 1 of Windsward) and one standing point ("token"). A quest gives its standing to the territory where you hand it in (the notice shows "+100 Windsward Standing"). Open the map (M), the second tab "Territories": a territory with a free token shows a badge; click it to "Claim your reward" and choose a card (Standing Gain, XP Gain, Gather, Station Fee, Trading Fee, Storage, House Ownership; the house card keeps the token). Standing Gain, XP Gain, and Gather act now while you are in that territory; the other cards are kept for their later systems. The standing, the tokens, and the cards stay after a restart. The Windsward main story goes on after "Feast to Famine" (Marcel Dupont, then Saatvik Agrawal).
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.

@@ -579,8 +579,12 @@ public:
      * (TaskGatherItems, TaskGatherAndReturnItems: ItemDropVC names the gatherable id) for one character: the roll of each matching
      * active task with its ItemDropProbability, PauseAndClearLootOnTaskComplete, AwardOnlyOnce, and GuranteedDropAttempts. No change: the
      * caller gives the items in its own transaction, writes the award rows there (write_drops), and calls drops_done after the commit.
+     * Stage QG8: `questObject`: the gather or the destruction of a quest object (a gatherable row of the quest form, a destructible or a
+     * proximity quest object); a possession task (TaskHaveItems, TaskHaveAndReturnItems) whose ItemDropVC names its row also rolls (client
+     * text 0x825F310 and 0x825F470: "AI loot, quest gatherables, or other gatherables"; the drop predicate 0x3B03890 has no gather-mode gate
+     * for the source type 4, 0x3B039CE to 0x3B039F3).
      */
-    [[nodiscard]] std::vector<QuestDrop> plan_drops(Entity& entity, bool gather, const std::vector<std::string>& sources);
+    [[nodiscard]] std::vector<QuestDrop> plan_drops(Entity& entity, bool gather, const std::vector<std::string>& sources, bool questObject = false);
     /**
      * Stage QG5a: the quest drops of a successful open of a chest (ChestDropProbability: "0-100, probability to drop items for loot
      * chests/POI loot", client 0x825F500) for one character. Each Active possession task with ChestDropProbability above 0 and

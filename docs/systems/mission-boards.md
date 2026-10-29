@@ -245,7 +245,9 @@ leaf of its template runs the template.
 - PatrolTask (case 66): the duration of PatrolDuration and the POIs of PatrolPoi1 to PatrolPoi4. One POI makes one TaskGoToDuration with
   the id, the CRC, and the index of the template task, whose target is the whole seconds of the duration (0 seconds: 1). A row with no
   POI or more than one POI changes the tree (no task, or a child for each POI and a container): refused (no row of the build has it)
-  [client; agent for the refusal].
+  [client; agent for the refusal]. The place of the one-POI task is the effective common POITag of the leaf (POITagOverride, else the
+  template): PatrolPoi1 only selects the branch (0x4461547); the branch gives the existing common block to the constructor (0x4461912,
+  0x446191A) [client; code review of stage QG6b, finding QG6BR-R4].
 - LootTagOverride on an item leaf, RequiredFortControlStatus, and a column that the backend does not know are refused (no row of the
   build has the first two) [agent].
 - The success event of the row pays the hand-in (stage QG6a). The failure event (FailureGameEventIdOverride) has no consumer: no mission
@@ -284,8 +286,8 @@ The static read is `~/Games/soulwarden/work/evidence/quests/qg6b/implement/stati
   an offer of the index that is available, a binding that the backend runs, no active instance. The instance has isCommunityGoal 0,
   the destination the claim, and the origin territory of the representative. The offer stays in its place with available 0 and the
   instance (0x495A166) [client; live].
-- The hand-in 2461 at the representative of the instance: the open faction board of that representative, its service and its source;
-  then the plan of the quest hand-in with the return task (the rule of a town board). The faction rewards of the success event go to
+- The hand-in 2461 at the representative of the instance: the open faction board of that representative, its service and its source,
+  and the faction of the character is the faction of the board (finding QG6BR-R5); then the plan of the quest hand-in with the return task (the rule of a town board). The faction rewards of the success event go to
   the faction of the character (stage QG7). The row `character_faction_offers` (schema 20) has the mission as unavailable for the window
   of the open, in the transaction of the hand-in [agent].
 - After a world entry the destination of a faction mission is the claim of its origin territory (a value of the data).
@@ -301,12 +303,22 @@ The static read is `~/Games/soulwarden/work/evidence/quests/qg6b/implement/stati
 - The uses are in the entity (`Entity::dailyBonuses`) and in the row `character_daily_bonuses` (schema 20, the transaction of the hand-in).
   The GameEvent state (slot 68, type 497, field 1) gives them to the owner: a character with no use has no fragment [client 0x31E5850;
   live: "Daily Bonuses Available 3/3", then "2/3"].
+- At the reset time of a use (00:00 UTC) a timer of the world clock marks the GameEvent state of the owner: the state goes again with a
+  new sequence and the uses 0 (the client keeps its replicated count until a new state: GetAvailableDailyBonuses 0x31F1140). The timer
+  starts at the world entry and after a use; it is bound to the character and to the reset time (a newer use has its own timer)
+  [client; code review of stage QG6b, finding QG6BR-R2; `Missions::daily_reset_due`].
+- The experience of the daily bonus: the ordinary modifiers first (the GainXP card of the territory and its truncation: 0x31F4AF8,
+  0x31F4DF0), then the daily factor in f32 and the truncation (0x31F4DFD, 0x31F4E02); the commit does not apply the card to that amount
+  again (`Plan::cardedExperience`). 90 experience with the card of 3 percent: trunc(90 × 1.03) = 92, × 3 = 276 [client; finding
+  QG6BR-R3].
 - A town mission (isCommunityGoal 1) has no daily bonus (the preview path of the bonus is for the objectives of the type Mission).
 
 ### The patrols (stage QG6b)
 
 - A PatrolTask (66) is the time in a POI of its tags: each look of the places adds the time since the last sample when that sample was
-  inside; outside, the time and the progress stay [client: the update 0x3B094A0]. The progress is the whole seconds (0x3B095C7); the
+  inside; outside, the time and the progress stay [client: the update 0x3B094A0]. Only an inside sample publishes the progress: an
+  outside sample keeps the saved sum (the outside branch 0x3B095E8 does not call the setter 0x3B095DD), and the next inside sample
+  publishes it [client; code review of stage QG6b, finding QG6BR-R7]. The progress is the whole seconds (0x3B095C7); the
   target is the whole seconds of the duration; the task is StayActive (CompleteActive when satisfied: 0x3B0101C) [client; case QG6BD].
 - The backend samples at each accepted position and one second after an inside sample while the task is not done (a character that
   stands still) [agent]. The dwell time is a value of the world entry: the progress stays in the row of the task.
@@ -327,6 +339,22 @@ fails on the tree of stage QG6a and passes now.
 - QG6AR-R6 (QG6AR6): the mission board diagnostic needs the harness gate, also on the admin path.
 - QG6AR-R7: the second computation of the support manifest reads the boards of the interaction data of format 5 and fails at a
   difference of the board counts (an evidence script, not a source file).
+
+### The corrections of the code review of stage QG6b (in stage QG8)
+
+Each finding of `~/Games/soulwarden/work/evidence/quests/qg6b/code-review/FINDINGS.md` has a case of `tests/review_qg6b_tests.cpp` that
+fails on the tree of stage QG6b and passes now (the fixture of the cases of QG6b is in `tests/support/mission_qg6b_fixture.h`).
+
+- QG6BR-R1 (QG6BR1): the town buckets are the whole partition of the client: each enabled town row of the goals Gather, Kill, and Explore
+  is a member, but a row of the member `townExcluded` (the tool leaves out a row whose objective has no row of the quest data); a missing
+  member refuses the whole file, also an empty bucket list with town rows [client: the town selection of QG6a uses the complete list].
+- QG6BR-R2 (QG6BR2): the daily reset reaches the connected owner at 00:00 UTC (the rule above).
+- QG6BR-R3 (QG6BR3): the order of the GainXP card and the daily factor (the rule above).
+- QG6BR-R4 (QG6BR4): the place of a patrol of one POI (the override rules above).
+- QG6BR-R5 (QG6BR5): the hand-in at a faction board needs the faction of the board (the rule of the accept); a faction change closes an
+  open faction board of the old faction (`Missions::faction_changed`). A refusal changes nothing [agent: the rule of the accept 3816].
+- QG6BR-R6 (QG6BR6): a skinned body is a gather drop source only when the backend gathers its skinning row (docs/systems/quests.md).
+- QG6BR-R7 (QG6BR7): an outside patrol sample keeps the published progress (the rule of the patrols above).
 
 ## The values of this build
 

@@ -138,6 +138,10 @@ ITEM_TYPE = "MasterItemDefinitions"
 WEAPON_TYPE = "WeaponItemDefinitions"
 # Stage QG5b: the task tables of the quests (their KillEnemyType names the game event of a task: the rule of a direct quest gimmick).
 TASK_TYPE = "ObjectiveTasks"
+# Stage QG8: the loot tables (a quest row whose loot table gives nothing is a quest object: Tables.empty_loot).
+LOOT_TABLE_TYPE = "LootTablesData"
+# The loot tables of a quest object: no table, Empty, or a table whose each entry is an item of the quantity 0 (stage QG8).
+NO_LOOT = ("", "Empty")
 GATHERING_SKILLS = ("Mining", "Logging", "Harvesting", "Skinning")
 GATHER_OPTION = "GatherOption"
 CONTROLLER_CLASS = uuid.UUID("0b382af4-7946-4698-9223-206d1187b612")
@@ -275,15 +279,26 @@ class Tables:
         self.weapons: dict[str, dict] = {}
         # Stage QG5b: the game events (lower case) that a quest task names (KillEnemyType of the task tables).
         self.task_events: set[str] = set()
+        # Stage QG8: the loot tables (lower case) that give nothing: each entry is an item (no [LTID] or [LBID] reference) whose quantity
+        # cell of the table NAME_Qty is 0 (QuestInteractable: FlintT1 with the quantity 0, the loot table of 48 quest rows).
+        self.empty_loot: set[str] = set()
+        loot_rows: dict[str, dict] = {}
         found = set()
         for path in sources.paths(TABLES_FOLDER, ".datasheet"):
             data = sources.read(path)
             if data is None:
                 continue
             kind = sheet_type(data)
-            if kind not in (GATHERABLE_TYPE, VARIATION_TYPE, RANK_TYPE, EVENT_TYPE, ITEM_TYPE, WEAPON_TYPE, TASK_TYPE):
+            if kind not in (GATHERABLE_TYPE, VARIATION_TYPE, RANK_TYPE, EVENT_TYPE, ITEM_TYPE, WEAPON_TYPE, TASK_TYPE, LOOT_TABLE_TYPE):
                 continue
             sheet = Sheet(data)
+            if kind == LOOT_TABLE_TYPE:
+                if "LootTableID" in sheet.columns:
+                    for row in range(sheet.row_count):
+                        identifier = sheet.source(row, "LootTableID").strip().lower()
+                        if identifier and identifier not in loot_rows:  # The first table of the byte order has the row (loot_tables.py).
+                            loot_rows[identifier] = {name: sheet.source(row, name).strip() for name in sheet.columns}
+                continue
             if kind == TASK_TYPE:
                 if "KillEnemyType" in sheet.columns:
                     for row in range(sheet.row_count):
@@ -305,6 +320,13 @@ class Tables:
             elif kind == WEAPON_TYPE:
                 self._weapons(sheet, path)
         sources.check_complete()
+        for identifier, cells in loot_rows.items():
+            entries = [(name, value) for name, value in cells.items() if re.fullmatch(r"Item\d+", name) and value]
+            quantity = loot_rows.get(f"{identifier}_qty")
+            if identifier.endswith(("_qty", "_probs")) or not entries or quantity is None:
+                continue
+            if all(not value.startswith("[") and re.fullmatch(r"0(-0)?", quantity.get(name, "")) for name, value in entries):
+                self.empty_loot.add(identifier)
         for kind in (GATHERABLE_TYPE, VARIATION_TYPE, RANK_TYPE, EVENT_TYPE, ITEM_TYPE, WEAPON_TYPE):
             if kind not in found:
                 raise Failure(f"the game copy has no table of the type {kind}")
@@ -408,10 +430,12 @@ class Tables:
                 if "GatheringMultiplier" in sheet.columns else 0.0}
 
 
-def quest_form(cells: dict, what: str) -> bool:
+def quest_form(cells: dict, what: str, empty_loot: set[str] | frozenset[str] = frozenset()) -> bool:
     """@return True for a gatherable row with the form of a row of the quest tables (stage QG5a, the direct bindings): IsLootContainer, the
-    loot table Empty or blank (no roll: the result is the quest drops of the tasks), and a GameEventID (the event of the quests)."""
-    return (flag(cells.get("IsLootContainer", ""), f"IsLootContainer of {what}") and cells.get("FinalLootTable", "").strip() in ("", "Empty")
+    loot table Empty or blank (no roll: the result is the quest drops of the tasks; stage QG8: or a table that gives nothing, empty_loot),
+    and a GameEventID (the event of the quests)."""
+    loot = cells.get("FinalLootTable", "").strip()
+    return (flag(cells.get("IsLootContainer", ""), f"IsLootContainer of {what}") and (loot in NO_LOOT or loot.lower() in empty_loot)
             and bool(cells.get("GameEventID", "").strip()))
 
 
@@ -728,10 +752,11 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
             return -1
         row = row_of(entry["gatherable"], f"{what}: the variation row {table}/{variant}")
         if table in QUEST_TABLES or table in PROXIMITY_TABLES:
-            # A quest object (stage 1.8c): its loot is the quest drops; a loot container with the loot table Empty is not a refusal.
+            # A quest object (stage 1.8c): its loot is the quest drops; a loot container with the loot table Empty is not a refusal. Stage
+            # QG8: nor a loot container whose loot table gives nothing (QuestInteractable: one item of the quantity 0) [data].
             rows[row]["quest"] = True
-            rows[row]["unsupported"] = [cause for cause in rows[row]["unsupported"]
-                                        if not (cause == LOOT_CONTAINER_CAUSE and rows[row]["loot"] in ("", "Empty"))]
+            no_loot = rows[row]["loot"] in NO_LOOT or rows[row]["loot"].lower() in tables.empty_loot
+            rows[row]["unsupported"] = [cause for cause in rows[row]["unsupported"] if not (cause == LOOT_CONTAINER_CAUSE and no_loot)]
         return row
 
     # The natural nodes: the distribution file of each region.
@@ -819,8 +844,8 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
             counts["directNoRow"] = counts.get("directNoRow", 0) + 1
             return None
         cells = tables.rows[identifier.lower()][1]
-        gimmick = not quest_form(cells, f"the direct gatherable row {identifier}") and task_event_form(cells, tables.task_events)
-        if not gimmick and not quest_form(cells, f"the direct gatherable row {identifier}"):
+        gimmick = not quest_form(cells, f"the direct gatherable row {identifier}", tables.empty_loot) and task_event_form(cells, tables.task_events)
+        if not gimmick and not quest_form(cells, f"the direct gatherable row {identifier}", tables.empty_loot):
             counts["directNotQuest"] = counts.get("directNotQuest", 0) + 1
             return None
         if gimmick:

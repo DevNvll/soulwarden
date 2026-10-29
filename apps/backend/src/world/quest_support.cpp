@@ -384,6 +384,12 @@ struct QuestSupport::Index {
     /** The gatherable rows with a node in the world (lower case id). */
     std::unordered_set<std::string> gatherRows;
     /**
+     * Stage QG8: the rows of the quest objects of the world (a gatherable row of the quest form that the backend gathers, a destructible or a
+     * proximity quest object): a possession task (TaskHaveItems, TaskHaveAndReturnItems) whose ItemDropVC names one drops at its gather
+     * (Quests::plan_drops, questObject).
+     */
+    std::unordered_set<std::string> questObjectRows;
+    /**
      * Stage QG5a: the cause of a game event whose only gatherable rows of the world the backend does not gather (a refusal cause of the row,
      * or a rank of a trade skill with no source: AzothStaff), for the block of its task (lower case event id).
      */
@@ -412,6 +418,15 @@ struct QuestSupport::Index {
     std::vector<std::vector<std::string>> gives;
     /** The items of a gather loot root (TaskRequireGatherItems). */
     std::unordered_set<std::string> gatherItems;
+    /**
+     * Stage QG8: the declared sources of an item that no supported source gives (the reason of its task in the manifest): the loot tables
+     * that have the item (an entry, or a candidate of a bucket of the table), the tables that name each table, the roots of the loot data
+     * above a table (the loot of a vitals row, a loot container item, a chest root), and the recipes of each output item.
+     */
+    std::unordered_map<std::string, std::vector<std::uint32_t>> itemTables;
+    std::vector<std::vector<std::uint32_t>> tableParents;
+    std::unordered_map<std::uint32_t, std::vector<std::string>> tableRoots;
+    std::unordered_map<std::string, std::vector<std::uint32_t>> itemRecipes;
     /** The achievements of the lore pages (the bits that a read gives at each time; stage 2.5a). */
     std::unordered_set<std::string> worldBits;
     /** The level cap of the progression tables (the level that kills give a new character). */
@@ -426,6 +441,11 @@ struct TaskFact {
     std::string supplier;
     /** Stage 1.8f (finding QR8E-R5): the item (lower case) of a task that only a quest gives: the history must have it. Empty: none. */
     std::string questItem;
+    /**
+     * Stage QG8: the class of the first declared source of an item that no supported source gives ("task drop", "chest drop", "loot table",
+     * "recipe", "none"; the reason has each source with its cause). Empty: the item has a source, or the task has no item.
+     */
+    std::string itemSource;
     /**
      * Stage QG5b: the rank of a trade skill that the producer of the game event of the task needs (a gatherable row with a rank gate of a
      * skill that only a hand-in gives: AzothStaff): the history must have it. An empty skill: none.
@@ -480,6 +500,40 @@ struct QuestSupport::History {
 };
 
 namespace {
+
+/**
+ * Stage QG8: @return The items (lower case) that a loot table reaches: its item entries, the candidates of its buckets, and the same of the
+ * tables that it names (each table one time). No data or no table: none.
+ */
+std::vector<std::string> table_items(const gamedata::LootTables* tables, const std::string& root) {
+    std::vector<std::string> items;
+    const gamedata::LootTable* first = tables != nullptr && tables->loaded() ? tables->table(root) : nullptr;
+    if (first == nullptr) {
+        return items;
+    }
+    const gamedata::LootData& loot = tables->data();
+    std::vector<std::size_t> pending{static_cast<std::size_t>(first - loot.tables.data())};
+    std::unordered_set<std::size_t> seen;
+    while (!pending.empty()) {
+        const std::size_t at = pending.back();
+        pending.pop_back();
+        if (at >= loot.tables.size() || !seen.insert(at).second) {
+            continue;
+        }
+        for (const gamedata::LootEntry& entry : loot.tables[at].entries) {
+            if (entry.kind == gamedata::LootEntryKind::table) {
+                pending.push_back(entry.index);
+            } else if (entry.kind == gamedata::LootEntryKind::bucket && entry.index < loot.buckets.size()) {
+                for (const gamedata::BucketCandidate& candidate : loot.buckets[entry.index].candidates) {
+                    items.push_back(lower_text(candidate.item));
+                }
+            } else if (entry.kind == gamedata::LootEntryKind::item) {
+                items.push_back(lower_text(entry.id));
+            }
+        }
+    }
+    return items;
+}
 
 /**
  * Stage QG5a: @return True when an ordinary chest of the world can give the quest drop of a task (ChestDropProbability; the rule of
@@ -624,8 +678,18 @@ void QuestSupport::build() {
             }
             if (task.type == task_type::kTriggerGameEvent && !task.targets.empty()) {
                 if (const gamedata::QuestGameEvent* event = data.game_event(task.targets.front()); event != nullptr && !event->item.empty()) {
-                    index.gives[at].push_back(lower_text(event->item));
-                    index.questItems.emplace(lower_text(event->item), "the game event " + event->id);
+                    // Stage QG8: an ItemReward "[LTID]NAME" gives the items of its loot table (Quests::Plan::apply_event): each item that
+                    // the table reaches (the rule of the world items: the tags and the conditions are not tested). A table that the loot
+                    // data does not have gives nothing.
+                    if (const std::string table = gamedata::reward_table(event->item); !table.empty()) {
+                        for (const std::string& item : table_items(options.lootTables, table)) {
+                            index.gives[at].push_back(item);
+                            index.questItems.emplace(item, "the loot table " + table + " of the game event " + event->id);
+                        }
+                    } else {
+                        index.gives[at].push_back(lower_text(event->item));
+                        index.questItems.emplace(lower_text(event->item), "the game event " + event->id);
+                    }
                 }
             }
         }
@@ -730,10 +794,20 @@ void QuestSupport::build() {
             index.killCategories.insert(categories.begin(), categories.end());
             index.dropCategories.insert(drops.begin(), drops.end());
             // Stage QG6b (GATHERDROP.md): the gather of a skinned body matches a category of its creature too (Gathering::complete).
+            // Code review of stage QG6b, finding QG6BR-R6: only a skinning row that the backend gathers (the rule of add_row below: no
+            // refusal cause, no rank gate of a trade skill that is not a gathering skill; Gathering::check_gates).
             const bool skinnable = options.gatheringData != nullptr
                                    && std::any_of(kind.bodies.begin(), kind.bodies.end(), [&](const gamedata::CreatureBody& body) {
                                           const gamedata::CreatureSlice& slice = creatures->slices()[body.slice];
-                                          return options.gatheringData->creature(slice.asset, slice.subId).has_value();
+                                          const std::optional<gamedata::GatheringLink> link = options.gatheringData->creature(slice.asset, slice.subId);
+                                          if (!link || link->row >= options.gatheringData->rows().size()) {
+                                              return false;
+                                          }
+                                          const gamedata::GatherableRow& skin = options.gatheringData->rows()[link->row];
+                                          return skin.unsupported.empty()
+                                                 && !(skin.level > 0 && !skin.tradeskill.empty()
+                                                      && std::find(kGatheringSkills.begin(), kGatheringSkills.end(), skin.tradeskill)
+                                                             == kGatheringSkills.end());
                                       });
             if (skinnable) {
                 index.skinCategories.insert(drops.begin(), drops.end());
@@ -783,6 +857,9 @@ void QuestSupport::build() {
             return;
         }
         index.gatherRows.insert(lower_text(gatherable.id));
+        if (gatherable.quest) {
+            index.questObjectRows.insert(lower_text(gatherable.id));
+        }
         if (!gatherable.event.empty()) {
             index.gatherSources[lower_text(gatherable.event)].push_back(Index::GatherSource{kind, "", 0, item_of(gatherable)});
         }
@@ -891,6 +968,7 @@ void QuestSupport::build() {
                 index.objectTags.insert(object.tag);
             }
             index.gatherRows.insert(lower_text(row.id));
+            index.questObjectRows.insert(lower_text(row.id));
         }
     }
     // Stage QG5a: the points of interest of the ordinary chests of the chest data (the quest drops of a chest: a chest in a point of interest
@@ -931,7 +1009,9 @@ void QuestSupport::build() {
             }
             const bool gather = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
             for (const std::string& source : task.dropSources) {
-                if (gather ? index.gatherRows.count(source) != 0 || index.skinCategories.count(source) != 0 : index.dropCategories.count(source) != 0) {
+                // Stage QG8: a possession task also drops at the gather of a quest object of its ItemDropVC (Quests::plan_drops).
+                if (gather ? index.gatherRows.count(source) != 0 || index.skinCategories.count(source) != 0
+                           : index.dropCategories.count(source) != 0 || index.questObjectRows.count(source) != 0) {
                     index.gives[at].push_back(lower_text(task.itemName));
                     index.questItems.emplace(lower_text(task.itemName), "the quest drop of " + source);
                     break;
@@ -1031,6 +1111,51 @@ void QuestSupport::build() {
             }
         }
     }
+    // Stage QG8: the declared loot and recipe sources of the items (the reason of an item with no source; no rule of a source).
+    if (options.lootTables != nullptr && options.lootTables->loaded()) {
+        const gamedata::LootData& loot = options.lootTables->data();
+        index.tableParents.assign(loot.tables.size(), {});
+        std::vector<std::vector<std::uint32_t>> bucketTables(loot.buckets.size());
+        for (std::uint32_t table = 0; table < loot.tables.size(); ++table) {
+            for (const gamedata::LootEntry& entry : loot.tables[table].entries) {
+                if (entry.kind == gamedata::LootEntryKind::table && entry.index < loot.tables.size()) {
+                    index.tableParents[entry.index].push_back(table);
+                } else if (entry.kind == gamedata::LootEntryKind::bucket && entry.index < loot.buckets.size()) {
+                    bucketTables[entry.index].push_back(table);
+                } else if (entry.kind == gamedata::LootEntryKind::item) {
+                    index.itemTables[lower_text(entry.id)].push_back(table);
+                }
+            }
+        }
+        for (std::uint32_t bucket = 0; bucket < loot.buckets.size(); ++bucket) {
+            for (const gamedata::BucketCandidate& candidate : loot.buckets[bucket].candidates) {
+                std::vector<std::uint32_t>& tables = index.itemTables[lower_text(candidate.item)];
+                tables.insert(tables.end(), bucketTables[bucket].begin(), bucketTables[bucket].end());
+            }
+        }
+        for (const gamedata::LootVitals& base : loot.bases) {
+            if (base.table && *base.table < loot.tables.size()) {
+                index.tableRoots[*base.table].push_back("the loot of the vitals row " + base.id);
+            }
+        }
+        for (const auto& [item, root] : loot.containerRoots) {
+            if (const std::optional<std::uint32_t> table = options.lootTables->table_index(root)) {
+                index.tableRoots[*table].push_back("the loot container item " + item);
+            }
+        }
+        for (const std::string& root : loot.chestRoots) {
+            if (const std::optional<std::uint32_t> table = options.lootTables->table_index(root)) {
+                index.tableRoots[*table].push_back("the chest root " + root);
+            }
+        }
+    }
+    if (const gamedata::CraftingData* crafting = options.craftingData; crafting != nullptr) {
+        for (std::uint32_t at = 0; at < crafting->recipes().size(); ++at) {
+            if (!crafting->recipes()[at].item.empty()) {
+                index.itemRecipes[lower_text(crafting->recipes()[at].item)].push_back(at);
+            }
+        }
+    }
     if (options.progressionTables != nullptr && options.progressionTables->loaded()) {
         index.levelCap = options.progressionTables->level_cap();
     }
@@ -1044,6 +1169,99 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
                                                                                                    : data.objectives()[at];
     const WorldOptions& options = m_world.options();
     const std::string id = lower_text(objective.id);
+    // Stage QG8: the declared sources of the item of a possession or equip task that no supported source gives, each with the cause that the
+    // backend does not run it, and the class of the first one (the precedence of the census of stage QG8: the task drop, the chest drop, a
+    // loot table, a recipe; none). No rule of a source: only the facts of the data files.
+    const auto item_causes = [&](const QuestTask& task, bool drop) -> std::pair<std::string, std::string> {
+        std::string source;
+        std::vector<std::string> causes;
+        const auto add = [&](const char* kind, std::string cause) {
+            if (source.empty()) {
+                source = kind;
+            }
+            causes.push_back(std::move(cause));
+        };
+        const bool gather = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
+        if (task.type != task_type::kEquipItem && task.dropChance > 0.0 && !task.dropSources.empty()) {
+            if (!drop) {
+                add("task drop", "the quest drop of " + task.dropSources.front() + ": MinGearScore stops the drops (0x825F5C0)");
+            }
+            for (std::size_t at = 0; drop && at < task.dropSources.size() && at < 3; ++at) {
+                const std::string& name = task.dropSources[at];
+                const gamedata::GatheringData* gathering = options.gatheringData;
+                const std::optional<std::uint32_t> found = gathering != nullptr ? gathering->find_row(name) : std::nullopt;
+                const std::string* kept = options.creatureData != nullptr ? options.creatureData->kept_out(name) : nullptr;
+                std::string cause;
+                if (found && !gathering->rows()[*found].unsupported.empty()) {
+                    cause = "the gatherable row is refused (" + gathering->rows()[*found].unsupported.front() + ")";
+                } else if (found && !gather && !gathering->rows()[*found].quest) {
+                    cause = "a gatherable row that is not a quest object (a possession task drops only at a kill or at a quest object)";
+                } else if (found) {
+                    cause = "no node or quest object of the open world has the row";
+                } else if (gather && index.dropCategories.count(name) != 0) {
+                    cause = "a creature of the world has the category, and the backend gathers no skinning row of it (a refused skinning row, "
+                            "or no skinning)";
+                } else if (kept != nullptr) {
+                    cause = "no creature of the open world has the category (" + *kept + ")";
+                } else {
+                    cause = "no creature of the open world data has the category, and the gathering data has no row of it (an instance, an "
+                            "object that the data tools do not find, or no placement)";
+                }
+                add("task drop", "the quest drop of " + name + ": " + cause);
+            }
+        }
+        if (task.type != task_type::kEquipItem && task.chestChance > 0.0) {
+            std::string cause = task.minGearScore != 0 ? "MinGearScore stops the drops"
+                                : task.poiTags.empty()   ? "no available chest of the chest data"
+                                                         : "no available chest of the chest data in a point of interest of the tags";
+            for (const std::string& tag : task.poiTags) {
+                if (const std::string shape = options.poiData != nullptr ? options.poiData->cause(tag) : std::string{}; !shape.empty()) {
+                    cause += " (" + tag + ": " + shape + ")";
+                    break;
+                }
+            }
+            add("chest drop", "the quest drop of the chests: " + cause);
+        }
+        const std::string item = lower_text(task.itemName);
+        if (const auto tables = index.itemTables.find(item); tables != index.itemTables.end() && options.lootTables != nullptr) {
+            // The roots above the first table (each table one time, at most 64 steps).
+            std::vector<std::string> roots;
+            std::vector<std::uint32_t> pending = tables->second;
+            std::unordered_set<std::uint32_t> seen;
+            for (std::size_t steps = 0; !pending.empty() && steps < 64 && roots.size() < 3; ++steps) {
+                const std::uint32_t table = pending.back();
+                pending.pop_back();
+                if (!seen.insert(table).second) {
+                    continue;
+                }
+                if (const auto found = index.tableRoots.find(table); found != index.tableRoots.end()) {
+                    roots.insert(roots.end(), found->second.begin(), found->second.end());
+                }
+                pending.insert(pending.end(), index.tableParents[table].begin(), index.tableParents[table].end());
+            }
+            roots.resize(std::min<std::size_t>(roots.size(), 3));
+            std::string above;
+            for (const std::string& root : roots) {
+                above += (above.empty() ? "" : ", ") + root;
+            }
+            add("loot table", "the loot table " + options.lootTables->table(tables->second.front()).id + ": no source of the world reaches it ("
+                                  + (above.empty() ? std::string("no root of the loot data above it") : "above it: " + above) + ")");
+        }
+        if (const auto recipes = index.itemRecipes.find(item); recipes != index.itemRecipes.end() && options.craftingData != nullptr) {
+            const gamedata::Recipe& recipe = options.craftingData->recipes()[recipes->second.front()];
+            add("recipe", "the recipe " + recipe.id + ": "
+                              + (!recipe.unsupported.empty() ? "the crafting refuses it (" + recipe.unsupported.front() + ")"
+                                                             : std::string("an ingredient with no supported source")));
+        }
+        if (causes.empty()) {
+            add("none", "no task drop, chest drop, loot table, or recipe of the data files has it");
+        }
+        std::string text;
+        for (const std::string& cause : causes) {
+            text += (text.empty() ? "" : "; ") + cause;
+        }
+        return {source, text};
+    };
     Row row;
     row.kind = is_developer(index.tables[at])     ? "developer"
                : data_rules::same_text(objective.type, "Mission") ? "missionTemplate"
@@ -1472,7 +1690,8 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
             if (drop) {
                 const bool gather = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
                 for (const std::string& source : task.dropSources) {
-                    if (gather ? index.gatherRows.count(source) != 0 || index.skinCategories.count(source) != 0 : index.dropCategories.count(source) != 0) {
+                    if (gather ? index.gatherRows.count(source) != 0 || index.skinCategories.count(source) != 0
+                               : index.dropCategories.count(source) != 0 || index.questObjectRows.count(source) != 0) {
                         dropSource = source;
                         break;
                     }
@@ -1497,8 +1716,11 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
                 fact.supplier = quest->second + " (the history decides)";
                 fact.questItem = item;
             } else {
-                block("no supported source gives the item " + task.itemName
-                      + " (no quest drop, no loot of a creature, a chest, or a node of the world, no recipe of such items, no quest reward)");
+                // Stage QG8: the declared sources of the item, each with the cause that the backend does not run it (the classes that the
+                // manifest keeps apart: docs/systems/quests.md, the item sources of stage QG8).
+                const auto [source, causes] = item_causes(task, drop);
+                fact.itemSource = source;
+                block("no supported source gives the item " + task.itemName + " (" + causes + ")");
             }
             break;
         }
@@ -2381,6 +2603,7 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
     rows.reserve(objectives.size());
     std::map<std::string, std::uint64_t> kinds;
     std::map<std::string, std::uint64_t> firstReasons;
+    std::map<std::string, std::uint64_t> itemSources;
     std::uint64_t supported = 0;
     std::map<std::string, std::uint64_t> supportedKinds;
     // Stage QG6a: the board mission of each template row whose evaluation the row keeps (the first supported one, else the first one).
@@ -2412,6 +2635,13 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
             ++supportedKinds[row.kind];
         } else if (row.kind == "objective") {
             ++firstReasons[reason_kind(row.blocked.empty() ? "not supported" : row.blocked.front())];
+            // Stage QG8: the item tasks with no supported source of the objectives that are not supported, by the class of the first
+            // declared source.
+            for (const TaskFact& fact : row.tasks) {
+                if (!fact.itemSource.empty()) {
+                    ++itemSources[fact.itemSource];
+                }
+            }
         }
     }
     // The histories.
@@ -2450,6 +2680,9 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
                                  {"supplier", fact.supplier},
                                  {"questItem", fact.questItem},
                                  {"reason", fact.reason}});
+            if (!fact.itemSource.empty()) {
+                tasks.back()["itemSource"] = fact.itemSource; // Stage QG8: the class of the first declared source.
+            }
             if (!fact.alternatives.empty()) {
                 // Finding QG5C3R-R4: the other producers that a history can use, with their gates.
                 json alternatives = json::array();
@@ -2498,6 +2731,7 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
                               {"supported", supported},
                               {"supportedByKind", supportedKinds},
                               {"firstReasonOfTheOthers", reasons},
+                              {"itemTasksWithNoSource", itemSources},
                               {"boards", m_index->boardCount},
                               {"factionBoards", m_index->factionBoardCount},
                               {"boardMissions", boardMissions},

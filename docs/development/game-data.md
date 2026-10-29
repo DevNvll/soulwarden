@@ -418,6 +418,10 @@ backend. The tool of each system is also in the document of that system.
   data, and counts them (`containerRoots`, `containersWithNoTable`, `containersWithSalvageEvent`). The format stays 2: the member is
   optional, and a file of before opens no container (the hand-in of a quest with a container reward is refused). The loader refuses a root
   whose table is not in the file. With made-up tables the item tables are optional (`check_loot_tool.py`).
+- `loot-tables.json`, stage QG8 ([Quests](../systems/quests.md)): the optional member `eventRoots` (`{EVENT_ID_LOWER: TABLE}`: the loot
+  table of each game event whose ItemReward is "[LTID]NAME"), and these tables and what they reach are roots of the export. The backend
+  rolls the table of the game event of a TaskTriggerGameEvent (`gamedata::reward_table`); it reads the table by its name, not the member.
+  No entry of the build has the typed form "[IID]": an item entry is the bare ItemID.
 - `loot-tables.json`, stage QG2a ([Quests](../systems/quests.md), [Items and equipment](../systems/items-and-equipment.md)): three
   optional members; the format stays 2. `containerEvents`: the SalvageGameEventID of each item of the class LootContainer (the item id in
   lower case to the event id; 319 items of the build, also with no table: the coin purses, `Coin_Stack_500`). A container with a table and
@@ -657,6 +661,15 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage QG8 changes `loot-tables.json` (still format 2: the optional member `eventRoots`, the loot table of each game event whose
+  ItemReward is "[LTID]NAME": 149 events; 111 more tables and 50 more buckets, the tables of before keep their values; an event table
+  that the loot tables do not have is left out and counted, `eventsWithNoTable`) and `gathering-data.json` (still format 1: 21 quest rows
+  whose loot table gives nothing, QuestInteractable, lose the refusal "a loot container"; the nodes, the capitals, and the region files keep
+  their values). Write both from one game copy (`tools/gamedata/loot.sh`, `gathering.sh`). A backend of stage QG6b reads both new files
+  (the member `eventRoots` has no reader there; the 21 rows become quest objects that it gathers). The tool of `mission-data.json` writes the
+  member `townExcluded` (the enabled town rows whose objective has no row: none in this build); the backend of stage QG8 refuses a file
+  whose town buckets miss another enabled town row of the goals Gather, Kill, Explore (finding QG6BR-R1). The file of stage QG6b has every
+  town row in a bucket and loads as it is. `tools/release.sh` takes the two changed files.
 - Stage QG6b changes `mission-data.json` (the member `rewardModifiers`) and `interaction-data.json` (still format 5: the member `claims`
   and the member `provider` of 63 persons; the other objects keep their values). Write both from one game copy
   (`tools/gamedata/missions.sh`, `interactions.sh`). A backend of stage QG6a reads the two new files and gives the same support manifest

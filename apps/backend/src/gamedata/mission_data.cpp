@@ -353,6 +353,27 @@ bool MissionData::load_text(const std::string& text) {
             }
             m_townBuckets.push_back(std::move(bucket));
         }
+        // Code review of stage QG6b, finding QG6BR-R1: the buckets are the whole partition of the client (missions.py town_buckets): each
+        // enabled town row of the goals Gather, Kill, and Explore is a member, but a row that the tool left out (member townExcluded: its
+        // objective has no row of the quest data). A file with a missing member is refused as a whole: the client would offer the row.
+        std::set<std::uint32_t> excluded;
+        if (document.contains("townExcluded")) {
+            if (!document["townExcluded"].is_array()) {
+                return fail("the member townExcluded is not a list");
+            }
+            for (const json& mission : document["townExcluded"]) {
+                if (!mission.is_number_unsigned() || mission.get<std::uint64_t>() > 0xFFFFFFFFULL) {
+                    return fail("the member townExcluded has an entry that is not a mission CRC");
+                }
+                excluded.insert(static_cast<std::uint32_t>(mission.get<std::uint64_t>()));
+            }
+        }
+        for (const MissionRow& row : m_missions) {
+            const bool goal = row.goalType == "Gather" || row.goalType == "Kill" || row.goalType == "Explore";
+            if (row.table == MissionTable::town && row.enabled && goal && members.count(row.crc) == 0 && excluded.count(row.crc) == 0) {
+                return fail("the town mission " + row.id + " is in no town bucket (the buckets are not the whole partition of the client)");
+            }
+        }
     }
     // Stage QG6b: the weights of the faction boards and the reward modifiers of the missions (the source text of each cell).
     if (document.contains("weights")) {

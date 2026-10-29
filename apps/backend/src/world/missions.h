@@ -240,6 +240,17 @@ public:
                                                            std::uint64_t window) const;
     /** Stage QG6b: @return The daily bonuses of the modifier that a character has now (the maximum minus the uses of the day). */
     [[nodiscard]] std::uint8_t daily_bonuses_left(const Entity& character) const;
+    /**
+     * Code review of stage QG6b, finding QG6BR-R2: the reset time of the daily uses of a character came (a timer of the world clock of the
+     * entry or of a use). When the character still has a use with that reset time, its GameEvent state goes again (a new sequence and the
+     * uses 0): the client keeps its replicated count until a new state (GetAvailableDailyBonuses 0x31F1140).
+     */
+    void daily_reset_due(const std::string& characterId, std::uint64_t resetNs);
+    /**
+     * Code review of stage QG6b, finding QG6BR-R5: the faction of a character changed (Factions::change): an open faction board of another
+     * faction closes (no accept and no hand-in through it; the client opens the board again).
+     */
+    void faction_changed(Entity& character);
     /** @return The town offers of a character for its board state now (no change). */
     [[nodiscard]] TownOffers offers_of(const Entity& character, std::uint16_t territory) const;
     /** @return The offers of the inputs and the town entry (the rule of the client; tests). */
@@ -258,6 +269,8 @@ public:
 
 private:
     class BoardHandler;
+    /** Finding QG6BR-R2: the timer of the world clock at the next reset time of the daily uses of a character (none: no use of the day). */
+    void schedule_daily_reset(const Entity& character);
     /** @return The live board entity of a key (a server child), or null. */
     [[nodiscard]] const Entity* board_of(const std::string& key) const;
     /** @return The territory of a board (the territory at its place: World::territory_of). */

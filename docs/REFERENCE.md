@@ -539,7 +539,10 @@ button on "Confirm").
   from stage 3.6a have the gathering roots: with an older `loot-tables.json` each gather is refused. From stage QG5c2 the file has the
   member `encounterObjects`: the gatherable row, the tag, and the template of each start object of the encounter recipes (37; 43 from
   stage QG5c3, with the proximity start objects of the ambushes). From stage QG5c4 a row of a gathering type that is not a tool type is
-  gathered when its restriction is `NoToolNecessary` (9 quest rows: the two chests of the shipwreck of `C10A_Q4`).
+  gathered when its restriction is `NoToolNecessary` (9 quest rows: the two chests of the shipwreck of `C10A_Q4`). From stage QG8 a
+  quest row whose loot table gives nothing (QuestInteractable: one item of the quantity 0) is a quest object (21 more quest rows), and
+  `loot.sh` exports the loot tables of the game events whose ItemReward is "[LTID]NAME" (member `eventRoots`): a quest with such an
+  event (the lottery of `C10A_Q1_Build`) gives the items of a roll of the table ([Quests](systems/quests.md)). Run both tools again.
 - `tools/gamedata/encounters.sh` makes the encounter recipes of the quests (stage QG5c2; `~/.local/share/soulwarden/gamedata/encounter-data.json`,
   format 1, about 0.9 MB, 20 s; [Encounters](systems/encounters.md)): each encounter of a placement of the main world whose events a quest
   task names (67 of 403), with its manager, its participant tracker and detector, its stages in the order of the manager, the spawns of each
@@ -949,7 +952,8 @@ button on "Confirm").
   category of the victim and its kill event; only the characters of the credit list), the items in the bag and the paperdoll (the
   possession tasks, also back below the target for a StayActive task), an equip, a gather (the items of the roll, the game event of the
   row, the tag of a quest object), the quest drops of a kill or a gather (ItemDropVC, ItemDropProbability, AwardOnlyOnce,
-  PauseAndClearLootOnTaskComplete), a craft or a refine, the places (the shapes of `pois.sh` with the accepted position), a screen (2617),
+  PauseAndClearLootOnTaskComplete; from stage QG8 a possession task also drops at the gather or the destruction of a quest object of its
+  ItemDropVC), a craft or a refine, the places (the shapes of `pois.sh` with the accepted position), a screen (2617),
   an interaction with a tag, a child objective (TaskObjective), and the death (TaskDie). The quest objects (`MSQ_Treasure_A` and the other
   objects of the variation table Gatherable_Quest) are open only during a task with their tag. The client messages 3836 (abandon) and 5600
   (reset) end an instance (the undo of its achievement actions, the return of its items, its pin; a reset makes a new instance and keeps the

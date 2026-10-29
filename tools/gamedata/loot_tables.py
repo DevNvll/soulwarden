@@ -65,6 +65,8 @@ Output: {"format": 1,
 "containerEvents": {"<loot container item id in lower case>": "<SalvageGameEventID>", ...}   (stage QG2a; a file of before has none),
 "salvageEvents": {"<event id in lower case>": {"<column>": "<source text>", ...}, ...}   (stage QG2a: the nonblank cells of the row),
 "categoryGroups": {"<vitals category id in lower case>": "<GroupVitalsCategoryId in lower case>", ...}   (stage QG2a),
+"eventRoots": {"<game event id in lower case>": "<table id>", ...}   (stage QG8: an ItemReward "[LTID]NAME" of a game event; a file of
+              before has none),
 "counts": {...}}
 `and` is 1 for AND and 0 for OR. `bonus` is 0 AddToRoll, 1 ClampMax, 2 IgnoreBonus. `kind` is "t" (a table),
 "b" (a bucket), or "i" (an item). A gear score range of 0 and 0 is no range. The entries of a table are in the
@@ -439,6 +441,26 @@ def read_container_roots(sheets: dict[str, list[Sheet]]) -> tuple[dict[str, str]
     return dict(sorted(roots.items())), dict(sorted(events.items()))
 
 
+def read_event_roots(sheets: dict[str, list[Sheet]]) -> dict[str, str]:
+    """@return The loot table of each game event whose ItemReward is a loot table (stage QG8: the typed reference "[LTID]NAME", the prefix of
+    the loot tables; 149 events of the data: the lottery 10A_Q1_Lottery of a quest, the Darkness, the arenas, the invasions), the event id
+    in lower case to the table name. The first row of an event id in the byte order of the paths has it."""
+    roots: dict[str, str] = {}
+    seen: set[str] = set()
+    for sheet in sheets[EVENT_TYPE]:
+        if "EventID" not in sheet.columns or "ItemReward" not in sheet.columns:
+            continue
+        for row in range(sheet.row_count):
+            identifier = sheet.source(row, "EventID").strip()
+            if not identifier or identifier.lower() in seen:
+                continue
+            seen.add(identifier.lower())
+            reward = sheet.source(row, "ItemReward").strip()
+            if reward.startswith(TABLE_PREFIX) and reward[len(TABLE_PREFIX):].strip():
+                roots[identifier.lower()] = reward[len(TABLE_PREFIX):].strip()
+    return dict(sorted(roots.items()))
+
+
 def read_salvage_events(sheets: dict[str, list[Sheet]], wanted: set[str]) -> dict[str, dict[str, str]]:
     """@return The nonblank cells (source text) of each game event of `wanted` (lower case ids): the first row of the id in the byte
     order of the paths, in the event tables with the column EventID (stage QG2a)."""
@@ -722,7 +744,9 @@ def build_tables(sources: Sources) -> dict:
     chest_roots = read_chest_roots(sheets)
     gathering_roots = read_gathering_roots(sheets)
     container_roots, container_events = read_container_roots(sheets)
-    roots = sorted({base[5] for base in bases if base[5]} | set(chest_roots) | set(gathering_roots) | set(container_roots.values()))
+    event_roots = read_event_roots(sheets)
+    roots = sorted({base[5] for base in bases if base[5]} | set(chest_roots) | set(gathering_roots) | set(container_roots.values())
+                   | set(event_roots.values()))
     tables, buckets, loot_counts = read_loot(sheets, roots)
     # A container item whose table the loot tables do not have (stage 1.8d): not exported (the backend keeps such a reward refused).
     other_roots = {root.lower() for root in chest_roots} | {root.lower() for root in gathering_roots} | {base[5].lower() for base in bases if base[5]}
@@ -730,6 +754,12 @@ def build_tables(sources: Sources) -> dict:
     for item in containers_missing:
         root = container_roots.pop(item).lower()
         if root not in other_roots:
+            loot_counts["unresolved"].pop(root, None)
+    # Stage QG8: an event table that the loot tables do not have is not exported (the backend gives no item of such an event).
+    events_missing = sorted(event for event, root in event_roots.items() if root.lower() in loot_counts["unresolved"])
+    for event in events_missing:
+        root = event_roots.pop(event).lower()
+        if root not in other_roots and root not in {value.lower() for value in container_roots.values()}:
             loot_counts["unresolved"].pop(root, None)
     # A gathering root with no table (stage 3.6a: the rows of quests and events of the gatherable tables name roots that no loot table has):
     # the row is refused by the backend (noLoot); the file names each one in its counts. A table that such a root reaches is not read.
@@ -765,6 +795,7 @@ def build_tables(sources: Sources) -> dict:
     document["containerEvents"] = container_events
     document["salvageEvents"] = read_salvage_events(sheets, {event.lower() for event in container_events.values()})
     document["categoryGroups"] = read_category_groups(sheets)
+    document["eventRoots"] = {event: names[root.lower()] for event, root in event_roots.items()}
     document["limits"] = read_limits(sheets)
     items = {entry[1].lower() for table in tables.values() for entry in table[7] if entry[0] == "i"}
     items |= {candidate[0].lower() for candidate in buckets.values() for candidate in candidate}
@@ -774,6 +805,7 @@ def build_tables(sources: Sources) -> dict:
                           "gatheringRoots": len(gathering_roots), "gatheringRootsWithNoTable": len(gathering_missing),
                           "containerRoots": len(container_roots), "containersWithNoTable": len(containers_missing),
                           "containersWithSalvageEvent": len(container_events),
+                          "eventRoots": len(event_roots), "eventsWithNoTable": len(events_missing),
                           "salvageEvents": len(document["salvageEvents"]),
                           "salvageEventsWithNoRow": len({event.lower() for event in container_events.values()} - set(document["salvageEvents"])),
                           "categoryGroups": len(document["categoryGroups"]),

@@ -756,13 +756,14 @@ MissionOverrides QuestData::apply_overrides(const MissionRow& row, const QuestOb
         case task_type::kPatrol: {
             // Case 66 (0x4461465 to 0x446195A): the duration of PatrolDuration and the POIs of PatrolPoi1 to PatrolPoi4. One POI makes one
             // TaskGoToDuration with the id, the CRC, and the index of the template task. No POI makes no task, and more POIs make a child for
-            // each POI and a container: both change the tree of the template (no row of the supported build has them).
+            // each POI and a container: both change the tree of the template (no row of the supported build has them). Code review of stage
+            // QG6b, finding QG6BR-R4: the one-POI branch gives the existing common block to the constructor (0x4461912, 0x446191A): the
+            // place is the effective common POITag (POITagOverride, else the template), not PatrolPoi1 (it only selects the branch, 0x4461547).
             if (row.patrolPois.size() != 1) {
                 result.refusals.push_back("PatrolPoi with " + std::to_string(row.patrolPois.size()) + " POIs on " + task.id
                                           + ": the patrol tree of the client is not the tree of the template (no row of the build)");
             }
             task.duration = row.patrolSeconds.value_or(0.0);
-            task.poiTags = row.patrolPois;
             target = patrol_target(task);
             break;
         }

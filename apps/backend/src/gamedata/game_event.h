@@ -4,6 +4,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -77,5 +78,23 @@ struct QuestGameEvent {
 
 /** Stage QG2a: @return The Azoth amount of the client for an AzothReward text (truncation toward zero, 16 bits), or no value (not a number, below 0). */
 [[nodiscard]] std::optional<std::uint64_t> azoth_amount(const std::string& text);
+
+/** The prefix of a typed loot table reference ("[LTID]NAME": the loot table entries, RepairRecipe of a loot container item). */
+inline constexpr std::string_view kLootTablePrefix = "[LTID]";
+
+/**
+ * Stage QG8: @return The loot table of an ItemReward of the form "[LTID]NAME" (149 game events of the data: the lottery 10A_Q1_Lottery of
+ * C10A_Q1_Build, the Darkness, the arenas, the invasions; the prefix of the loot tables), or an empty text for an item id.
+ */
+[[nodiscard]] inline std::string reward_table(std::string_view item) {
+    if (item.size() <= kLootTablePrefix.size() || item.substr(0, kLootTablePrefix.size()) != kLootTablePrefix) {
+        return {};
+    }
+    std::string_view name = item.substr(kLootTablePrefix.size());
+    while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) {
+        name.remove_prefix(1);
+    }
+    return std::string(name);
+}
 
 } // namespace soulwarden::backend::gamedata

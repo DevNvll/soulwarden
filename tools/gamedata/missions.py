@@ -48,6 +48,7 @@ Output (one line of JSON):
    "events": {EVENT: {"id", COLUMN: TEXT, ...}, ...},
    "weights": [{"table", "cells"}, ...], "flexibleBoards": [{"cells"}, ...], "rewardModifiers": [{"id", "cells"}, ...],
    "townBuckets": [{"key", "goal", "missions": [CRC, ...]}, ...],
+   "townExcluded": [CRC, ...]   (code review of stage QG6b, finding QG6BR-R1: the enabled town rows whose objective has no row),
    "diagnostics": {...}, "counts": {...}}
   The missions are in the order of the tables (the path order of the game copy) and of their rows. "crc" is the CRC-32 of the lower-case
   id (the missionId of the wire); "objectiveCrc" the CRC-32 of the lower-case ObjectiveID (the objectiveId of an active element).
@@ -241,6 +242,13 @@ def flat_order(keys: list[int]) -> list[int]:
     return [key for key in slots if key is not None]
 
 
+def town_excluded(missions: list[dict], objective_ids: set[str]) -> list[int]:
+    """@return The CRCs of the enabled town missions whose objective has no row of the quest data: town_buckets leaves them out (code review of
+    stage QG6b, finding QG6BR-R1: the loader refuses a file whose buckets miss another enabled town row)."""
+    return sorted(mission["crc"] for mission in missions if mission["table"] == "town"
+                  and mission["cells"].get("Enabled", "1") in ("1", "1.0", "true", "True") and mission["objective"].lower() not in objective_ids)
+
+
 def town_buckets(missions: list[dict], objective_ids: set[str]) -> list[dict]:
     """@return The goal buckets of the town missions in the order of the client (the docstring, item 6)."""
     rows = [mission for mission in missions if mission["table"] == "town"]
@@ -299,7 +307,8 @@ def build(tables: Tables) -> dict:
               "killOverrides": sum(1 for mission in missions if mission["cells"].get("TaskKillContributionOverride")),
               "townBuckets": [[bucket["goal"], len(bucket["missions"])] for bucket in buckets]}
     return {"format": FORMAT, "missions": missions, "projects": projects, "events": events, "weights": weights, "flexibleBoards": boards,
-            "rewardModifiers": modifiers, "townBuckets": buckets, "diagnostics": diagnostics, "counts": counts}
+            "rewardModifiers": modifiers, "townBuckets": buckets, "townExcluded": town_excluded(missions, objective_ids),
+            "diagnostics": diagnostics, "counts": counts}
 
 
 def write(target: Path, document: dict) -> None:

@@ -221,6 +221,7 @@ void Missions::entered(Entity& entity) {
     entity.dailyBonuses = std::move(bonuses);
     if (!entity.dailyBonuses.uses.empty()) {
         m_world.touch(entity.id, ComponentKey::gameEvent);
+        schedule_daily_reset(entity);
     }
     // The destinations of the missions of the character: the live boards of their providers (a value of the world).
     for (QuestInstance& quest : entity.quests.active) {
@@ -819,6 +820,45 @@ std::uint8_t Missions::daily_bonuses_left(const Entity& character) const {
     return used >= faction_rule::kDailyBonuses ? 0 : static_cast<std::uint8_t>(faction_rule::kDailyBonuses - used);
 }
 
+void Missions::faction_changed(Entity& character) {
+    MissionBoardState& state = character.missionBoard;
+    if (state.opened && state.faction && state.providerFaction != character.faction.faction) {
+        state.opened = false;
+        log::write("missions: the faction board %s of character %s closes: the faction of the character changed", state.providerKey.c_str(),
+                   character.characterId.c_str());
+    }
+}
+
+void Missions::schedule_daily_reset(const Entity& character) {
+    const std::uint64_t now = m_world.clock().wall_time_ns(m_world.clock().now());
+    for (const auto& [modifier, use] : character.dailyBonuses.uses) {
+        if (use.resetNs <= now || use.used == 0) {
+            continue;
+        }
+        // One timer for each use of the day (a later use of the same day has the same reset time: the due check sends one state).
+        const std::uint64_t delay = use.resetNs - now;
+        const auto wait = std::chrono::milliseconds(static_cast<std::int64_t>(delay / 1'000'000ULL + (delay % 1'000'000ULL != 0 ? 1 : 0)));
+        const std::string characterId = character.characterId;
+        const std::uint64_t resetNs = use.resetNs;
+        m_world.after(wait, [characterId, resetNs](World& world) { world.missions().daily_reset_due(characterId, resetNs); });
+    }
+}
+
+void Missions::daily_reset_due(const std::string& characterId, std::uint64_t resetNs) {
+    Entity* character = m_world.find_character(characterId);
+    if (character == nullptr) {
+        return; // The character left: its next entry loads the rows and sends the state with the uses of the day (0).
+    }
+    const std::uint64_t now = m_world.clock().wall_time_ns(m_world.clock().now());
+    const bool current = std::any_of(character->dailyBonuses.uses.begin(), character->dailyBonuses.uses.end(),
+                                     [&](const auto& entry) { return entry.second.resetNs == resetNs; });
+    if (!current || now < resetNs) {
+        return; // A later day (a newer use) or an early timer: the newer timer sends its own state.
+    }
+    m_world.touch(character->id, ComponentKey::gameEvent);
+    log::write("missions: the daily bonuses of character %s reset at 00:00 UTC: the GameEvent state goes again", characterId.c_str());
+}
+
 MissionResult Missions::complete_faction(Entity& character, const QuestInstance& quest, MissionResult result) {
     const auto refuse = [&](MissionError error, std::string detail) {
         result.error = error;
@@ -833,6 +873,10 @@ MissionResult Missions::complete_faction(Entity& character, const QuestInstance&
     if (!state.opened || !state.faction || state.providerKey != quest.provider || !character.serviceGrant
         || character.serviceGrant->kind != kFactionService) {
         return refuse(MissionError::noProvider, "the provider of the instance is " + quest.provider);
+    }
+    // Code review of stage QG6b, finding QG6BR-R5: the faction of the character is the faction of the board (the rule of the accept).
+    if (character.faction.faction != state.providerFaction) {
+        return refuse(MissionError::wrongFaction, "the faction of the character is not the faction of the board");
     }
     if (const ServiceError error = m_world.interactions().require_source(character.characterId, kFactionService); error != ServiceError::none) {
         return refuse(MissionError::noProvider, service_error_text(error));
@@ -886,6 +930,7 @@ MissionResult Missions::complete_faction(Entity& character, const QuestInstance&
         if (daily) {
             character.dailyBonuses.uses[modifierCrc] = use;
             m_world.touch(character.id, ComponentKey::gameEvent);
+            schedule_daily_reset(character);
         }
     };
     result.handIn = m_world.quests().hand_in(character, quest.instance, &hook, kReturnTag, daily ? &bonus : nullptr);

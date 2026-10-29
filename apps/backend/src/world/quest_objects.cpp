@@ -209,11 +209,11 @@ void QuestObjects::destroy(Entity& character, std::uint32_t index) {
     const gamedata::QuestObjectRow& row = m_data->rows()[object.row];
     QuestObjectHits& hits = character.questObjects[index];
     // The quest change of the destruction is one plan and one transaction of the quest system (code review of stage 1.8e, finding QR8E-R4):
-    // the quest drops of the row (TaskGatherItems, TaskGatherAndReturnItems: ItemDropVC names the gatherable row; 2 tasks of the data name a
-    // destructible row), the game event of the row (TaskGameEvent: MSQ_CorruptedNodule_1_interact), and the InteractTag of the object
+    // the quest drops of the row (TaskGatherItems, TaskGatherAndReturnItems: ItemDropVC names the gatherable row; stage QG8: also
+    // TaskHaveItems and TaskHaveAndReturnItems, the pirate crates of 06A_MSQ_11 and the rune tablet of 12A_MSQ_08), the game event of the row (TaskGameEvent: MSQ_CorruptedNodule_1_interact), and the InteractTag of the object
     // (TaskInteract: a completed interaction; the rule of a gather of a quest object, Gathering::quest_events). The object goes only after
     // the commit. A refusal (a full bag, a refused write) keeps the object with its last unit of work, and no LootTracker entry.
-    const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, true, {row.id});
+    const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, true, {row.id}, true);
     std::vector<QuestEvent> events;
     if (!row.event.empty()) {
         QuestEvent applied;

@@ -335,6 +335,8 @@ FactionResult Factions::apply(Entity* character, const std::string& characterId,
     // (docs/systems/factions.md, the quests).
     if (before.faction != after.faction) {
         m_world.quests().faction_changed(*character, before.faction);
+        // Code review of stage QG6b, finding QG6BR-R5: an open faction board of the old faction closes (a new open checks the faction).
+        m_world.missions().faction_changed(*character);
     }
     return result;
 }

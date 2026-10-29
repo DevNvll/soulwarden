@@ -28,6 +28,8 @@ namespace task_type = gamedata::task_type;
 constexpr std::uint64_t kFirstInstance = 1;
 /** The largest number of task activations and completions of one plan: a loop of achievement actions stops the plan. */
 constexpr std::uint64_t kStepLimit = 100000;
+/** Stage QG8: the largest count of the rolls of a loot table of a game event (ItemRewardQty; the data has 1 for each such event). */
+constexpr std::uint32_t kRewardTableRolls = 100;
 /** The largest number of rounds of the TaskAchievement evaluator in one plan. */
 constexpr int kSettleRounds = 64;
 /** The depth of non-persisted achievements in one conditional (an NPA can name an NPA). */
@@ -380,7 +382,7 @@ struct Subscriber {
  * The index of the active tasks of one character by the key of their event (stage 1.8c; code review of stage 1.8a, finding QR8A-R7). A key
  * is a kind and a value: "k:" a vitals category (a kill), "e:" a game event, "g:" an item of a gather, "c:" a recipe (a craft; "c:*" any
  * recipe), "r:" a recipe of a refine, "s:" a screen CRC, "i:" a tag of TaskInteract, "t:" a tag of a quest object, "kd:" and "gd:" a source
- * of a quest drop, "cd" a task with a quest drop of a chest (stage QG5a), "items" the possession and equip tasks, "place" the tasks of a
+ * of a quest drop (stage QG8: "qd:" the row of a quest object of a possession task), "cd" a task with a quest drop of a chest (stage QG5a), "items" the possession and equip tasks, "place" the tasks of a
  * place, "ach" TaskAchievement, "die" TaskDie, "level" TaskHaveLevel of the level of the character (stage QG2a).
  */
 struct Quests::Subscriptions {
@@ -497,6 +499,11 @@ struct Quests::Plan {
     std::vector<std::uint64_t> completed;
     /** Stage 1.8b: the experience and the coin (the units of the wallet) of the plan (a hand-in, the game event of a task). */
     std::uint64_t experience{0};
+    /**
+     * Code review of stage QG6b, finding QG6BR-R3: experience that has the GainXP card already (the daily bonus of a faction mission: the
+     * card, its truncation, then the daily factor: client preview 0x31F4AF8, 0x31F4DF0 to 0x31F4E02). The commit adds it after the card.
+     */
+    std::uint64_t cardedExperience{0};
     std::uint64_t coin{0};
     /** Stage 1.8d: the territory standing of the plan (the territory and the points; decision D3 option B). */
     std::vector<std::pair<std::uint16_t, std::uint64_t>> standing;
@@ -759,15 +766,38 @@ struct Quests::Plan {
         const gamedata::QuestGameEvent* event = data.game_event(eventId);
         if (event != nullptr && !event->item.empty() && event->itemQty > 0) {
             const auto quantity = static_cast<std::uint32_t>(event->itemQty);
-            if (!fits(GrantItem{event->item, quantity, std::nullopt, {}})) {
+            std::vector<GrantItem> grants;
+            if (const std::string table = gamedata::reward_table(event->item); !table.empty()) {
+                // Stage QG8 [data]: an ItemReward "[LTID]NAME" is a loot table (the prefix of the loot tables; 149 events of the data, the
+                // lottery 10A_Q1_Lottery of C10A_Q1_Build: one of three tickets). The roll of the world at the level of the character, for
+                // each unit of ItemRewardQty [agent: the quantity of a table entry is the count of its visits, the rule of the loot tables].
+                Rewards& rewards = owner.m_world.rewards();
+                const std::optional<std::uint32_t> root = rewards.tables() != nullptr ? rewards.tables()->table_index(table) : std::nullopt;
+                if (!root) {
+                    notes.push_back("the loot table " + table + " of the game event " + eventId + " is not in the loot data: no item");
+                }
+                LootContext context;
+                context.characterLevel = entity.progression.level;
+                context.creatureLevel = entity.progression.level;
+                for (std::uint32_t roll = 0; root && roll < std::min<std::uint32_t>(quantity, kRewardTableRolls); ++roll) {
+                    for (GrantItem& item : rewards.grant_items(rewards.roll_root(*root, context), entity.progression.level)) {
+                        grants.push_back(std::move(item));
+                    }
+                }
+            } else {
+                grants.push_back(GrantItem{event->item, quantity, std::nullopt, {}});
+            }
+            if (!grants.empty() && !fits(grants)) {
                 // The task waits: it is in the index of the items (code review of stage 1.8b, finding QR8B-R11), and a change of the items
-                // tries the event again (Quests::refresh).
+                // tries the event again (Quests::refresh). Stage QG8: the next try rolls a loot table again (nothing was given).
                 notes.push_back("the bag has no place for the item " + event->item + " of the game event " + eventId + ": the task " + task.id
                                 + " waits");
                 return false;
             }
-            itemActions.push_back(QuestItemAction{true, GrantItem{event->item, quantity, std::nullopt, {}}});
-            itemDelta[lower_text(event->item)] += quantity;
+            for (GrantItem& grant : grants) {
+                itemDelta[lower_text(grant.itemId)] += grant.quantity;
+                itemActions.push_back(QuestItemAction{true, std::move(grant)});
+            }
         }
         std::string whisperText = "no whisper";
         if (const gamedata::QuestWhisper* whisper = data.whisper_of_event(eventId)) {
@@ -950,8 +980,13 @@ struct Quests::Plan {
 
     /** @return True when the bag has a place for the item actions of the plan and one more give. */
     bool fits(const GrantItem& more) {
+        return fits(std::vector<GrantItem>{more});
+    }
+    bool fits(const std::vector<GrantItem>& more) {
         std::vector<QuestItemAction> all = itemActions;
-        all.push_back(QuestItemAction{true, more});
+        for (const GrantItem& item : more) {
+            all.push_back(QuestItemAction{true, item});
+        }
         const Inventory::Plan trial = owner.m_world.inventory().plan_quest_items(entity.characterId, all, nullptr);
         return trial.ok();
     }
@@ -1458,9 +1493,13 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
                 continue; // The counters and the drops need an Active task.
             }
             if (gamedata::is_possession(task.type) && task.minGearScore == 0 && task.dropChance > 0.0) {
-                const char* prefix = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems ? "gd:" : "kd:";
+                const bool gatherMode = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
                 for (const std::string& source : task.dropSources) {
-                    subscriptions.add(prefix + source, entry);
+                    subscriptions.add((gatherMode ? "gd:" : "kd:") + source, entry);
+                    // Stage QG8: a possession task also drops at the gather of a quest object of its ItemDropVC (plan_drops, questObject).
+                    if (!gatherMode) {
+                        subscriptions.add("qd:" + source, entry);
+                    }
                 }
             }
             // Stage QG5a: a possession task with ChestDropProbability looks at each successful open of a chest of its character.
@@ -1627,8 +1666,8 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     // standing ranks of the plan (XpReward times TerritoryStandingXpModifier, client 0x31FD3B0): the standing plan comes first.
     // Stage QG1: the experience of the quest with the GainXP card of the territory of the character (client 0x3CF04A9; one product for the
     // experience of the event and of the row: an agent rule), and the ranks with their own card product (add_standing).
-    const std::uint64_t experience =
-        m_world.skills().card_experience(entity.characterId, plan.experience) + (standing ? standing->rankExperience : 0);
+    const std::uint64_t experience = m_world.skills().card_experience(entity.characterId, plan.experience) + plan.cardedExperience
+                                     + (standing ? standing->rankExperience : 0);
     std::optional<Progress::Plan> sheet;
     if (experience > 0) {
         sheet = m_world.progress().plan_experience(entity.characterId, std::min(experience, kExperienceLimit));
@@ -2225,7 +2264,9 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
                 const bool inside = !entity.positionEstimated && pois() != nullptr && plan.in_place(*task);
                 dwell.sampleNs = inside ? now : 0;
                 const auto value = static_cast<std::uint32_t>(std::min<std::uint64_t>(dwell.dwellNs / kSecondNs, target));
-                if (stateNow.state == quest_state::kActive && value != stateNow.progress) {
+                // Code review of stage QG6b, finding QG6BR-R7: only an inside sample publishes the progress (the outside branch 0x3B095E8
+                // clears the inside flag and does not call the setter 0x3B095DD); the next inside sample publishes the saved sum.
+                if (inside && stateNow.state == quest_state::kActive && value != stateNow.progress) {
                     plan.set_progress(*plan.edit(entry.instance), entry.index, value);
                 }
                 if (inside && value < target) {
@@ -2236,9 +2277,11 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
             if (task->type == task_type::kTriggerGameEvent) {
                 // A game event whose item waited for a place in the bag (code review of stage 1.8b, finding QR8B-R11): the activation
                 // again, with all its effects in this plan, when the item fits now.
+                // Stage QG8: an item of a loot table ("[LTID]NAME") is rolled in the activation; the activation checks its place again.
                 const gamedata::QuestGameEvent* event = task->targets.empty() ? nullptr : m_data->game_event(task->targets.front());
                 if (seen->tasks[entry.index].state == quest_state::kActive && event != nullptr && event->itemQty > 0
-                    && plan.fits(GrantItem{event->item, static_cast<std::uint32_t>(event->itemQty), std::nullopt, {}})) {
+                    && (!gamedata::reward_table(event->item).empty()
+                        || plan.fits(GrantItem{event->item, static_cast<std::uint32_t>(event->itemQty), std::nullopt, {}}))) {
                     QuestInstance* quest = plan.edit(entry.instance);
                     quest->tasks[entry.index].state = quest_state::kNew;
                     plan.activate(*quest, entry.index);
@@ -2796,7 +2839,7 @@ void Quests::killed(const Entity& creature, const std::vector<Entity*>& credited
     (void)creature;
 }
 
-std::vector<QuestDrop> Quests::plan_drops(Entity& entity, bool gather, const std::vector<std::string>& sources) {
+std::vector<QuestDrop> Quests::plan_drops(Entity& entity, bool gather, const std::vector<std::string>& sources, bool questObject) {
     std::vector<QuestDrop> drops;
     if (data() == nullptr || !entity.quests.loaded) {
         return drops;
@@ -2806,9 +2849,18 @@ std::vector<QuestDrop> Quests::plan_drops(Entity& entity, bool gather, const std
     if (subscriptions == nullptr) {
         return drops;
     }
-    std::vector<Subscriber> seen;
+    // The keys of the sources: a kill "kd:", a gather "gd:"; stage QG8: the gather of a quest object also "qd:" (the possession tasks of its
+    // row). One roll for each task: a task that two keys match rolls one time.
+    std::vector<std::string> keys;
     for (const std::string& source : sources) {
-        const std::vector<Subscriber>* list = subscriptions->find((gather ? "gd:" : "kd:") + lower_text(source));
+        keys.push_back((gather ? "gd:" : "kd:") + lower_text(source));
+        if (questObject) {
+            keys.push_back("qd:" + lower_text(source));
+        }
+    }
+    std::vector<Subscriber> seen;
+    for (const std::string& key : keys) {
+        const std::vector<Subscriber>* list = subscriptions->find(key);
         for (std::size_t position = 0; list != nullptr && position < list->size(); ++position) {
             const Subscriber entry = (*list)[position];
             ++m_counts.subscribersVisited;
@@ -3992,8 +4044,12 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance, const Quest
     }
     if (bonus != nullptr) {
         // Stage QG6b: the daily bonus of a faction mission (0x31F4DF0 to 0x31F4E30, 0x31F518F to 0x31F53C9: the truncation of the experience
-        // and the coin, the floor of the reputation and the tokens).
-        join.eventExperience = static_cast<std::uint64_t>(static_cast<double>(join.eventExperience) * (1.0 + bonus->experience));
+        // and the coin, the floor of the reputation and the tokens). Code review of stage QG6b, finding QG6BR-R3: the experience of the event
+        // gets the ordinary modifiers first (the GainXP card and its truncation: 0x31F4AF8, 0x31F4DF0), then the daily factor in f32 and the
+        // truncation (0x31F4DFD, 0x31F4E02); the commit does not apply the card to it again (Plan::cardedExperience).
+        const float carded = static_cast<float>(m_world.skills().card_experience(entity.characterId, join.eventExperience));
+        plan.cardedExperience += static_cast<std::uint64_t>(carded * static_cast<float>(1.0 + bonus->experience));
+        join.eventExperience = 0;
         join.coin = static_cast<std::uint64_t>(static_cast<double>(join.coin) * (1.0 + bonus->currency));
         join.reputationGain = static_cast<std::uint64_t>(std::floor(static_cast<double>(join.reputationGain) * (1.0 + bonus->reputation)));
         join.factionTokens =
@@ -4063,7 +4119,7 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance, const Quest
         }
     }
     plan.experience += objective->experienceReward;
-    result.experience = plan.experience;
+    result.experience = plan.experience + plan.cardedExperience;
     result.coin = plan.coin;
     // The completion: the instance goes (with the undo of its temporary unlocks and the return of its items) into the completed notice, and
     // the completion achievement of the row is set.

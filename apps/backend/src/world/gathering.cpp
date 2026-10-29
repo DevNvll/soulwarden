@@ -844,7 +844,8 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
             sources.push_back(std::move(category));
         }
     }
-    const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, true, sources);
+    // Stage QG8: the gather of a quest object also gives the drops of the possession tasks that name its row (plan_drops, questObject).
+    const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, true, sources, row.quest);
     std::vector<GrantItem> given = items;
     for (const QuestDrop& drop : drops) {
         given.push_back(GrantItem{drop.itemId, drop.quantity, std::nullopt, {}});

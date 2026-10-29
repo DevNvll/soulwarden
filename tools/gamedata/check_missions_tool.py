@@ -139,6 +139,10 @@ def case_joins() -> None:
            f"joins: the diagnostics ({diagnostics})")
     report(document["counts"]["byTable"] == {"town": 3, "world": 1} and document["counts"]["killOverrides"] == 2,
            f"joins: the counts ({document['counts']})")
+    members = sorted(mission for bucket in document["townBuckets"] for mission in bucket["missions"])
+    report(document["townExcluded"] == [crc("TestProject_1_Lost")]
+           and members == sorted([crc("TestProject_1_Wolf_5"), crc("TestProject_1_Boar_8")]),
+           f"joins: the town row with no objective row is in townExcluded, not in a bucket (finding QG6BR-R1; {document['townExcluded']})")
 
 
 def case_stops() -> None:

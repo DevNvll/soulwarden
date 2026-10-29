@@ -67,7 +67,7 @@ from appearance_tables import Failure  # noqa: E402
 from check_ability_tool import FakeSheet  # noqa: E402
 
 CASES = ("offline-id", "region-name", "row", "row-unsupported", "row-stops", "tables", "table-stops", "distribution",
-         "distribution-stops", "quest-gimmick")
+         "distribution-stops", "quest-gimmick", "empty-loot")
 REVIEW_CASES = ("gate-columns", "flag-texts", "event-reward", "export-publish", "held-manifest", "prune")
 # The made-up game copy of the review cases: one region with one record of one gathering slice (variant Ore_A: Test_OreSmall).
 REGION = "r_+00_+00"
@@ -444,6 +444,24 @@ def check(case: str) -> tuple[bool, str]:
             "crate": quest_objects.destructible_form(crate, events),
             "crate, no task": not quest_objects.destructible_form(dict(crate, GameEventID="Test_Gong_Interact"), events),
             "crate, a loot table": not quest_objects.destructible_form(dict(crate, FinalLootTable="Test_GatherOre"), events),
+        }
+        return all(results.values()), "; ".join(f"{name}: {'ok' if value else 'wrong'}" for name, value in results.items())
+    if case == "empty-loot":
+        # Stage QG8: a loot table whose each entry is an item of the quantity 0 (QuestInteractable) gives nothing: a quest row with it is a
+        # quest object (quest_form; the variation rows of the quest tables).
+        loot = (tool.LOOT_TABLE_TYPE, FakeSheet("LootTables", [
+            {"LootTableID": "QuestInteractable", "Item1": "FlintT1"}, {"LootTableID": "QuestInteractable_Qty", "Item1": "0"},
+            {"LootTableID": "Test_Real", "Item1": "FlintT1"}, {"LootTableID": "Test_Real_Qty", "Item1": "1"},
+            {"LootTableID": "Test_Typed", "Item1": "[LTID]Test_Real"}, {"LootTableID": "Test_Typed_Qty", "Item1": "0"},
+            {"LootTableID": "Test_NoQty", "Item1": "FlintT1"}]))
+        tables = make_tables(made_up_sheets(LootTables=loot))
+        quest = {"IsLootContainer": "1", "FinalLootTable": "QuestInteractable", "GameEventID": "Test_Interact"}
+        results = {
+            "the empty tables": tables.empty_loot == {"questinteractable"},
+            "a quest row with QuestInteractable": tool.quest_form(quest, "row", tables.empty_loot),
+            "a quest row with Empty": tool.quest_form(dict(quest, FinalLootTable="Empty"), "row", tables.empty_loot),
+            "a quest row with a real table": not tool.quest_form(dict(quest, FinalLootTable="Test_Real"), "row", tables.empty_loot),
+            "no set of empty tables": not tool.quest_form(quest, "row"),
         }
         return all(results.values()), "; ".join(f"{name}: {'ok' if value else 'wrong'}" for name, value in results.items())
     if case == "row-stops":

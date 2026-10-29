@@ -48,6 +48,7 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage QG5c2: the encounters of the quests (the success event of each participant, the start object event of its gatherer), the event outcome, the pins of a linked root, the encounter rules of the manifest; the corrections of the review of QG5c1 | [Encounters](encounters.md), `Quests::event` (`QuestEventOutcome`, `QuestEvent::callerRetries`), `Quests::client_tracked`, `encounter_unlinked`, `QuestSupport` (the member kinds and the events of the taken recipes); `tests/encounter_tests.cpp` (QG5C2A to QG5C2I), `tests/review_qg5c1_tests.cpp` (QGR5C1A to QGR5C1C) |
 | Stage QG5c3: the producers of the manifest as a whole (R6), the start object row gates (R5), the participant and proximity events, the quest pins of a plan (R4) | `QuestSupport::Index::gatherSources`, `Quests::commit` (the pins of a plan); `tests/review_qg5c2_tests.cpp` (QGR5C2B, QGR5C2D, QGR5C2E), `tests/encounter_pattern_tests.cpp` (QG5C3G) |
 | Stage QG5c4: the alternative producers of a task (finding QG5C3R-R4), the encounter producers of the new patterns | `TaskFact::alternatives` (`world/quest_support.cpp`); `tests/review_qg5c3_tests.cpp` (QGR5C3D), `tests/encounter_sequence_tests.cpp` (QG5C4G) |
+| Stage QG8: the quest item sources (a possession task drops at a quest object, a quest row with a loot table that gives nothing, the loot table of a game event, the reasons of the item sources kept apart); the corrections of the review of QG6b | `Quests::plan_drops` (`questObject`, the key "qd:"), `Quests::Plan::apply_event`, `gamedata::reward_table`, `Gathering::complete`, `QuestObjects::destroy`; `tools/gamedata/gathering.py` (`Tables.empty_loot`), `loot_tables.py` (`read_event_roots`); `QuestSupport` (`Index::questObjectRows`, `item_causes`, `itemTasksWithNoSource`); `tests/quest_source_tests.cpp` (QG8A to QG8D), `tests/review_qg6b_tests.cpp` (QG6BR1 to QG6BR7); the second computation `~/Games/soulwarden/work/evidence/quests/qg8/implement/scripts/support_check.py` |
 | Stage QG5a: the quest chest drops, the proximity objects, the per-character state of a gathered quest object, the glyph locks, the new quest objects of the data tools; the corrections of the review of QG4 | `Quests::plan_chest_drops`, `roll_drop` (`world/quests.h`), `Chests::complete`; `QuestObjects::moved`, `tick`, `look` (`world/quest_objects.h`), `QuestObjectData` (member `proximity`); `Gathering::quest_object_due`, `GatherRefusal::gatheredQuestObject`, `GatheringType::azothStaff`; `tools/gamedata/gathering.py` (`QUEST_TABLES`, `quest_form`, `children`), `quest_objects.py` (`proximity`), `interactions.py` (`varied_bounds`, `quest_children`, `read_flow_npas`); `QuestSupport` (the chest source, `refusedEvents`); `tests/quest_object_gap_tests.cpp` (QG5A to QG5E), `tests/quest_event_tests.cpp` (QG5F), `tests/review_qg4_tests.cpp` (QGR4A1 to QGR4A3); the second computation `~/Games/soulwarden/work/evidence/quests/qg5a/implement/scripts/support_check.py` |
 | The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`; stage QG2a: `research/quest-gaps.md`, `research/quest-gaps-qg2b.md`, the static read of the category rule `evidence/quests/qg2a/implement/static/category/CATEGORY.md` |
 
@@ -1041,6 +1042,20 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   QG5BR-R3 in the evidence of the stage: a ranked producer with an item needs the rank, then the item fact) gives the same counts: 2,147
   rows, 527 supported, 0 row differences, 0 of 6,759 own facts differ, 306 histories with 0 differences, 25 groups, the new Soldier completes
   66; on the manifest of before with the new data it finds 5 row differences and 10 own fact differences.
+- The counts of stage QG8 (the same quest data, with `loot-tables.json` and `gathering-data.json` of stage QG8, and the corrections of the
+  review of QG6b): 652 supported rows (609 before; objective 575 to 618, missionTemplate 32, communityGoal 2): 43 new objectives, none
+  lost, for example `12A_Side_14_CollectWine`, `02A_Side08_02_LostReturned`, `06A_MSQ_05_FixWindmills`, `12A_MSQ_08_DestroyRune`,
+  `C10A_Q1_Build`, `13A_SQ_28_BearUrine`, `Quest_02790`, the 7 archetype variants each of `99B_MSQ_09_killumberto` and
+  `99D_MSQ_09_Outpost`. The board missions that run: 1,835 to 1,832 (finding QG6BR-R6: 3 hunt missions of the island boar
+  `CK_Boar_Named_10WS08_Isle`, whose skinning row Cursed10ws_Boar the backend refuses, IsFFARestricted). A new character completes 80 (71
+  before; new: `06A_IR_01_FindCreed`, `06A_MSQ_05_FixWindmills` to `06A_MSQ_07_MeetIronRose`, `12A_MSQ_08_DestroyRune` to
+  `12A_MSQ_10_ConfrontLochnir_alt`, `12A_Side_14_CollectWine`, `C10A_Q1_Build`). The first reasons of the others: "no source of its item"
+  116 to 67; then 104 a point of interest with no shape, 48 TaskGameMode, 36 no creature of the categories, 35 TaskQuickCourse, 18 the
+  location rule with no shape, 13 no producer of a game event. The item tasks with no source of the objective rows that are not supported
+  (`itemTasksWithNoSource`): 143 (248 before: the census of the result), task drop 62, loot table 53, chest drop 13, recipe 10, none 5. The
+  second computation (a copy of `support_check.py` with the rules of stage QG8 and the findings QG6BR-R4 and R6 in the evidence of the stage)
+  gives the same counts: 2,147 rows, 652 supported, 0 row differences, 0 of 7,532 own facts differ (1,568 of them the item drops of the
+  possession tasks), 309 histories and 28 groups with 0 differences, the new Soldier completes 80, 3,122 board missions with 1,832 that run.
 
 ### The missions of the boards (stage QG6a)
 
@@ -1091,6 +1106,67 @@ quest system:
 - The quest drop of a gather of a skinned body matches the gatherable row and the categories of its creature (the separate category, the
   categories of the base row, one direct parent of each; not the id of the vitals row) [client: the direct key 0x3B03A21 to 0x3B03A4E,
   the helper 0x5C75830; static read `static/gather-drop/GATHERDROP.md`; case QG6BF; gathering.md].
+
+### The quest item sources of stage QG8
+
+The census of the item tasks with no supported source (the item tasks of the objective rows that are not supported), the result, and
+the live checks are in `~/Games/soulwarden/work/evidence/quests/qg8/implement/RESULT.md` (the census script `scripts/census.py`).
+
+- A possession task (TaskHaveItems, TaskHaveAndReturnItems) drops its item at the gather of a quest object whose row its ItemDropVC names
+  (a gatherable row of the quest form, a destructible or a proximity quest object), with the rules of the other drops (`Quests::roll_drop`)
+  [client: the text of the item of TaskHaveItems 0x825F310 "This item will generate in gatherable loot and/or AI loot", the text of
+  ItemDropProbability 0x825F470 "This includes AI loot, quest gatherables, or other gatherables"; the drop predicate 0x3B03890 has no
+  gather-mode gate for the source type 4 (0x3B039CE to 0x3B039F3: the direct key, then the category helper; GATHERDROP.md); data: 70
+  possession tasks name a quest gatherable row (the coffins of 02A_Side08, the weapon rack of 06A_IR_02, the grain sacks of 06A_MSQ_05),
+  2 a destructible row (the pirate crates of 06A_MSQ_11, the rune tablet of 12A_MSQ_08)]. The subscription key "qd:" of the row; the
+  gather of a quest object (`Gathering::complete`) and the destruction of a destructible quest object (`QuestObjects::destroy`) give
+  `plan_drops` the flag `questObject`. Cases QG8A, QG8B.
+  - The natural nodes and the bodies keep the gather-mode gate of the source types 2 and 7 (only the gather tasks) [agent: the source
+    type of each producer is not found; no possession task of the data names a natural row; 7 name a skinning row whose name is also a
+    vitals category (`wolf`, `boar`): their kill drop stays].
+  - Before stage QG8 the destruction of a destructible object gave no drop to these two possession tasks (only the key of a gather).
+- A quest row whose loot table gives nothing is a quest object (the rule of the loot table Empty): each entry of the table is an item (no
+  [LTID] or [LBID] reference) whose quantity cell of the table NAME_Qty is 0 [data: QuestInteractable has the one entry FlintT1 with the
+  quantity 0; 48 gatherable rows use it]. `tools/gamedata/gathering.py` (`Tables.empty_loot`, `quest_form`); 21 quest rows of the export
+  lose the refusal "a loot container" (the stone tablets and the crystal cluster of 0502 to 0514, the bookcase, the map, the urine puddle
+  of 13A_SQ_28, the bomb cargo of MSQ_0052). The gather of a quest row has no roll (the rule of the quest rows).
+- An ItemReward of the form "[LTID]NAME" is a loot table [data: 149 game events (the lottery 10A_Q1_Lottery of C10A_Q1_Build, the
+  Darkness, the arenas, the invasions); the prefix of the loot tables]. The activation of a TaskTriggerGameEvent rolls the table at the
+  level of the character for each unit of ItemRewardQty (a blank quantity: 1) and gives the items of the roll, whole or not at all (a
+  full bag: the task waits, and the next change of the bag rolls again) [agent: the quantity of a table entry is the count of its visits,
+  the rule of the loot tables]. A table that the loot data does not have gives no item; the event applies. `gamedata::reward_table`,
+  `Quests::Plan::apply_event`. The loot tool exports the tables of these events (`loot-tables.json` member `eventRoots`). Case QG8C.
+  - The hand-in does not roll a table: a success event with such an item stays refused ("the item catalog has no reward item") [agent: no
+    success event of the quest data has one].
+- The support manifest has the same rules: the quest object rows of the world (`Index::questObjectRows`: the rows of the quest form that
+  the backend gathers and the rows of the destructible and proximity objects) are drop sources of a possession task; the items that the
+  table of the event of a TaskTriggerGameEvent reaches are items of the tree of its objective (the history decides; the rule of the world
+  items: each entry of a reached table, no test of the tags) [agent: the project rule of the items of stage 1.8f]. Case QG8D.
+- The reason of an item that no supported source gives names each declared source and the cause that the backend does not run it, and
+  the member `itemSource` of the task has the class of the first one (the precedence of the census): `task drop` (the quest drop of an
+  ItemDropVC entry: a refused row, a row that is not a quest object, a category with no creature of the open world and its kept-out
+  cause), `chest drop` (no available chest in a point of interest of the tags, with the cause of a tag with no shape), `loot table` (a
+  table of the loot data has the item and no source of the world reaches it; the roots above it: the loot of a vitals row, a loot
+  container item, a chest root), `recipe` (the crafting refuses the recipe, with its cause), `none`. The count
+  `itemTasksWithNoSource` of the manifest counts them by class (the objective rows that are not supported) [agent].
+- Kept apart (each with its reason in the manifest and in the census of the result): the creature drops of an instance or of an
+  encounter that the runner does not take, the creatures that the creature data keeps out (the client does not show the slice, an entry
+  that the level data does not spawn), the chest drops of a tag with no shape or with no chest in its place (QG3 places), the artifacts of
+  the season 8 loot containers (a season), the archetype weapons of the old introduction (an instance and its chest), the CraftingQuestRecipe
+  work orders (a temporary recipe that is not known by default: the crafting has no rule of the recipe unlock), the seasonal server
+  recipes (S8), the game event rewards of a gather that the gathering does not pay (the soul fragments of Gather_LostMemory: a collectible
+  progression, a standing, an achievement), the rows of an instance or of a raid (the gems and the ice of the Great Cleave, the flowers of
+  C10A_M4), and the items with no declared source.
+
+### The corrections of the code review of stage QG6b (in stage QG8)
+
+The findings and their cases are in [Mission boards](mission-boards.md) (`tests/review_qg6b_tests.cpp`). The rules of the quest system:
+
+- QG6BR-R3: the experience of the daily bonus of a faction mission is the carded experience of the event (the GainXP card and its
+  truncation) times the daily factor in f32; `Plan::cardedExperience` keeps it out of the card product of the commit (QG6BR3).
+- QG6BR-R6: the categories of a skinnable creature are gather drop sources of the manifest only when the backend gathers its skinning row
+  (no refusal cause, no rank gate of a trade skill that is not a gathering skill: the rule of the other gather rows) (QG6BR6).
+- QG6BR-R7: a PatrolTask publishes its progress only at an inside sample (QG6BR7).
 
 ### The corrections of the code review of stage QG7 (in stage QG6a)
 

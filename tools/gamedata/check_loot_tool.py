@@ -129,6 +129,11 @@ def sheets(case: str) -> dict:
                                        ["-10", "-2" if case == "negative-disparity" else "-0.4", "0"]])],
         lt.EVENT_TYPE: [FakeSheet("GameEvents", ["EventID", "CoinRewardChance"], [["KillEvent", "0.05"], ["KillStructure", "0"]]),
                         FakeSheet("GameEvents_01", ["EventID"], [["KillOther"]]),
+                        # Stage QG8: the loot table of an ItemReward "[LTID]NAME" is a root (a root with no table is left out and counted;
+                        # an item reward is not a root).
+                        FakeSheet("GameEvents_Rewards", ["EventID", "ItemReward"],
+                                  [["Test_Lottery", "[LTID]Test_Unused"], ["Test_NoTable_Lottery", "[LTID]Test_NoEventTable"],
+                                   ["Test_Plain_Reward", "TestOre"], ["Test_Lottery", "[LTID]Test_Gear"]]),
                         # Stage QG2a: the salvage events of the containers (the first row of an id has the cells).
                         FakeSheet("GameEvents_Salvage", ["EventID", "CurrencyReward", "EmitTelemetry", "EntitlementId"],
                                   [["Test_Box_Event", "2500", "1", ""], ["Test_Purse_Event", " 50000 ", "", ""],
@@ -186,8 +191,11 @@ def valid_values(document: dict) -> list[str]:
     tables = document["tables"]
     master = tables.get("Test_Master")
     common = tables.get("Test_Common")
-    if sorted(tables) != ["Test_ChestRoot", "Test_Common", "Test_Gear", "Test_Master"]:
+    if sorted(tables) != ["Test_ChestRoot", "Test_Common", "Test_Gear", "Test_Master", "Test_Unused"]:
         wrong.append(f"the tables {sorted(tables)}")
+    # Stage QG8: the loot tables of the item rewards of the game events (the first row of an event id).
+    if document.get("eventRoots") != {"test_lottery": "Test_Unused"} or document["counts"].get("eventsWithNoTable") != 1:
+        wrong.append(f"the event roots {document.get('eventRoots')} {document['counts'].get('eventsWithNoTable')}")
     if document.get("gatheringRoots") != ["Test_Common"] or document.get("gatheringRootsWithNoTable") != ["Test_NoGatherTable"]:
         wrong.append(f"the gathering roots {document.get('gatheringRoots')} {document.get('gatheringRootsWithNoTable')}")
     if document.get("format") != 2 or document.get("chestRoots") != ["Test_ChestRoot"] \
