@@ -674,6 +674,19 @@ backend. The tool of each system is also in the document of that system.
   `ASSETS_NOT_IN_GAME` of `interactions.py` have three more ids of own levels whose ids are in no byte of the asset catalog (two fences and
   a torch of Glacial Tarn, the spawner GateArena of the trial Q13); the brazier of Monarch's Bluffs (`isleofnight_brazier_01`) has an id of
   the catalog with an other sub id: the tool still stops for that level.
+- Stage QG9e ([Instances](../systems/instances.md), "The solo story modes of an own level"; [Encounters](../systems/encounters.md)): a level
+  set has the part `encounter-data.json` (format 3, the form of the file of the main world, with the member `level`): the instance recipes of
+  the mode roots of the solo modes of the level (`encounters.py --level LEVEL`, `encounter_recipes.Reader` with the level: the placements of
+  the capitals of its terrain project whose slice is the mode root of a map of a solo mode of that level, IsSoloTrial 1, compared by
+  `slice_key`; an expedition of the level has none: stage DG5). Its `instanceObjects` are the objects of those mode roots (the exit portal).
+  `creatures.json` of the set has the kinds of the creature members of those recipes and their list `members` (`creature_data.py --level`;
+  a level with member kinds and no spawn point has a file now), and `interaction-data.json` of the set has the templates of their start
+  objects and of the objects of their mode roots (`encounterObjects`, `instanceObjects`; before: the templates of the recipes of the main
+  world). The manifest has the part `encounters` (the recipes, the taken ones, the objects; no file for a level with no recipe) and the
+  count `memberKinds` of the part `creatures`; `tool` is 2 (the format stays 1). The backend reads the part with the set (a backend of before
+  ignores it). The 11 solo story levels: 47 MB together (QuestAdiana 1,715,138 bytes, QuestDracula 4,745,347, QuestLiang 189,952); the
+  region files of their navigation keep their bytes. `check_level_tool.py` (13 cases) and the cases `level-roots` and `mode-player` of
+  `check_encounters_tool.py` are the checks.
 
 ## Commands
 
@@ -722,6 +735,10 @@ tools/gamedata/level.sh DungeonAmrine  # stage DG2: the level data set of an own
   entry rules of its mode; a backend of before ignores them, and the backend reads a file with no such member as a mode with no such rule),
   and the folder `levels` (the sets of the stage: the members `modeObjects` and `checkpoints` of their interaction files, the levels with
   cells of 17 to 19 floors). The files of the main world keep their bytes. `tools/release.sh` takes `game-modes.json` and the folder `levels`.
+- Stage QG9e changes only the folder `levels`: the sets of the 11 solo story levels with a level of their own (the part `encounter-data.json`,
+  the member kinds in `creatures.json`, the templates of the level recipes in `interaction-data.json`). The files of the main world keep
+  their bytes (`encounters.py` with no `--level` writes the same `encounter-data.json`). A backend of before reads the new sets (it ignores
+  the new part and the members) but it lets a solo mode of an own level enter with the set alone (stage DG3: such a mode has IsDungeon 1).
 - Stage DG2 changes no file of the common game data folder other than the new folder `levels` (the set of Amrine). `creatures.json` and the
   other files of the main world keep their bytes; a backend of before ignores the folder `levels`.
 

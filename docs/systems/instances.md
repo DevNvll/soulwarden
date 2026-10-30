@@ -187,13 +187,29 @@ The first one is QuestMedea (quest 06A_MSQ_21, the boss Medea in Thornhall). The
   (`Entity::gameModeMembership`: the reserved actor of the instance, its G, the CRCs of the mode and of the map, the entry time) and goes at
   the leave; the GameModeParticipant state of the owner shows it (protocol notes 4.67) [client 0x32BA3B0, 0x32B78C0; live]. A session
   stores no instance state.
+- Stage QG9e: the client accepts a new entry of that state only when IsInGridLayer is true (0x32B7A0B, for a mode row with a
+  CoatlicueName: each story mode and each expedition), and IsInGridLayer is the u64 of the level information 1635 after its four u32
+  values, not zero (0x64458D0) [client: static read GATES of stage QG9e]. The backend sends 1 there (`kGridLayerId`) in each level
+  information [agent: the value of the original server is not known]. Before stage QG9e it sent 0: the client refused each membership
+  (no dungeon name on the compass, no leave in the game menu, "Recall to Watchtower" off) [live: QuestAdiana, Amrine]. Live: with 1 the
+  compass shows "Lilith's Dream" in QuestDracula and "Amrine Excavation" in Amrine, and the game menu has its leave.
 - TaskGameMode (task type 54) is done while the character is in the mode of its GameModeID, and never for a task with
   GameModeMustBeMutated 1 (the backend has no mutation) [client 0x3AD5CC0]. A kill, an event, or an item task with GameModeID counts only
   in that mode (the matched tasks) [client 0x3AD5CC0; live: the kill task of Medea]. The quest system looks again at the tasks of a
   character at each change of its membership (the entry, the leave, a new session) [agent].
 - The leave: the exit portal (ExitDungeon, action 74; only a portal of the instance of the character, in its space), 3309 with the key of
-  the membership of the character, and 1980 with the leave event 9BB080D0 [client 0x3273BB0, 0x26FEC60; live: the portal]. Each one is
-  the exit of an instance (its rows, the move to the return place), in the next tick. 3309 with an other key changes nothing [agent].
+  the membership of the character, 1980 with the leave event 9BB080D0, and 926 (ForfeitArena) with leaveDungeon 1 from a character in a
+  mode with IsDungeon (stage QG9e) [client 0x3273BB0, 0x26FEC60, 0x2780110; live: the portal, 926]. Each one is the exit of an instance
+  (its rows, the move to the return place), in the next tick. 3309 with an other key, and 926 with leaveDungeon 0 or of a character in a
+  mode with no IsDungeon, change nothing [agent].
+- The leave of the game menu (stage QG9e; static read LEAVE): in a mode with IsDungeon the button at the place of "Recall to Watchtower"
+  is "Leave" (`@ui_dungeon_leave`; GetCurrentDungeonGameModeId 0x32AA820 reads the accepted membership). Its popup ("Exit Soul Trial?",
+  "Exit Expedition?") calls ForfeitArena, which sends 926 only while the PlayerArena state of the owner says isInArena (slot 4, type 2406,
+  field 0). The backend sends isInArena true while the membership is in a mode with IsDungeon, and false after the leave
+  (`encode_player_arena_state`) [client; live: QuestDracula, DungeonAmrine, QuestMedea]. The GameModeParticipant state has no flag:
+  PlayerCanQuit (bit 22) shows a second "Leave" (the extra mode button), and its click asks the GameMode entity G of the client for a
+  penalty; the client has no such entity, so the button does nothing [client: LEAVE Q3; live: no popup, nothing sent; agent: no button
+  that does nothing]. A client GameMode entity is the input of a later stage.
 - A death in the instance: the respawn is at the start of the map in its space (the rule of stage DG1) [agent; live]. The encounter of the
   mode resets when its participants are dead or away for its grace time, and starts again at the next character in its detector
   (the rule of the encounters) [data: the grace time of the recipe; live].
@@ -348,7 +364,8 @@ DG2 (`~/Games/soulwarden/work/evidence/dungeons/dg2/implement/`).
   level object in a space"). The chests of the layers of a level: the chest tool writes none for Amrine (its chests are objects of its mode
   root, stage DG5).
 - The encounters of an own level (the encounter entries of its layers, the recipes of its mode root) are not in the set: stage DG5
-  (expeditions) and QG9e (the solo story levels) [orchestrator scope].
+  (expeditions) and QG9e (the solo story levels) [orchestrator scope]. Stage QG9e: the recipes of the mode roots of the solo modes are in the
+  set (the section "The solo story modes of an own level (stage QG9e)").
 
 The levels of the map table and their sets (the tool of stage DG2 on each own level): the evidence of stage DG2 (`logs/all-levels.tsv`).
 No solo story level with a level of its own has a usual spawn point: each creature of such a level is a member of an encounter of its mode
@@ -396,7 +413,8 @@ The entry at the entrance:
 | RequiredConsumableItemClasses of the mode is empty (no row of the supported build has a class) | 3 MissingReqItem | [data; agent: no check of an item class yet] |
 | The group (`Instances::group_size`: 1, the backend has no group) is the minimum (`kMinimumGroupSize` 1) or more, and TeamCapacity or less | 1 NotEnoughMembers, 5 TooManyMembers | [orchestrator: decision D7; data: TeamCapacity] |
 | The setting of QuestMedusa | 10 | [stage QG9b] |
-| An expedition (IsDungeon) of an own level: the level has an accepted data set (`Levels::available`, the first read of the set) | 10 | [orchestrator scope: the encounters are stage DG5; agent] |
+| Stage QG9e: a solo mode (IsSoloTrial 1) of an own level: an accepted data set of its level, and the runner takes each instance recipe of the mode (the recipes of the set) | 10 | [agent; stage QG9e] |
+| An expedition (IsDungeon, not a solo mode) of an own level: the level has an accepted data set (`Levels::available`, the first read of the set) | 10 | [orchestrator scope: the encounters are stage DG5; agent] |
 | Each other mode: the encounter system runs its content | 10 | [stage QG9a] |
 
 - No gear score rule: the mode rows have no gear score for an entry at a door (GearScoreOverride and GearScoreRecommended are 0;
@@ -440,6 +458,12 @@ The checkpoints:
   m_respawnCooldown; client: the confirm "This will put this respawn position in cooldown"; live]. An id that is not an active checkpoint of
   the instance of the character, or a checkpoint in its cooldown: the start of the map [agent; research death-travel.md 4.5: a request of a
   dead character is not refused]. The random row (the dungeon entrance) is the start of the map.
+- Code review of stage DG3, finding DG3R-R1 (stage QG9e): the cooldowns are of the instance, by the id of the character
+  (`Instance::checkpointCooldowns`): a leave, a disconnect (decision D9), and the entry again into the same instance keep them; they go with
+  the instance, and an entry that ended goes at the next use of that character [review; agent]. Case DG3R1.
+- Code review of stage DG3, finding DG3R-R3 (stage QG9e): the id of a checkpoint is the request id of 1938, so the ids of the checkpoints of
+  one mode and map are different: the level tool stops (`interactions.checkpoint_id`) and the reader refuses the file as a whole for two
+  checkpoints with one id [review]. Case DG3R3.
 
 The objects of a level set and the leave:
 
@@ -447,12 +471,12 @@ The objects of a level set and the leave:
   "A level object in a space". The exit stone (`interactobject_portalstone`, a capital of the level next to the start; ExitDungeon, a hold
   of the key E) is the leave of an expedition with the rows of an exit [data; live]. The exit portal of the boss room (`PortalStoneInteract`
   of the mode root) is an object of the encounter runner (stage DG5).
-- The leave button of the game menu has no text in an expedition and sends nothing: the mode row of Amrine has no QuitButtonTextId and no
-  LeaveTitleTextId [data; live]. 3309 and 1980 work as in stage QG9a.
+- Stage QG9e: the game menu of an expedition has one "Leave" (the dungeon leave, 926; "Exit Expedition?"). Before stage QG9e the client
+  refused the membership (the grid layer 0 of the level information), and the button had no text and sent nothing [live].
 - A disconnect in an instance (Exit to Main Menu): the exit rows; the next world entry is at the return place (decision D9); the instance
   waits for the time of its mode, and the entrance joins it again [orchestrator: D9; live].
 
-The compass in an own level (open problem P6 of research DG0; not corrected):
+The compass in an own level (open problem P6 of research DG0; corrected in stage QG9e):
 
 - The compass name of a dungeon comes from the GameModeParticipant state: `OnEnteredGameMode` of `lyshineui/compass/compass.luac` sets the
   display name of the mode row (`@dungeon_amrine_title`) when the row has IsDungeon; a later callback of the territory
@@ -462,8 +486,48 @@ The compass in an own level (open problem P6 of research DG0; not corrected):
 - Live: in an own level the compass keeps the name of the last place of the main world ("OXBORO" in Garden of Genesis after the inn of
   Oxboro; "THE AMRINE EXCAVATION" in Amrine after its door). The state again with a newer revision after the load (`tools/world touch`)
   does not change it [live]. The native apply 0x32B78C0 has two gates before the entry notification (the map row of M at 0x32B79DF, and
-  0x296B170 for a map row with a CoatlicueName at 0x32B7A0B) [client]. Which gate or callback keeps the old name needs a live trace of the
-  client (a later stage); the backend sends the state that the client reads for this name [agent].
+  0x296B170 for a map row with a CoatlicueName at 0x32B7A0B) [client].
+- Stage QG9e: the gate at 0x32B7A0B is IsInGridLayer, and the level information had the grid layer 0 (the rule of the membership above).
+  With the grid layer 1 the compass shows the name of the mode ("Amrine Excavation" after a travel from the Belltower of Time,
+  "Lilith's Dream" in QuestDracula) [live]. In an instance of the main world level the compass shows the territory (QuestMedea: "The Path
+  of Thorns"): the callback of the territory puts its name back [live; client: COMPASS].
+
+### The solo story modes of an own level (stage QG9e)
+
+The sources: the data of the mode roots and of the encounter slices of the 11 solo story levels, the static read LEAVE of stage QG9e
+(`~/Games/soulwarden/work/evidence/quests/qg9e/implement/static/LEAVE/ANSWERS.md`), and the evidence of stage QG9e
+(`~/Games/soulwarden/work/evidence/quests/qg9e/implement/`).
+
+- The instance recipes of a solo mode of an own level (the encounters of the mode root of its map) are in the data set of the level
+  (`encounter-data.json`; [Game data](../development/game-data.md)). The first read of the set (`Levels::read`: the entrance check or the
+  first space of the level) gives them to the encounter system (`Encounters::add_level`): each one is a placement of that level
+  (`EncounterPlacement::level`, `data`, `creatures`, `interactions`), resolved with the member kinds of the creature data of the set and the
+  templates of its interaction data [agent: a level set has the whole data of its content; the creature data of the backend start has no
+  kind of these slices]. The rules of the runner are the rules of the instance recipes of stages QG9a to QG9d (one path) [agent].
+- `Encounters::start_space` takes only the recipes of the level of the space (the main world level: the recipes of the backend start; an own
+  level: the recipes of its set). A creature member of a set is made with the creature data of that set, only in a space of that level whose
+  spawn set has that data (`Creatures::spawn_member`, `data_of`) [agent]. The exit portal and the quest objects of the mode root of an
+  instance of an own level come from the set (`Instances::mode_root_files`: its `instanceObjects`, the catalog of its templates for the server
+  child) [agent].
+- The modes that run (`Instances::mode_runs`): a solo mode of an own level runs with an accepted set of its level and each instance recipe of
+  the mode taken by the runner (the rule of stage QG9a). The solo modes of an own level have IsDungeon 1 too [data: QuestLiang, QuestAdiana,
+  QuestDracula]: before stage QG9e the rule of an expedition took them with the set alone (an instance with no encounter).
+- An instance recipe in which no stage ends by the act of a player is refused by the tool [agent]: each stage ends at an event of the boss
+  tree (met at its start: the rule of stage QG9a), a time, a cutscene, a spawn, or a wait, so the encounter would succeed at its start with no
+  fight, and its success event would complete the quest task of the fight (QuestIsabella, QuestLiang). A stage that a player ends: a
+  destroyed objective with something to count, an entity-state objective with a trigger, a boss phase of a health phase.
+
+| Mode (level) | Runs | Bosses | Cause of a refusal (the input of a later stage) |
+| --- | --- | --- | --- |
+| QuestAdiana (`nw_ori_fl_questadiana`) | Yes | Artemis (the vitals row FL_AI_Adiana_Bow, level 65) | |
+| QuestDracula (`nw_trial_dw_dracula`) | Yes | Alecksi (level 70), the shadow of Cecilia | |
+| QuestLiang (`nw_ori_er_questliang`) | No | | each stage waits for an event of the boss tree (Phase1_started to Phase4_started, NHSpawnTalismans): the talismans of the fight (BT3) |
+| QuestIsabella (`nw_ori_sm_questisabella`) | No | | each stage waits for an event of the boss tree (Transform_Winged, Winged_Ready, Water_1 to Water_3, Defeat) (BT3) |
+| QuestMotherwell (`nw_ori_eg_questmotherwell`) | No | | a failure objective of the barrier of the mode root (a target that is not a player) |
+| QuestNihilo (`nw_ori_gc_questnihilo`) | No | | a background activation, an objective that is not counted, boss phases of the parts of the leviathan (BT3) |
+| TrialSeason02Q12 (`nw_trial_season_02`) | No | | waits of the trial controller with no time, a fight stage that tracks a slice that no stage spawns |
+| TrialSeason02Q13, TrialSeason04Q02, TrialSeason04Q06 | No | | a seasonal event (the scheduled and seasonal events) |
+| TrialSeason04Q05 (`nw_trial_season_04`) | No | | the setups of the fodder recipes wait for the trial controller with no time |
 
 ### The paths across two spaces (the code review of stage DG1)
 
@@ -505,8 +569,8 @@ set; the other modes refuse it (result 10).
 
 - More than one gamescope can run on this computer: a picture with no `GAMESCOPE_WAYLAND_DISPLAY` can take the window of a different
   project. Read the display from the environment of the backend of the run (docs/development/live-runs.md).
-- The client shows the territory of the main world on its compass in an instance of an own level (research dungeons.md, open problem P6;
-  stage DG3: the section "The compass in an own level"), and the buttons
+- Before stage QG9e the client showed the territory of the main world on its compass in an instance of an own level (research dungeons.md,
+  open problem P6; the section "The compass in an own level": corrected by the grid layer of 1635). The buttons
   "Map" of the quests are not in the journal there. The tracker of the quests can show the text of an active task of a place of the main
   world two times in an instance (the task `06_crewmates_02_TaskGoToPOITag_shipwreck1` and the inactive kill task of the same objective
   have one text; live: one line in the main world, two lines in Amrine). The Objectives state is the same state of the entity: this is a
@@ -524,7 +588,13 @@ set; the other modes refuse it (result 10).
 - Stage QG9a: the exit portal needs a hold of the key E (`tools/hx 'key 0x45 900'`); a short press sends nothing.
 - Stage QG9a: a travel to the platform of the Medea fight (z 57) can put the character below the floor; the fight then fails and resets.
   Walk in from the start of the map.
-- Stage QG9a: the leave button of the escape menu of the client was empty in the live runs (no text, nothing sent). Use the exit portal.
+- Stage QG9a: the leave button of the escape menu of the client was empty in the live runs (no text, nothing sent). Stage QG9e: the cause
+  was the grid layer 0 of 1635 (the client refused the membership); the leave of the game menu works now (926).
+- Stage QG9e: Escape opens only the bar at the top of the screen (and a first Escape can close a notice). The game menu is the gear at the
+  right of the bar (`tools/hx 'click 972 22'` at 1280x720); its "Leave" is the third button of the group "Game".
+- Stage QG9e: the client shows "Soul Trial Completed" at the return also after a leave of the game menu before the end of the fight
+  (QuestDracula) [live]. The backend sends no success for that instance; the text is a rule of the client at the exit of a solo trial (not
+  read).
 - Stage QG9a: the handlers of the entrances and of the exit portals are handlers of the kind (`Interactions::register_kind_handler`): the
   Enter options of the data have many names (EnterQuestCaerDun, EnterDungeonAmrine, ...). A new handler of one option of these kinds
   comes before the kind handler.

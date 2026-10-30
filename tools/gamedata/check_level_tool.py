@@ -4,7 +4,8 @@
 The level tool takes the level and its terrain folder from the map row (game_modes.level_terrain): a level text or a map id, never the
 level of the main world, never a name of no map row. It makes the set in levels/LEVEL.part and puts it in the place of the old set only
 when each tool of the set ended with status 0: a tool that stops keeps the old set. A level whose layers have no usual spawn point has no
-creatures.json (the part names the cause). The terrain of a level has its own mountainHeight (256 m in most levels): its samples go to the
+creatures.json (the part names the cause). Stage QG9e: the part "encounters" (the instance recipes of the mode roots of the level,
+encounters.py --level): a file only for a level with a recipe; the part "creatures" counts the member kinds. The terrain of a level has its own mountainHeight (256 m in most levels): its samples go to the
 scale of the main world (2048 m), the scale of each tool file and of the backend.
 
 The check uses the made-up map tables of check_game_modes_tool.py and a made-up runner of the tools (it writes the files of each part).
@@ -34,10 +35,11 @@ from check_game_modes_tool import MadeUpSources  # noqa: E402
 
 class Runner:
     """A made-up runner of the tools: each tool writes a small file of its part. `fail` names a tool that stops; `empty` makes the
-    creature tool stop for a level with no usual spawn point."""
+    creature tool stop for a level with no usual spawn point; `recipes` is the count of the instance recipes of the encounter tool (stage
+    QG9e)."""
 
-    def __init__(self, fail: str = "", empty: bool = False, chests: int = 0) -> None:
-        self.fail, self.empty, self.chests = fail, empty, chests
+    def __init__(self, fail: str = "", empty: bool = False, chests: int = 0, recipes: int = 0) -> None:
+        self.fail, self.empty, self.chests, self.recipes = fail, empty, chests, recipes
         self.calls: list[tuple[str, list[str]]] = []
 
     def __call__(self, script: str, arguments: list[str]) -> tuple[int, str]:
@@ -48,7 +50,8 @@ class Runner:
         if script == "creature_data.py":
             if self.empty:
                 return 1, f"creatures: the world {tool.NO_SPAWN_POINT} in the regions r_+00_+00. No file was written."
-            target.write_text(json.dumps({"spawnPoints": [[1], [2]], "kinds": [{}], "slices": [{}]}))
+            members = [["slices/made_up_boss.dynamicslice", 1, ""], ["slices/made_up_hidden.dynamicslice", -1, "no body"]]
+            target.write_text(json.dumps({"spawnPoints": [[1], [2]], "kinds": [{}, {}], "slices": [{}], "members": members}))
         elif script == "navigation_data.py":
             target.mkdir(parents=True, exist_ok=True)
             (target / "r_+00_+00.swnav").write_bytes(b"N" * 100)
@@ -59,6 +62,8 @@ class Runner:
             target.write_text(json.dumps({"counts": {"objects": 4, "byKind": {"lorePage": 3, "dungeonExit": 1}}}))
         elif script == "chests.py":
             target.write_text(json.dumps({"counts": {"chests": self.chests}}))
+        elif script == "encounters.py":
+            target.write_text(json.dumps({"counts": {"recipes": self.recipes, "taken": max(0, self.recipes - 1), "instanceObjects": 2}}))
         return 0, ""
 
 
@@ -107,9 +112,19 @@ def main() -> int:
            and written["parts"]["navigation"]["regions"] == 1 and written["parts"]["interactions"]["objects"] == 4
            and (folder / "creatures.json").is_file() and (folder / "heights" / "r_+00_+00.swh").is_file()
            and not (folder / "chest-data.json").exists() and written["parts"]["chests"] == {"file": None, "chests": 0}
-           and not (output / "levels" / "nw_made_up_00.part").exists(),
-           f"a complete set: the manifest, the parts, no chest file for a level with no chest, no part folder ({problem})")
-    first_bytes = written.get("bytes", 0)
+           and not (output / "levels" / "nw_made_up_00.part").exists() and written["parts"]["creatures"]["memberKinds"] == 1
+           and written["parts"]["encounters"] == {"file": None, "recipes": 0} and not (folder / "encounter-data.json").exists(),
+           f"a complete set: the manifest, the parts, no chest file for a level with no chest, no encounter file for a level with no "
+           f"recipe, the member kinds, no part folder ({problem})")
+    manifest, problem = run_set(sources, "nw_made_up_00", output, Runner(recipes=2))
+    report(manifest is not None and (folder / "encounter-data.json").is_file()
+           and manifest["parts"]["encounters"].get("recipes") == 2 and manifest["parts"]["encounters"].get("taken") == 1
+           and manifest["parts"]["encounters"].get("instanceObjects") == 2 and manifest["tool"] == tool.TOOL_VERSION,
+           f"stage QG9e: a level with instance recipes keeps encounter-data.json and its counts ({problem})")
+    _, problem = run_set(sources, "nw_made_up_00", output, Runner(fail="encounters.py"))
+    report(problem.startswith("the encounter tool stopped") and (folder / "encounter-data.json").is_file(),
+           "stage QG9e: the encounter tool that stops stops the level tool: the old set stays")
+    first_bytes = json.loads((folder / tool.MANIFEST).read_text()).get("bytes", 0) if (folder / tool.MANIFEST).is_file() else 0
     _, problem = run_set(sources, "nw_made_up_00", output, Runner(fail="navigation_data.py"))
     kept = json.loads((folder / tool.MANIFEST).read_text()) if (folder / tool.MANIFEST).is_file() else {}
     report(problem.startswith("the navigation tool stopped") and kept.get("bytes") == first_bytes and (folder / "creatures.json").is_file()

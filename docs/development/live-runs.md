@@ -414,6 +414,15 @@ tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
   with short presses of W (`tools/hx 'key 0x57 500'`) and turn with `'look DX DY'` (400 units turn about 45 degrees).
 - Stage DG3: the key Escape opens the menu bar; the gear (972 22) opens the game menu with "Exit to Main Menu" (510 530; then Yes at
   714 397). In an expedition the button below "Recall" has no text and sends nothing (the mode row has no QuitButtonTextId). After "Exit to
-  Main Menu", Play is at 1089 572.
+  Main Menu", Play is at 1089 572. Stage QG9e: the game menu of an instance has one "Leave" at 510 215 (its Yes at 714 397 sends 926);
+  a first Escape can only close a notice ("Upgrade Available"): take a picture before the click on the gear.
 - Stage DG3: the compass of an own level keeps the name of the last place of the main world (for Amrine the door is in the area "The Amrine
-  Excavation": the name looks correct, but Garden of Genesis shows it too). Do not take the compass as a proof of the instance.
+  Excavation": the name looks correct, but Garden of Genesis shows it too). Do not take the compass as a proof of the instance. Stage
+  QG9e: corrected (the grid layer of 1635); the compass shows the name of the mode in an own level.
+- Stage QG9e: the kill credit of a boss needs hits of 1 % of its maximum health or more by the character, and the character must not be
+  ignored by the creatures at the death (`tools/world ignore NAME off`). The health command (`tools/world creature health ID VALUE`) gives no
+  credit. For a boss with a strong attack: set its health to a value of some hits with ignore on, hit it, then turn ignore off for the last
+  hit (QuestDracula: Alecksi at 2,800 of 226,396, the great axe 489 for each hit).
+- Stage QG9e: after `tools/world travel` the camera looks north in an instance of an own level. Travel to a place 2.5 m south of a creature
+  or an object to have it in front of the character (the hits of `'click 628 330'` go to the creature in front).
+- Stage QG9e: `gamescopectl screenshot` during a running `capture.sh` loop writes no file. Take the picture after the loop.

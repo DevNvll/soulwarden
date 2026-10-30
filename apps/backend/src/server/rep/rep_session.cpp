@@ -427,8 +427,10 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
     case kTypeRequestLeaveGameMode:
     case kTypeGameModeClientEvent:
     case kTypeTeleportIntoDungeon:
+    case kTypeForfeitArena:
         // Stage QG9a: the leave of the instance of a game mode (3309, the client event 1980 of the escape menu and of the dungeon HUD) and
-        // the teleport request of the queue HUD (946: no answer, the entry of a solo trial does not need it).
+        // the teleport request of the queue HUD (946: no answer, the entry of a solo trial does not need it). Stage QG9e: the dungeon leave
+        // of the escape menu (926).
         check_route(route, type, body, firstOfType);
         handle_game_mode_request(type, body);
         break;
@@ -2137,7 +2139,25 @@ void RepSession::handle_game_mode_request(std::uint32_t type, std::span<const st
         return;
     }
     bool leave = false;
-    if (type == kTypeRequestLeaveGameMode) {
+    if (type == kTypeForfeitArena) {
+        const std::optional<ForfeitArenaRequest> request = read_forfeit_arena(body);
+        if (!request) {
+            log::write("rep: forfeit of an arena (type %u, %zu bytes) does not have the form of the message: no change", type, body.size());
+            return;
+        }
+        if (!own_facet(*own, request->target, request->entity, kPlayerArenaComponentName, type, "forfeit of an arena")) {
+            return;
+        }
+        // Static read LEAVE of stage QG9e (E4): the Yes of the dungeon leave of the escape menu sends leaveDungeon 1. The leave is the
+        // leave of the instance of a dungeon mode, the same as 3309 and 1980 [agent: the original server has no other arena].
+        const std::optional<world::GameModeMembership>& membership = own->gameModeMembership;
+        if (!request->leaveDungeon || !membership || !membership->dungeon) {
+            log::write("rep: forfeit of an arena (message %u, leaveDungeon %u) of a character in no dungeon mode: no change", type,
+                       request->leaveDungeon ? 1U : 0U);
+            return;
+        }
+        leave = true;
+    } else if (type == kTypeRequestLeaveGameMode) {
         const std::optional<LeaveGameModeRequest> request = read_leave_game_mode(body);
         if (!request) {
             log::write("rep: leave of a game mode (type %u, %zu bytes) does not have the form of the message: no change", type, body.size());
@@ -3765,7 +3785,7 @@ void RepSession::send_level_information() {
     body.u32(0);
     body.u32(0);
     body.u32(0);
-    body.u64(0);
+    body.u64(kGridLayerId);
     body.size(0);
     body.boolean(false);
     body.u8(m_contextInstance);

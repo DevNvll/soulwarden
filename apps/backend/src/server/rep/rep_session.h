@@ -63,6 +63,14 @@ inline constexpr std::uint32_t kTypeKickClient = 271;             // KickClientT
  * instance as its byte (live probe of research dungeons.md 2.2). The backend writes a log line and does not wait for it.
  */
 inline constexpr std::uint32_t kTypeAckLevelInfoChanged = 5181;
+/**
+ * Stage QG9e: the u64 of the level information 1635 after its four u32 values (body +0x60, reader 0x1500B7F). The client keeps it in its
+ * current level information, and IsInGridLayer (0x64458D0) is true only when it is not zero. The apply of a GameModeParticipant entry
+ * (0x32B78C0) refuses a new entry of a mode row with a CoatlicueName while IsInGridLayer is false (0x32B7A0B): no membership, no
+ * OnEnteredGameMode, no leave button of a dungeon (static read GATES of stage QG9e). The value of the original server is not known; 1 is
+ * the smallest value that is not zero [agent].
+ */
+inline constexpr std::uint64_t kGridLayerId = 1;
 
 /**
  * Result of the registration reply for a registration that the backend refuses: the client
@@ -471,7 +479,10 @@ private:
      * which the session sends at once.
      */
     void handle_cutscene_ended(std::span<const std::uint8_t> body);
-    /** Stage QG9a: 3309 RequestLeaveGameMode, the client event 1980 (the leave event 9BB080D0), and 946 TeleportIntoDungeon. */
+    /**
+     * Stage QG9a: 3309 RequestLeaveGameMode, the client event 1980 (the leave event 9BB080D0), and 946 TeleportIntoDungeon. Stage QG9e:
+     * 926 ForfeitArena (the dungeon leave of the escape menu).
+     */
     void handle_game_mode_request(std::uint32_t type, std::span<const std::uint8_t> body);
     /**
      * The end of an interaction of the client (2473, stage 2.5a): the world ends the committed interaction of the character

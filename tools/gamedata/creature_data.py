@@ -1497,10 +1497,13 @@ def yaw_of(rotation: dict) -> float:
 
 def build_document(sources: Sources, center: tuple[float, float] | None = None, radius: float | None = None,
                    all_slices: bool = False, details: list[dict] | None = None, spawn_all: bool = False,
-                   no_attack: list[dict] | None = None, ground: bool = True, members: bool = True) -> dict:
+                   no_attack: list[dict] | None = None, ground: bool = True, members: bool = True,
+                   level: tuple[str, str] | None = None) -> dict:
     """@param center, radius The area of the file: a circle. No radius: the whole world.
     @param members True: the kinds of the creature members of the encounter recipes (stage QG5c2, encounter_recipes.py) are in the file
            with no spawn point ("member" names the member slice; the list "members" of the document).
+    @param level Stage QG9e: the level and its terrain folder of an own level: the members are the creature members of the instance recipes
+           of the mode roots of that level (encounter_recipes.Reader); a level with member kinds and no spawn point has a file too.
     @param all_slices True: the file also has the spawn points of the slices of the list "notShown" (a file for a
            picture tour of the slices, not for a start of the user).
     @param details When not null: gets one entry for each spawn entry that is left out (the cause, the layer,
@@ -1880,7 +1883,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     incomplete: set[int] = set()
     if members:
         import encounter_recipes  # noqa: E402 (encounter_recipes imports this module)
-        reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog)
+        reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog, level)
         # Stage QG5c5: a group member (more than one creature spawner in its slice: the portal waves of the Darkness, the boat landings)
         # has one kind for each part, with the key "SLICE#N" (N from 0, in the order of the slice); the member slice keeps the kind of
         # its first part. A stationary member (the core shells of the monoliths: a Vitals component and no movement) takes its body by the
@@ -1949,7 +1952,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
         counts["memberKinds"] = len(member_kinds)
         counts["membersLeftOut"] = sum(1 for _, index, _ in member_list if index < 0)
     sources.check_complete()
-    if not points:
+    # Stage QG9e: a file of an own level with the kinds of the creature members of its instance recipes and no spawn point (QuestLiang: its
+    # creatures are the members of its encounter) is a file too.
+    if not points and not member_kinds:
         area = "the world" if whole_world else f"the area (center {center[0]:g} {center[1]:g}, radius {radius:g} m)"
         raise Failure(f"{area} has no spawn point of a creature in the regions {', '.join(regions) or 'none'}")
     if "" in placed:
@@ -2343,10 +2348,11 @@ def main() -> int:
             height_maps.use_level(level, terrain)
             if arguments.output == parser.get_default("output"):
                 target = gamedata / LEVELS_FOLDER / level / OUTPUT_NAME
-        # Stage DG2: the member kinds of the encounter recipes are kinds of the main world file (encounter_recipes.py reads the main
-        # world); a file of a level has its spawn points only.
+        # Stage DG2: the member kinds of the encounter recipes of the main world are kinds of the main world file. Stage QG9e: a file of an
+        # own level has the kinds of the creature members of the instance recipes of its mode roots (encounter_recipes.Reader with the level).
         document = build_document(sources, center, arguments.radius, arguments.all_slices, details,
-                                  arguments.spawn_all and arguments.all_slices, quiet, arguments.find is None, members=level is None)
+                                  arguments.spawn_all and arguments.all_slices, quiet, arguments.find is None, members=True,
+                                  level=(level, terrain) if level is not None else None)
         if level is not None:
             document["level"] = level
         if quiet is not None:

@@ -250,9 +250,14 @@ enum class ComponentKey {
     gameEvent,
     /**
      * Stage QG9a (docs/systems/instances.md): the GameModeParticipant state of a character (slot 24, type 3312): the active game mode of its
-     * instance (field 0 activeGameModes, one entry) and the flag PlayerCanQuit (field 1). Owner only; after a leave the empty map.
+     * instance (field 0 activeGameModes, one entry) and its flags (field 1: no bit since stage QG9e). Owner only; after a leave the empty map.
      */
     gameModeParticipant,
+    /**
+     * Stage QG9e (docs/systems/instances.md, the leave): the PlayerArena state of a character (slot 4, type 2406): field 0 isInArena, true
+     * while its membership is in a mode with IsDungeon. Owner only; after a leave false.
+     */
+    playerArena,
     /**
      * Stage DG3 (docs/systems/instances.md, the checkpoints): the PlayerHome state of a character (slot 20, type 3652): field 0 homePointList,
      * the dungeon checkpoints of its instance (respawn type 10). Owner only; after a leave the empty list.
@@ -282,6 +287,11 @@ struct GameModeMembership {
     std::uint32_t mapCrc{0};
     /** W: the time of the entry (the synced wall clock, Unix nanoseconds). */
     std::uint64_t enteredNs{0};
+    /**
+     * Stage QG9e: true when the mode row has IsDungeon. The client then shows the dungeon leave of its escape menu
+     * (GetCurrentDungeonGameModeId 0x32AA820), and the PlayerArena state of the owner says isInArena (ForfeitArena 0x2780110 needs it).
+     */
+    bool dungeon{false};
 };
 
 /**

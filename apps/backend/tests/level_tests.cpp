@@ -223,7 +223,8 @@ void set_reader(const Options& options) {
         correct += line.rfind("ok  ", 0) == 0 ? 1 : 0;
         wrong += line.rfind("FAIL", 0) == 0 ? 1 : 0;
     }
-    check(status == 0 && correct == 11 && wrong == 0,
+    // Stage QG9e: 13 cases (the part "encounters" of a level with recipes, and the encounter tool that stops).
+    check(status == 0 && correct == 13 && wrong == 0,
           "the level tool takes the level from the map row, makes the set in one step (a tool that stops keeps the old set), and the terrain "
           "of a level goes to the scale of the main world");
 }

@@ -154,6 +154,19 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
 - Code review of stage DG2, finding DG2R-R4: the navigation tool makes each region of an output of a different level or of the main world
   again (the level and the world of navigation.json); it keeps the complete regions of an output of the same level [agent; case DG2R4,
   `tools/gamedata/check_navigation_cache_tool.py`].
+- Code review of stage DG3, finding DG3R-R2 (stage QG9e): one rule for the size of a tile in a file and in the memory, from the form of the
+  file and the floor limit (`NavTile::kMaxPlainBytes`: the samples, one run of 3 bytes for each cell, the two counts, and 63 floors of 5
+  bytes in each cell, 20,848,906 bytes; `kMaxStreamBytes`: the bound of zlib for it; `kMaxMemoryBytes`: the samples, one cell word for each
+  cell, and 63 floors in each cell). The reader of a folder refuses only a tile above these values; with the old limit of 16 MiB a correct
+  tile of 63 floors in each cell (20,652,304 plain bytes) refused the whole folder [review; case DG3R2]. The memory of the tiles stays the
+  rule of the tiles near the characters (`kKeepDistance` 96 m: at most 16 tiles of 64 m for each character, `kDropAfter` 10 s). Stage
+  QG9e measured QuestAdiana, whose tiles have 683 MB in plain form [live, the dist backend of stage QG9e]: the backend had 362 MB
+  resident in the main world (the data of the main world) and 379 MB in the instance (the largest 400 MB); the level held 16 tiles with
+  26,227,056 bytes (`tools/world instance list`: `navigation tiles 16 (26227056 bytes)`). The part of the instance is below 200 MB, so the
+  rule of the tiles near the characters stays [agent].
+- Code review of stage DG3, finding DG3R-R4 (stage QG9e): the tick of the levels looks only at the active levels (`Levels::m_active`: a level
+  gets in at the start of a space with a navigation, and goes out after a tick with no space and no tile, route, or search); the data of the
+  other levels stays with no look in a tick (count `visits` of `LevelCounts`) [review; case DG3R4].
 
 ## Commands
 

@@ -34,11 +34,16 @@ constexpr std::uint32_t kVersion = 3;
 constexpr std::size_t kHeaderSize = 64;
 constexpr std::size_t kEntrySize = 16;
 constexpr std::size_t kTerrainBytes = static_cast<std::size_t>(NavTile::kSamples) * NavTile::kSamples * 2;
-constexpr std::size_t kCellCount = static_cast<std::size_t>(NavTile::kCells) * NavTile::kCells;
 constexpr std::size_t kExtraSize = 5;
 constexpr int kCodeFloors = 4;
-/** A zlib stream of a tile and its content are not larger than this (bytes): a larger value is a fault of the file. */
-constexpr std::uint32_t kMaxTileBytes = 16U << 20;
+/**
+ * A zlib stream of a tile and its content are not larger than these (bytes): a larger value is a fault of the file. Code review of stage DG3,
+ * finding DG3R-R2: the bounds of the form of the file and of the floor limit (NavTile::kMaxPlainBytes, kMaxStreamBytes), not 16 MiB.
+ */
+constexpr std::size_t kMaxTileBytes = NavTile::kMaxPlainBytes;
+constexpr std::size_t kMaxStreamBytes = NavTile::kMaxStreamBytes;
+static_assert(NavTile::kSampleBytes == static_cast<std::size_t>(NavTile::kSamples) * NavTile::kSamples * 2 && kExtraSize == 5,
+              "the bounds of a tile use the sizes of the form of the file");
 /** The terrain of the world is not higher than this (meters): the scale of a file gives no larger height. */
 constexpr float kMaxTerrainHeight = 4096.0F;
 
@@ -428,7 +433,7 @@ bool NavigationData::set_directory(const std::string& directory) {
             const std::uint64_t offset = read_u64(entry);
             const std::uint32_t size = read_u32(entry + 8);
             const std::uint32_t plainSize = read_u32(entry + 12);
-            correct = offset >= head.size() && offset <= region.fileSize && size <= region.fileSize - offset && size <= kMaxTileBytes
+            correct = offset >= head.size() && offset <= region.fileSize && size <= region.fileSize - offset && size <= kMaxStreamBytes
                       && plainSize <= kMaxTileBytes && plainSize >= kTerrainBytes + 8;
             region.offsets.push_back(offset);
             region.sizes.push_back(size);

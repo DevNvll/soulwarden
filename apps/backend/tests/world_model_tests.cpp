@@ -338,7 +338,7 @@ void encoder_views(const Options&) {
         return fields_text(decode_state(codec.type, codec.encode(entity, view, clock)));
     };
     const std::span<const StateCodec> codecs = player_codecs();
-    check(codecs.size() == 36 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
+    check(codecs.size() == 37 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
               && codecs[2].slot == 16 && codecs[2].type == 11 && codecs[3].slot == 41 && codecs[3].type == 15
               && codecs[4].slot == 47 && codecs[4].type == 1652 && codecs[5].slot == 12 && codecs[5].type == 1195
               && codecs[6].slot == 19 && codecs[6].type == 3133 && codecs[7].slot == 66 && codecs[7].type == 3210
@@ -370,6 +370,8 @@ void encoder_views(const Options&) {
               && codecs[34].ownerOnly && !codecs[34].afterObjectivesEnable
               && codecs[35].slot == 20 && codecs[35].type == 3652 && codecs[35].key == world::ComponentKey::playerHome
               && codecs[35].ownerOnly && !codecs[35].afterObjectivesEnable
+              && codecs[36].slot == 4 && codecs[36].type == 2406 && codecs[36].key == world::ComponentKey::playerArena
+              && codecs[36].ownerOnly && !codecs[36].afterObjectivesEnable
               && std::count_if(codecs.begin(), codecs.end(), [](const StateCodec& codec) { return codec.afterObjectivesEnable; }) == 3,
           "one encoder for each component state: metadata (0, 10), player (9, 3935), movement (16, 11), vitals (41, 15), "
           "mana (47, 1652, user test 1), appearance (12, 1195), from stage 1.1b the entitlements (19, 3133) and the "
@@ -386,7 +388,7 @@ void encoder_views(const Options&) {
           "stage QG7 the Faction state (49, 3152, owner and observers) and the empty Social state (55, 4176, owner only, after the first "
           "2709), and from stage QG6a the ObjectiveInteractor state (10, 3829, owner only), and from stage QG6b the GameEvent state (68, 497, "
           "owner only), and from stage QG9a the GameModeParticipant state (24, 3312, owner only), and from stage DG3 the PlayerHome "
-          "state (20, 3652, owner only)");
+          "state (20, 3652, owner only), and from stage QG9e the PlayerArena state (4, 2406, owner only)");
     check(!codecs[0].ownerOnly && !codecs[1].ownerOnly && !codecs[2].ownerOnly && !codecs[3].ownerOnly
               && codecs[4].ownerOnly && !codecs[5].ownerOnly && codecs[6].ownerOnly && codecs[7].ownerOnly && !codecs[8].ownerOnly
               && codecs[9].ownerOnly && !codecs[10].ownerOnly && codecs[11].ownerOnly && codecs[12].ownerOnly && codecs[13].ownerOnly

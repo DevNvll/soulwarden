@@ -98,6 +98,23 @@ public:
      * the floor (world/navigation.cpp). The file form does not change: its run code can name 251 floors.
      */
     static constexpr std::size_t kMaxFloors = 63;
+    /**
+     * Code review of stage DG3, finding DG3R-R2 (one rule for the size of a tile in a file and in the memory, stage QG9e): the largest
+     * content of a correct tile, from the form of the file and kMaxFloors: the terrain samples, the run list with one run of 3 bytes for each
+     * cell, the two counts, and kMaxFloors floors of 5 bytes in each cell (20,848,906 bytes; a full tile of 63 floors in each cell has
+     * 20,652,304). The largest zlib stream of such a content: the bound of zlib (deflateBound) for it. The reader refuses a tile above these
+     * values; with the old limit of 16 MiB it refused a correct tile of the new floor limit. The largest memory of such a tile: the terrain,
+     * one cell word for each cell, and kMaxFloors floors in each cell (the navigation keeps only the tiles near the characters:
+     * world/navigation.h, kKeepDistance).
+     */
+    static constexpr std::size_t kSampleBytes = static_cast<std::size_t>(kSamples) * kSamples * 2;
+    static constexpr std::size_t kCellCount = static_cast<std::size_t>(kCells) * kCells;
+    static constexpr std::size_t kMaxPlainBytes = kSampleBytes + 4 + kCellCount * 3 + 4 + kCellCount * kMaxFloors * 5;
+    static constexpr std::size_t kMaxStreamBytes =
+        kMaxPlainBytes + (kMaxPlainBytes >> 12) + (kMaxPlainBytes >> 14) + (kMaxPlainBytes >> 25) + 13 + 6;
+    static constexpr std::size_t kMaxMemoryBytes =
+        static_cast<std::size_t>(kSamples) * kSamples * sizeof(std::uint16_t) + kCellCount * sizeof(std::uint32_t)
+        + kCellCount * kMaxFloors * sizeof(NavFloor);
 
     /** The tile in tiles of the world: the tile starts at x * 64 m, y * 64 m. */
     std::int32_t x{0};

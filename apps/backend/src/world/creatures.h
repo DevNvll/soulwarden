@@ -320,10 +320,13 @@ public:
      * Stage QG5c2 (world/encounters.h): makes a member of an encounter: a creature of a kind of the creature data (a member kind: no spawn
      * point) at the level of the kind, bound to the placement and the generation of its instance (Creature::encounter). Only the encounter
      * system calls it. The distance rule does not remove it, and no spawn point waits for it; its death goes to the encounter system.
-     * @return The entity, or null (a position that is not of the world, no level row).
+     * Stage QG9e: `data` is the creature data of the kind: the data of the backend start, or (an instance recipe of an own level) the creature
+     * data of the set of that level; a creature of a level set needs a space of that level whose spawn set has that data (data_of).
+     * @return The entity, or null (a position that is not of the world, no level row, the data of a level in a space of a different level).
      */
-    Entity* spawn_member(const gamedata::CreatureKind& kind, const state::WorldPosition& position, float yaw, std::uint32_t placement,
-                         std::uint64_t generation, const gamedata::PatrolRoute* route = nullptr, SpaceId space = kMainSpace);
+    Entity* spawn_member(const gamedata::CreatureData& data, const gamedata::CreatureKind& kind, const state::WorldPosition& position, float yaw,
+                         std::uint32_t placement, std::uint64_t generation, const gamedata::PatrolRoute* route = nullptr,
+                         SpaceId space = kMainSpace);
     /** Stage QG5c2: removes a member (the end of its encounter, KillSpawnsAction): no reward, no spawn point. @return False: no member. */
     bool remove_member(EntityId id);
 

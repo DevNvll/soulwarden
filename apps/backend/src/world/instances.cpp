@@ -116,7 +116,7 @@ const char* instance_leave_text(InstanceLeave cause) {
     case InstanceLeave::exitPortal:
         return "the exit portal";
     case InstanceLeave::request:
-        return "the request 3309 of the client";
+        return "a leave request of the client (3309, 1980, or 926)";
     }
     return "unknown";
 }
@@ -225,6 +225,13 @@ bool Instances::mode_runs(std::string_view mode) const {
     if (map == nullptr || !same_text(map->mode, mode)) {
         return false;
     }
+    if (map->level != kMainLevel && map->soloTrial) {
+        // Stage QG9e: a solo mode of an own level runs with an accepted data set of its level (the first read of the set gives its instance
+        // recipes to the encounter system, Encounters::add_level) and the runner takes each instance recipe of the mode (the rule of stage
+        // QG9a: Encounters::runs_mode). The solo modes have IsDungeon 1 too [data: QuestLiang, QuestAdiana]: before this stage the rule of an
+        // expedition below took them with the set alone (an instance with no encounter).
+        return m_world.levels().available(map->level) && m_world.encounters().runs_mode(std::string(mode));
+    }
     if (map->dungeon && map->level != kMainLevel) {
         // Stage DG3 [orchestrator scope: the encounters of an expedition are stage DG5]: an expedition runs with the content of the data set
         // of its level (its creatures, its navigation, its objects, its checkpoints).
@@ -278,8 +285,8 @@ std::uint32_t Instances::entrance_result(const Entity& character, const gamedata
         cause = off.data();
         result = dungeon_result::kEntranceActivationFailure;
     } else if (!mode_runs(entrance.mode)) {
-        cause = map->dungeon && map->level != kMainLevel
-                    ? "the backend has no accepted data set of the level of the expedition (tools/gamedata/level.sh)"
+        cause = map->level != kMainLevel && !m_world.levels().available(map->level)
+                    ? "the backend has no accepted data set of the level of the mode (tools/gamedata/level.sh)"
                     : "the backend does not run the content of the mode (docs/systems/instances.md)";
         result = dungeon_result::kEntranceActivationFailure;
     }
@@ -357,6 +364,8 @@ void Instances::membership_changed(const std::string& characterId) {
         membership.mapCrc = gamedata::quest_crc(instance->map);
         const auto member = instance->members.find(characterId);
         membership.enteredNs = m_world.clock().wall_time_ns(member != instance->members.end() ? member->second.entered : instance->started);
+        const gamedata::GameMap* map = data() != nullptr ? data()->find(instance->map) : nullptr;
+        membership.dungeon = map != nullptr && map->dungeon;
         character->gameModeMembership = membership;
         character->gameModeKnown = true;
     } else {
@@ -364,6 +373,8 @@ void Instances::membership_changed(const std::string& characterId) {
     }
     if (character->gameModeKnown) {
         m_world.touch(character->id, ComponentKey::gameModeParticipant);
+        // Stage QG9e: the PlayerArena state (isInArena while the membership is in a dungeon mode, false after the leave).
+        m_world.touch(character->id, ComponentKey::playerArena);
     }
     // Stage DG3: the home point list (the checkpoints of the instance, or the empty list after the leave).
     home_points_changed(characterId);
@@ -454,15 +465,17 @@ void Instances::home_points_changed(const std::string& characterId) {
     std::vector<HomePoint> points;
     const Instance* instance = instance_of(characterId);
     if (instance != nullptr && character->space == instance->space) {
-        const InstanceMember& member = instance->members.at(characterId);
+        const auto cooldowns = instance->checkpointCooldowns.find(characterId);
         for (const InstanceCheckpoint& checkpoint : instance->checkpoints) {
             if (!checkpoint.active) {
                 continue;
             }
             HomePoint point = checkpoint.point;
-            const auto used = member.checkpointCooldowns.find(point.id);
-            if (used != member.checkpointCooldowns.end() && used->second > m_world.clock().now()) {
-                point.cooldownEndNs = m_world.clock().wall_time_ns(used->second);
+            if (cooldowns != instance->checkpointCooldowns.end()) {
+                const auto used = cooldowns->second.find(point.id);
+                if (used != cooldowns->second.end() && used->second > m_world.clock().now()) {
+                    point.cooldownEndNs = m_world.clock().wall_time_ns(used->second);
+                }
             }
             points.push_back(std::move(point));
         }
@@ -492,20 +505,22 @@ std::optional<state::WorldPosition> Instances::use_checkpoint(const Entity& char
     if (character.space != instance.space) {
         return std::nullopt;
     }
-    InstanceMember& member = instance.members.at(character.characterId);
+    // Code review of stage DG3, finding DG3R-R1: the cooldowns of the character are of the instance (they stay over a leave and a disconnect).
+    std::map<std::string, WorldClock::time_point>& cooldowns = instance.checkpointCooldowns[character.characterId];
+    const WorldClock::time_point now = m_world.clock().now();
+    std::erase_if(cooldowns, [&](const auto& entry) { return entry.second <= now; });
     for (const InstanceCheckpoint& checkpoint : instance.checkpoints) {
         if (!checkpoint.active || checkpoint.point.id != id) {
             continue;
         }
-        const WorldClock::time_point now = m_world.clock().now();
-        const auto used = member.checkpointCooldowns.find(id);
-        if (used != member.checkpointCooldowns.end() && used->second > now) {
+        const auto used = cooldowns.find(id);
+        if (used != cooldowns.end() && used->second > now) {
             // [agent; research death-travel.md 4.5: a request of a dead character is not refused] the start of the map.
             log::write("world: the checkpoint %s of instance %llu has its cooldown for character %s: the respawn is at the start of the map",
                        id.c_str(), static_cast<unsigned long long>(instance.id), character.characterId.c_str());
             return std::nullopt;
         }
-        member.checkpointCooldowns[id] = now + std::chrono::duration_cast<WorldClock::time_point::duration>(checkpoint.cooldown);
+        cooldowns[id] = now + std::chrono::duration_cast<WorldClock::time_point::duration>(checkpoint.cooldown);
         ++m_counts.checkpointRespawns;
         home_points_changed(character.characterId);
         return checkpoint.point.position;
@@ -513,13 +528,25 @@ std::optional<state::WorldPosition> Instances::use_checkpoint(const Entity& char
     return std::nullopt;
 }
 
+Instances::ModeRootFiles Instances::mode_root_files(SpaceId space) const {
+    // Stage QG9e: the objects of the mode root of an instance of an own level are in the set of its level (its encounter-data.json and the
+    // templates of its interaction-data.json); of the main world level in the files of the backend start.
+    if (const gamedata::LevelData* level = m_world.levels().data_of(space); level != nullptr) {
+        return {level->encounter_part().loaded ? &level->encounters() : nullptr,
+                level->interaction_part().loaded ? &level->interactions() : nullptr,
+                level->interaction_part().loaded ? &level->interactions() : nullptr};
+    }
+    return {m_world.encounters().data(), m_world.interactions().data(), nullptr};
+}
+
 void Instances::start_content(Instance& instance) {
     const std::size_t encounters = m_world.encounters().start_space(instance.space, instance.mode);
     instance.content = encounters > 0;
     // The exit portal of the mode (a server child of the mode root: interactobject_portalstone of Medea, 6 m from the start of the map) at
-    // the start of the instance [agent: the mode script that spawns it is not in the client].
-    const gamedata::EncounterData* recipes = m_world.encounters().data();
-    const gamedata::InteractionData* catalog = m_world.interactions().data();
+    // the start of the instance [agent: the mode script that spawns it is not in the client]. Stage QG9e: of an own level from its set.
+    const ModeRootFiles files = mode_root_files(instance.space);
+    const gamedata::EncounterData* recipes = files.recipes;
+    const gamedata::InteractionData* catalog = files.catalog;
     std::size_t portals = 0;
     if (recipes != nullptr && catalog != nullptr) {
         for (const gamedata::InstanceObject& object : recipes->instance_objects()) {
@@ -533,8 +560,9 @@ void Instances::start_content(Instance& instance) {
             if (!templateIndex || catalog->templates()[*templateIndex].kind != gamedata::InteractionKind::dungeonExit) {
                 continue;
             }
-            const Interactions::SpawnedContainer made = m_world.interactions().spawn_container(
-                *templateIndex, object.position, object.yaw, object.key + "/instance/" + std::to_string(instance.id), instance.space);
+            const Interactions::SpawnedContainer made =
+                m_world.interactions().spawn_container(*templateIndex, object.position, object.yaw,
+                                                       object.key + "/instance/" + std::to_string(instance.id), instance.space, files.own);
             if (made.entity != nullptr) {
                 instance.objects.push_back(made.entity->id);
                 ++portals;
@@ -589,8 +617,9 @@ void Instances::start_content(Instance& instance) {
 }
 
 void Instances::look_quest_objects(Instance& instance) {
-    const gamedata::EncounterData* recipes = m_world.encounters().data();
-    const gamedata::InteractionData* catalog = m_world.interactions().data();
+    const ModeRootFiles files = mode_root_files(instance.space);
+    const gamedata::EncounterData* recipes = files.recipes;
+    const gamedata::InteractionData* catalog = files.catalog;
     if (recipes == nullptr || catalog == nullptr) {
         return;
     }
@@ -636,7 +665,7 @@ void Instances::look_quest_objects(Instance& instance) {
             continue;
         }
         const Interactions::SpawnedContainer made = m_world.interactions().spawn_container(
-            *templateIndex, object.position, object.yaw, object.key + "/instance/" + std::to_string(instance.id), instance.space);
+            *templateIndex, object.position, object.yaw, object.key + "/instance/" + std::to_string(instance.id), instance.space, files.own);
         if (made.entity == nullptr) {
             continue;
         }
@@ -663,13 +692,10 @@ void Instances::look_quest_objects(Instance& instance) {
 }
 
 const std::string* Instances::quest_object(EntityId object) const {
-    const gamedata::EncounterData* recipes = m_world.encounters().data();
-    if (object == 0 || recipes == nullptr) {
-        return nullptr;
-    }
-    const Entity* entity = m_world.find(object);
+    const Entity* entity = object != 0 ? m_world.find(object) : nullptr;
     const Instance* instance = entity != nullptr ? instance_of_space(entity->space) : nullptr;
-    if (instance == nullptr) {
+    const gamedata::EncounterData* recipes = instance != nullptr ? mode_root_files(instance->space).recipes : nullptr;
+    if (instance == nullptr || recipes == nullptr) {
         return nullptr;
     }
     for (const InstanceQuestObject& quest : instance->questObjects) {

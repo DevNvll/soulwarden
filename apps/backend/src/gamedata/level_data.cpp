@@ -114,6 +114,17 @@ void LevelData::load(const std::string& directory) {
     } else {
         m_interactionPart.problem = m_interactions.error();
     }
+
+    // Stage QG9e: the instance recipes of the mode roots of the solo modes of the level (no file: a level with no such recipe).
+    const std::filesystem::path encounters = folder / kEncounterDataFile;
+    if (!path_exists(encounters)) {
+        m_encounterPart.problem = "no file (the level has no instance recipe)";
+    } else if (m_encounters.load(encounters.string())) {
+        m_encounterPart.loaded = true;
+        m_encounterPart.bytes = bytes_of(encounters);
+    } else {
+        m_encounterPart.problem = m_encounters.error();
+    }
 }
 
 std::unique_ptr<LevelData> LevelFolder::open(const std::string& level) const {

@@ -821,7 +821,7 @@ report of 4.7 goes from the client to the server on carrier channel 1.
 | Message | Type index | Body |
 | --- | ---: | --- |
 | `PlayerManagerSelfIdentificationMsg` | 1628 | identity, actor reference x3, level block, identity (reader 0x14FD530) |
-| `LevelInfoChangedMsg` | 1635 | `level:text terrain:text u32 x4 u64 list flag instance:u8 reload:flag flag version:u64` (writer 0x1500850) |
+| `LevelInfoChangedMsg` | 1635 | `level:text terrain:text u32 x4 gridLayer:u64 list flag instance:u8 reload:flag flag version:u64` (writer 0x1500850; gridLayer: section 4.69) |
 | `ClientViewListenerTrait::ReceivePlayerSpawnPointMsg` | 1617 | no fields |
 | `ReplicatedStateBundle` | 8 | `present:u8 sequence:size64 instance:u8 u8 unreliable:flag control:flag [control block] size payload` (reader 0x6B07870; the control block is in 4.2) |
 
@@ -7989,7 +7989,7 @@ world to Amrine, the return, a second entry, a third entry), a second connection
 **The sequence of the server** [live], for a client in `InGame`:
 
 1. The self identification 1628 (section 3.5) with the new context instance in its level block (the same actors).
-2. The level information 1635 (section 4.1: level text, terrain text, the four floats 0, u64 0, an empty list, flag 0, the instance, the
+2. The level information 1635 (section 4.1: level text, terrain text, the four floats 0, the grid layer 1 (section 4.69), an empty list, flag 0, the instance, the
    reload flag 1, flag 0, the version) with the level of the new space, a new version, and a new instance (the account rule of section
    3.5). The level of an instance: the CoatlicueName of its map row in lower case with "/" and its last part (`nw_dungeon_windsward_00`,
    `coatlicue/nw_dungeon_windsward_00`) [data; live].
@@ -8083,8 +8083,8 @@ field 1 flags             six raw bytes (bitset, little bit order)
 - C: CRC-32 of the lower-case GameModeId (IsInGameMode 0x32BA3B0 compares it; TaskGameMode 0x3AD5CC0 hashes its GameModeID) [static]. M:
   the CRC of GameModeMapId (QuestMedea: also 95B632E9) [static]. W: the entry time, Unix wall nanoseconds (0x32ABFD0 takes the greatest W)
   [static]. X: a u64 that no checked reader tests: 0 [project rule].
-- flags: bit 22 PlayerCanQuit (getter 0x2F2C60 returns 0x16): `00 00 40 00 00 00`. The leave button of the escape menu needs it
-  (escapemenu.lua lines 517 to 533) [static]. No other bit.
+- flags: bit 22 PlayerCanQuit (getter 0x2F2C60 returns 0x16): `00 00 40 00 00 00`. It shows the extra mode button of the escape menu
+  (escapemenu.lua lines 517 to 533) [static]. Stage QG9e: no bit (`00 00 00 00 00 00`); section 4.69.
 - The owner gets the entry in the instance and the empty map with no flag after the leave (the client sends its exit notification, apply
   0x32B78C0) [static; live: the compass showed the name of the mode, then the territory of the main world again]. Nothing before the first
   entry of a world entry. An observer gets no fragment [project rule: the audience of the original server is not found; the remote player
@@ -8103,7 +8103,8 @@ an other key changes nothing [project rule]. No UI caller was found, and no 3309
 **1980 GameModeParticipantComponentServerFacet_OnReceivedClientEvent** (client to server; reader 0x26FEC60 [static]): `target:u64 entity:u64
 event:u32`. The leave confirmation of the dungeon HUD and of the escape menu send the event 2612035792 = 9BB080D0 (SendClientEvent) [static].
 The backend leaves the mode for that event and writes a line for an other event [project rule]. Not checked live: the leave button of the
-escape menu was empty in the runs (no text, nothing sent); the exit portal was the leave.
+escape menu was empty in the runs (no text, nothing sent); the exit portal was the leave. Stage QG9e: the cause and the leave of the menu
+(926) are in section 4.69.
 
 **The exit portal** [data; live]: a server child of the mode root (`interactobject_portalstone`, spawner Portal) with the option
 ExitDungeon (action 74, not committed; the client needs a hold of about 0.9 s). The backend makes it in the space of the instance at the
@@ -8262,6 +8263,56 @@ count x { actor:16raw  gde:u64  facet:u64  name:text  x:f32 y:f32 z:f32
 - The activation of a point: the sphere of the detection volume of the server facet of the HomeComponent (`CheckpointAreaTrigger`,
   `PlayerOnlyCollision`; 5 m for a crystal, 30 m for the entrance) [data; the activation rule of the original server is not in the
   client: project rule].
+
+### 4.69 The grid layer of the level information, the gate of a new membership, the PlayerArena state, the dungeon leave 926 (live proof of stage QG9e; static proof of the reads LEAVE and GATES of stage QG9e; the value 1, the audience, and the flag rule are project rules)
+
+The static reads are LEAVE and GATES of stage QG9e (`~/Games/soulwarden/work/evidence/quests/qg9e/implement/static/LEAVE/ANSWERS.md`,
+`.../static/GATES/ANSWERS.md`). The live runs are L3 and L4 of stage QG9e (`~/Games/soulwarden/work/evidence/quests/qg9e/implement/`:
+`logs/l3-backend.log`, `logs/l4-backend.log`, the pictures G1-* and G2-*, the video `videos/qg9e-menu-leave.mp4`). The backend side is in
+docs/systems/instances.md (the membership and the leave).
+
+**The grid layer of 1635** [static; live]: the u64 after the four u32 values of the level information (body +0x60; reader 0x1500B7F to
+0x1500BA3, big-endian through 0x87AD90). The handler copies it into the pending level information (0x64468C9), and LoadContextAndLevel
+installs it as the current level information at Game +0x1C0 (0x6448DB7). `GameRequestsBus.IsInGridLayer` (implementation 0x64458D0) is
+true only when the current level information has this value not zero [static]. The apply of the GameModeParticipant map (0x32B78C0) tests
+it for a new entry whose map row has a CoatlicueName (0x32B79FD, 0x32B7A0B): false skips the insertion and OnEnteredGameMode; the entry
+stays out of the accepted map, and a later revision tries again only with the same test [static]. Each story mode and each expedition has a
+CoatlicueName (QuestMedea `coatlicue\NewWorld_VitaeEterna`, QuestAdiana, DungeonAmrine) [data].
+- The backend sent 0 before stage QG9e. Live with 0: no dungeon name on the compass in an own level, the game menu with "Recall to
+  Watchtower" off and an empty extra button (QuestAdiana, Amrine).
+- The backend sends 1 in each level information (`kGridLayerId`) [project rule: the value of the original server is not known; 1 is the
+  smallest value that is not zero]. Live with 1: the main world as before (the compass "Belltower of Time"); in QuestDracula the compass
+  "Lilith's Dream" and the prompt "Soul Trial Exit"; in Amrine the compass "Amrine Excavation" after a travel from the Belltower of Time; the
+  game menu of QuestDracula, Amrine, and QuestMedea with "Leave" [live L3, L4].
+
+**MB PlayerArena state** (type 2406, slot 4 of the player slice) [static: LEAVE E4; live]. The backend sends group 0 field 0 isInArena,
+a bool: the field fragment `01 01 01` (true) or `01 01 00` (false).
+- ForfeitArena (0x2780110) sends 926 only while IsInArena() is true; fields 14 to 16 do not give it [static]. Live: the development
+  fragment `01 01 01` of slot 4, type 2406, then the Yes of the dungeon leave sent 926.
+- The owner only, after the first membership of the world entry: true while the membership is in a mode with IsDungeon, false in a mode
+  with no IsDungeon and after the leave [project rule: the escape menu is of the local player; the arenas of the original server are not
+  in this project].
+
+**The dungeon leave of the escape menu** [static: LEAVE E5; live]: in a mode with IsDungeon (GetCurrentDungeonGameModeId 0x32AA820 scans
+the accepted map) the respawn button of the menu shows `@ui_dungeon_leave` ("Leave"). Its popup (`Popup_ExitDungeon`: "Exit Soul Trial?",
+"Exit Expedition?") calls `ForfeitArena(root, true)` at Yes.
+
+**926 PlayerArenaComponentServerFacet_ForfeitArena** (client to server; ForfeitArena 0x2780110 [static]; live: 17 bytes):
+
+```text
+target:u64 entity:u64 leaveDungeon:u8 = 01
+```
+
+- `target`: the facet of the PlayerArena component (`RootPlayer/7158ce3f-e02d-44cb-badd-ba2a43f1eff4`, component 0ADF8519A10C374D; live:
+  target 5734d46ca10c374f for the entity 4c554f5300000002).
+- The backend leaves the instance for leaveDungeon 1 of a character whose membership is in a mode with IsDungeon (the leave of 3309 and
+  1980: the exit rows, the return place, in the next tick); leaveDungeon 0 or a character in no such mode changes nothing [project rule].
+  Live: QuestDracula, DungeonAmrine, and QuestMedea, each one 926 and the return to the place before the entry.
+
+**The extra mode button** [static: LEAVE Q3; live]: with PlayerCanQuit the menu shows a second button with QuitButtonTextId of the mode row
+("Leave" for QuestDracula; no text for DungeonAmrine). Its click asks the GameMode entity G of the client for a penalty
+(`GetGameModeEntityId` 0x32AAE80); the client has no entity at the reserved G, the Lua bridge gets nil, and the click opens nothing and sends
+nothing [live]. The backend sends no flag [project rule: no button that does nothing]; a client GameMode entity is an open item.
 
 ## 5. Open items
 

@@ -674,9 +674,10 @@ def slice_key(name: str) -> str:
     return key
 
 
-def level_mode_roots(sources: Sources, terrain: str) -> dict[str, dict]:
+def level_mode_roots(sources: Sources, terrain: str, solo_only: bool = False) -> dict[str, dict]:
     """Stage DG3: @return The mode root slices of the maps of an own level (each mode, not only the solo modes): the SlicePath of a map row
-    whose CoatlicueName is the terrain of the level (its slice_key), to its mode and its map [data: javelindata_gamemodemaps]."""
+    whose CoatlicueName is the terrain of the level (its slice_key), to its mode and its map [data: javelindata_gamemodemaps]. Stage QG9e:
+    `solo_only` keeps only the maps of a solo mode (IsSoloTrial 1 of the mode row: the encounter tool of an own level)."""
     modes_data = sources.read(MODES_TABLE)
     maps_data = sources.read(MAPS_TABLE)
     if maps_data is None or modes_data is None:
@@ -684,11 +685,21 @@ def level_mode_roots(sources: Sources, terrain: str) -> dict[str, dict]:
     maps = Sheet(maps_data)
     if any(column not in maps.columns for column in ("GameModeMapId", "GameModeId", "SlicePath", "CoatlicueName")):
         raise Failure(f"{MAPS_TABLE} has no column SlicePath or CoatlicueName")
+    solo: set[str] | None = None
+    if solo_only:
+        modes = Sheet(modes_data)
+        if any(column not in modes.columns for column in ("GameModeId", "IsSoloTrial")):
+            raise Failure(f"{MODES_TABLE} has no column GameModeId or IsSoloTrial")
+        solo = {modes.source(row, "GameModeId").strip().lower() for row in range(modes.row_count)
+                if modes.source(row, "IsSoloTrial").strip() == "1"}
     roots: dict[str, dict] = {}
     for row in range(maps.row_count):
         path = slice_key(maps.source(row, "SlicePath"))
+        mode = maps.source(row, "GameModeId").strip()
+        if solo is not None and mode.lower() not in solo:
+            continue
         if path and maps.source(row, "CoatlicueName").replace("\\", "/").strip().lower() == terrain.lower():
-            roots[path] = {"mode": maps.source(row, "GameModeId").strip(), "map": maps.source(row, "GameModeMapId").strip()}
+            roots[path] = {"mode": mode, "map": maps.source(row, "GameModeMapId").strip()}
     return roots
 
 
@@ -765,6 +776,18 @@ def checkpoint_of(path: str, roots: list[Element]) -> dict | None:
     return {"entity": entity_id, "component": component_key or 0, "respawn": (home_matrix[3], home_matrix[7], home_matrix[11]),
             "type": kind, "cooldown": cooldown, "name": name, "center": (trigger_matrix[3], trigger_matrix[7], trigger_matrix[11]),
             "radius": entities[trigger]["sphere"]}
+
+
+def checkpoint_id(checkpoints: list[dict], mode: str, map_id: str, spawner: str, root: str) -> str:
+    """Stage DG3 (code review of stage DG3, finding DG3R-R3): @return The id of a dungeon checkpoint (the name of its spawner): 1 to 31 bytes
+    (client 0x69128E0 copies it to a buffer of 32 bytes; research death-travel.md 4.2), and not the id of an other checkpoint of the same mode
+    and map (the respawn 1938 names a checkpoint by its id: the second one could not be selected). Else the tool stops."""
+    name = spawner.strip()
+    if not name or len(name.encode("utf-8")) > 31:
+        raise Failure(f"the mode root {root}: the checkpoint spawner {name!r} has no name of 1 to 31 bytes")
+    if any(entry["mode"] == mode and entry["map"] == map_id and entry["spawner"] == name for entry in checkpoints):
+        raise Failure(f"the mode root {root}: two checkpoints of the mode {mode} and its map {map_id} have the id {name!r}")
+    return name
 
 
 def actor_of(placement_id: str) -> bytes:
@@ -2039,10 +2062,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
             point = checkpoint_of(child_path, sources.stream(child_path) or [])
             if point is None or point["type"] != DUNGEON_RESPAWN:
                 continue
-            spawner_name = spawner["name"].strip()
-            if not spawner_name or len(spawner_name.encode("utf-8")) > 31:
-                # The id of a home point is at most 31 bytes (client 0x69128E0 copies it to a buffer of 32 bytes; research death-travel.md 4.2).
-                raise Failure(f"the mode root {identifier}: the checkpoint spawner {spawner_name!r} has no name of 1 to 31 bytes")
+            spawner_name = checkpoint_id(checkpoints, root["mode"], root["map"], spawner["name"], identifier)
             respawn = apply(world, point["respawn"])
             center = apply(world, point["center"])
             quaternion = quaternion_of(world)
@@ -2340,7 +2360,9 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     instance_objects: dict[str, int] = {}
     if encounters:
         import encounter_recipes  # noqa: E402 (encounter_recipes imports this module)
-        reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog)
+        # Stage QG9e: the file of an own level has the templates of the start objects and of the objects of the mode roots of the instance
+        # recipes of that level (encounter_recipes.Reader with the level); the main world file has those of the main world.
+        reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog, (WORLD, f"coatlicue/{WORLD}") if not other_worlds else None)
         for member in reader.start_objects(recipes):
             template = load_template(member["slice"], child=True)
             if template.root is None or template.slots["position"] == 0 or not template.bounds:

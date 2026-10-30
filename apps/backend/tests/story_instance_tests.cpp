@@ -6,8 +6,8 @@
 //        the result (Success 0 and the entry in the next tick; EntranceActivationFailure 10 for the level and for a mode whose content
 //        the backend does not run; GroupAlreadyInDungeon 11 in an instance); the same level, a new space, the start of the map
 //   SI2  the GameModeParticipant state (slot 24, type 3312): nothing before the first entry; the owner gets the entry (the mode reference,
-//        the CRCs, the entry time) and the flag PlayerCanQuit; an observer gets no fragment; after the leave the empty map and no flag; a
-//        restored session in the instance gets the membership
+//        the CRCs, the entry time) and no flag (stage QG9e: no PlayerCanQuit); an observer gets no fragment; after the leave the empty map
+//        and no flag; a restored session in the instance gets the membership
 //   SI3  TaskGameMode and a kill task with GameModeID: done only in the mode; a task that needs a mutated mode stays open; the second
 //        character in the main world gets nothing (MP-10); a kill in the main world does not count for the task of the mode; a death in
 //        the mode keeps the membership and the done task
@@ -158,7 +158,7 @@ void membership_state(const Options&) {
               && state.facet == instance->modeEntity && state.modeCrc == gamedata::quest_crc(kMode) && state.mapCrc == gamedata::quest_crc(kMode)
               && state.entered != 0,
           "the entry of activeGameModes: the mode reference (actor, G, facet), the CRC of the mode and of the map, the entry time");
-    check(state.flags == Bytes{0x00, 0x00, 0x40, 0x00, 0x00, 0x00}, "the flags: only PlayerCanQuit (bit 22)");
+    check(state.flags == Bytes(6, 0), "the flags: no bit (stage QG9e: no PlayerCanQuit, the extra button of the menu would do nothing)");
     check(mode_fragments(shop.clientB, fromB).empty(), "the observer B gets no GameModeParticipant fragment of A");
     const std::size_t afterEntry = shop.clientA.got.size();
     check(shop.instances().leave(kCharacterA, world::InstanceLeave::command).error == world::InstanceError::none, "setup: A leaves");

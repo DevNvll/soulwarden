@@ -28,6 +28,7 @@ wire contracts are in the protocol notes (section 4.62). The quest events are in
 | Stage QG9a: the instance recipes (the encounter of a mode root slice), the cutscene stage and its grant, the event stage, the background stage of the manager, the start objects that the runner skips | `world/encounters.cpp` (`runs_mode`, `start_space`, `end_space`, `space_done`, `scan_spaces`, `cutscene_requested`, `cutscene_ended`, `DueKind::eventMet`), `gamedata/encounter_data.h` (`EncounterRecipe::mode`, `map`, `daily`, `EncounterObjectiveKind::cutscene`, `event`, `EncounterSpawn::skip`, `InstanceObject`), `tools/gamedata/encounter_recipes.py` (`Reader.mode_roots`, `Reader.mode_objects`), [Instances](instances.md), test cases SI4, SI5, SI7 (`tests/story_instance_tests.cpp`) |
 | Stage DG2: the wait of a spawn for its navigation tile in each level, and the end rule that waits for it (code review of stage QG9d, QG9DR-R1, R2) | `world/encounters.cpp` (`spawn`, `DueKind::endRule`), `world/encounters.h` (`kFloorSlowWait`, `EncounterStageRun::floorWaits`), test cases QG9DR1, QG9DR2 (`tests/review_qg9d_tests.cpp`) |
 | Stage QG9d: the axes of the offset of a detection volume, the wait of the recipes of a space for the quest objects of the mode root, the corrections of the code review of stage QG9c (QG9CR-R1, R3, R4) | `tools/gamedata/encounter_recipes.py` (`local_offset`, `mode_area`, the detector and trigger shapes), `world/encounters.cpp` (`hold_space`, `mode_recipe_task`, `spawn` and `encounter_rules::kFloorWait`, `count_earlier_deaths`, `DueKind::eventMet`), the case `axes` of `check_encounters_tool.py`, test cases QG9CR1, QG9CR3, QG9CR4 (`tests/review_qg9c_tests.cpp`), QG9D2 (`tests/story_mode_qg9d_tests.cpp`) |
+| Stage QG9e: the instance recipes of the mode roots of an own level (the set of the level), the placements of a level and their data, the guard of the recipes that no player ends, the detector of a slice with no ParticipantTracker | `world/encounters.cpp` (`add_level`, `add_recipes`, `assign_task_keys`, `start_space`), `world/encounters.h` (`EncounterPlacement::data`, `creatures`, `interactions`, `level`), `world/levels.cpp` (`read`), `world/creatures.h` (`spawn_member`), `tools/gamedata/encounter_recipes.py` (`Reader` with `level`, `root_of`, `testable`), `tools/gamedata/encounters.py` (`--level`, `player_ends`), the cases `level-roots` and `mode-player` of `check_encounters_tool.py`, test cases QG9E1, QG9E2 (`tests/story_level_tests.cpp`) |
 | Stage QG9b: the detector of the mode areas, the end rules of the waits and of the stages with no objective, the boss phases and BossPhaseObjective, the spawns of the parent and of the earlier stages, the gate of a mode with more than one recipe | `world/encounters.cpp` (`advance_phases`, `look_phases`, `count_earlier_deaths`, `DueKind::endRule`, `DueKind::phases`, `EncounterPlacement::gated`), `gamedata/encounter_data.h` (`StageEnd`, `BossPhase`, `EncounterObjectiveKind::bossPhase`, `none`, `EncounterRecipe::detectorFromMode`), `world/quests.h` (`mode_task_active`), `tools/gamedata/encounter_recipes.py` (`mode_area`, `boss_phases`), `tools/gamedata/encounters.py` (`phase_index`, `phase_boss`), test cases SY1 to SY3 (`tests/story_mode_tests.cpp`), QG9AR4, the cases `mode-*` of `check_encounters_tool.py` |
 
 ## Rules
@@ -192,7 +193,8 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   a stage ends its child stages that run, with its status) [data: the class; client: it makes no task for it, static read D1 of stage
   QG5c4, 0x7C7DF0]. A parent whose child stages are not optional does not wait for such a child: it ends when it has its count and each
   child stage that is not of this kind ended [agent]. A WaitForParentObjective stage of the manager, or one before an other child stage
-  of its parent (that one would never start), refuses its recipe [agent]. The data has neither.
+  of its parent (that one would never start), refuses its recipe [agent]. The data of the main world has neither. Stage QG9e: in an
+  instance recipe the second case is not refused (below).
 - Stage QG5c5, a DestroySliceAction (`m_sliceAsset`, `m_aliasAsset` of the action) in the start or the end actions of a stage removes each
   member of the instance whose slice, alias, or body is the slice of the action, its alias, or a slice of its alias (no count, no reward,
   as a KillSpawnsAction) [data: the fields; agent: the removal]. The cleanups of the monoliths and of the portal SM_00 name the alias
@@ -545,6 +547,53 @@ mode root slices and of the encounter slices, and the live runs of stage QG9b. E
   wave phases of Medusa, the boss fight, the cleanup of 6 s with the DestroySliceAction of the adds, the success), QuestMammoth (the stages
   `Phase_01` to `Phase_04`, the root caster), and QuestApophis (the intro wait, the burrow phases with their Myrmidons, the cleanup with no
   objective) [live; videos of the evidence folder of stage QG9b].
+
+### The instance recipes of an own level (stage QG9e)
+
+- The encounter tool reads the mode roots of an own level (`encounters.py --level LEVEL`, `encounter_recipes.Reader` with the level and its
+  terrain folder): the placements of the capitals of its terrain project (`sharedassets/coatlicue/LEVEL/regions/`) whose slice is the mode
+  root of a map of a solo mode of the level (`interactions.level_mode_roots` with `solo_only`; IsSoloTrial 1 of the mode row), compared by
+  `slice_key` (the capital `slices/Dungeon/AbominableLiangEbonscale/AbominableLiangScript`, the SlicePath
+  `Dungeon/AbominableLiangEbonscale/AbominableLiangScript`) [data]. The other placements of a level make no recipe: the expeditions are stage
+  DG5, and the open world encounters are of the main world [agent]. The file is a part of the level set; the creature tool writes the member
+  kinds of its recipes into `creatures.json` of the set, and the interaction tool the templates of its objects into `interaction-data.json`
+  of the set ([Game data](../development/game-data.md)).
+- The backend adds the recipes of a set at its first read (`Encounters::add_level`; [Instances](instances.md)): each one is a placement with
+  the data of its level (`EncounterPlacement::data`, `creatures`, `interactions`, `level`). Each lookup of a member, a kind, or a template
+  uses the data of its placement; the gate and the task keys of the instance recipes of each mode are made again for all the placements
+  (`assign_task_keys`) [agent]. `start_space` takes only the recipes of the level of the space. No second path: the stages, the members, the
+  participants, and the credit have the rules of the instance recipes of stages QG9a to QG9d.
+- Stage QG9e [agent from the data]: an instance recipe with no ParticipantTracker whose detection volumes have no shape that the runner tests
+  takes the areas of its mode root as its detector (`fromMode`; the rule of stage QG9b). QuestAdiana: the only volume of its encounter slice is
+  the volume of the area spawner of its root (no query shape, an empty filter): not a detector of the players.
+- Stage QG9e [agent]: an instance recipe in which no stage ends by the act of a player is refused (`encounters.player_ends`): a destroyed
+  objective with something to count, an entity-state objective with a trigger, or a boss phase of a health phase ends by a player; an event
+  of the boss tree (met at the start of its stage), a time, a cutscene, a spawn, and a wait end by themselves. With such stages only the
+  encounter would succeed at its start with no fight (QuestIsabella: 9 stages of events, a wait, and a time; QuestLiang: the talismans of its
+  fight, below). No recipe of the main world changes (the file of the main world keeps its bytes).
+- Stage QG9e [agent from the data]: in an instance recipe a WaitForParentObjective child stage before an other child stage of its parent
+  runs in the background, and the parent starts its next child at once (`start_stage`). The fight of QuestAdiana (`01 - Gameplay`) has the
+  children `00 - Intro_Wait` (a wait for the parent) and the boss phases; the kill of the boss ends the parent and its waiting child. In a
+  recipe of the open world the refusal of stage QG5c5 stays. Case QG9E3.
+- Live (stage QG9e, `~/Games/soulwarden/work/evidence/quests/qg9e/implement/`): QuestAdiana (the entrance with the game UI, the kill of
+  Artemis (the vitals row FL_AI_Adiana_Bow) by hits for the kill task of `09A_M15_FightArtemis`, the next quest task "The End of New
+  Eden: Speak to Morgaine", the exit portal) and QuestDracula (the
+  20 m trigger of the setup, the intro cutscene, the kill of the shadow of Cecilia and of Alecksi by hits, the end cutscene, the success
+  event `17_MSQ_DraculaFinal_GlobalSuccess`, the quest "To Face the End" at its hand-in "Talk to Cecilia", the exit portal). The live
+  backend had 88 placements of the main world (68 taken, the same as before) and each level set adds its recipes at its first read.
+- QuestLiang (refused; the input of stage BT3) [data]: the five stages of `enc_quest_abominableliangboss` wait for the events Phase1_started
+  to Phase4_started and NHSpawnTalismans of the boss tree (`sharedassets/ai/behaviortrees/grunt/abominable_liang_base.behaviortree`, not in
+  the client); no stage counts a kill. The success event `99F_MSQ_08_Liang_Soul_Separation_interact` is the quest task "Defeat Zhou Liang to
+  rescue his soul". The fight of the data: the talisman piles (`msq_abominableliang_talismanpile`, proximity gatherables of 2 m, the row
+  `MSQ_AbominableLiang_TalismanPile`, AddedStatusEffect `AI_AbominableLiang_ProtectiveTalisman`: 3 stacks at most, 10 s) give the status
+  that equips `AI_AbominableLiang_ProtectiveTalisman_Launch1` (OnHit, AttackType Heavy, Magic, Ability; CheckOwnedStatusEffects; one stack
+  of the talisman goes; OtherApplyStatusEffect `AI_AbominableLiang_TalismanBarrier`, 12 stacks at most, on Liang); the blackboard of the
+  Liang slice has Phase1Threshold2 4, Phase2Threshold3 6, Phase3Threshold1 8 (the objective texts: "Apply 6 more talismans", "Apply 8 more
+  talismans"); Liang has HealthMod 99 and the mitigation 0.99 of each damage type (no kill); then "Use your Azoth Staff to free Liang's soul"
+  (the gatherable `MSQ_AbominableLiang_Soul` of the Liang slice, AzothStaff, 6 s, the event of the task `99F_MSQ_ER_FightLiang_SoulExtract`).
+  The backend has no rule for the gather status of a proximity object, CheckOwnedStatusEffects and NumStatusEffectStacksToRemove of a row of
+  the evaluator ([Passive rules](passive-rules.md)), the bridge from the stacks of the barrier to the events of the stages, and the gather of
+  the soul of a living creature.
 
 ## Commands
 

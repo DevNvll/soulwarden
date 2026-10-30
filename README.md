@@ -132,7 +132,7 @@ This is an independent project with no connection to Amazon Games. The repositor
   portal near the start (hold E) takes you back to the place of the entry; then talk to Leovix and hand in the quest at Medea. A death in the instance puts
   you at its start. If you leave before the end, the instance waits 10 minutes, and the entrance takes you back to the same fight. Not
   yet: the crystal, the exhaustion, and the summons of Medea (her fight is the frost bolt only), the leave button of the escape menu (use
-  the portal), and the expeditions (stage QG9b below runs more solo instances). The support list has
+  the portal; it works from stage QG9e), and the expeditions (stage QG9b below runs more solo instances). The support list has
   647 quests now: the 8 rows of `06A_MSQ_21` are supported, and 13 rows of instances that the server does not run are not counted as
   supported any more.
 - More story instances of the main world (stage QG9b): Mahantaram (`09A_M11_FightMahantaram`), Apophis (`1624_0801_agodawakens`), the
@@ -162,8 +162,16 @@ This is an independent project with no connection to Amazon Games. The repositor
   entrance or a crystal, the respawn screen of a death lists it ("Expedition Entrance", "Shrine"); a respawn at a checkpoint starts its
   cooldown of 30 s. The lore pages of Amrine go into the journal, and the exit stone near the start (hold E) takes you back to the door. If
   you leave the expedition (or the game) before its end, it waits 10 minutes, and the door takes you back into it. Not yet: the bosses, the
-  doors, the light bridge, the chests, and the names of the rooms of an expedition (the compass keeps the name of the last place of the open
-  world).
+  doors, the light bridge, the chests, and the names of the rooms of an expedition (before stage QG9e the compass kept the name of the last
+  place of the open world).
+- The solo story instances with a level of their own (stage QG9e): the fight with Artemis (QuestAdiana, `09A_M15_FightArtemis`) and the dream of Lilith (QuestDracula, "To Face
+  the End" of the Nighthaven story: the shadow of Cecilia, then Alecksi). Their entrances work as the entrance of Medea; the intro and the
+  end cutscenes play, the bosses fight, the quest counts the success, and the exit portal takes you back. The game menu (Escape, then the
+  gear) now has "Leave" in a story instance and in an expedition: its Yes ("Exit Soul Trial?", "Exit Expedition?") takes you back to the
+  place of the entry. The compass shows the name of the mode in an instance with a level of its own ("Lilith's Dream", "Amrine
+  Excavation"). After a leave of the game menu before the end of the fight the game still shows "Soul Trial Completed". Not yet: Liang,
+  Isabella, Motherwell, Nihilo, and the season trials (their entrance shows a refusal), and Taurus after the Medusa fight
+  (`09A_M12_TalkToTaurus`).
 - Territory standing (stage QG1). The standing of a territory goes up to rank 300: the points above a rank go to the next rank, and each new rank gives character experience (for example 125 at rank 1 of Windsward) and one standing point ("token"). A quest gives its standing to the territory where you hand it in (the notice shows "+100 Windsward Standing"). Open the map (M), the second tab "Territories": a territory with a free token shows a badge; click it to "Claim your reward" and choose a card (Standing Gain, XP Gain, Gather, Station Fee, Trading Fee, Storage, House Ownership; the house card keeps the token). Standing Gain, XP Gain, and Gather act now while you are in that territory; the other cards are kept for their later systems. The standing, the tokens, and the cards stay after a restart. The Windsward main story goes on after "Feast to Famine" (Marcel Dupont, then Saatvik Agrawal).
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.

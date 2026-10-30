@@ -1500,10 +1500,10 @@ def instances_text(document: dict) -> str:
             lines.append(f"  level {level['level']}: refused ({level.get('problem', '')})")
         else:
             parts = ", ".join(f"{name} {'%d bytes' % level[name]['bytes'] if level[name]['loaded'] else 'none'}"
-                              for name in ("creatures", "navigationData", "heights", "interactions"))
+                              for name in ("creatures", "navigationData", "heights", "interactions", "encounters") if name in level)
             lines.append(f"  level {level['level']}: read in {level['loadMilliseconds']:.1f} ms; {level['creatures'].get('spawnPoints', 0)} spawn "
                          f"points, {level['interactions'].get('objects', 0)} objects; {parts}; spaces {level['spaces']}; navigation tiles "
-                         f"{level.get('tilesHeld', 0)}")
+                         f"{level.get('tilesHeld', 0)} ({level.get('tileBytes', 0)} bytes)")
     return "\n".join(lines)
 
 

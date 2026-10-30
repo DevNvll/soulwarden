@@ -1021,7 +1021,27 @@ def main() -> int:
         target.unlink(missing_ok=True)
     if not review and not stations:
         failures += 0 if check_station_overrides() else 1
+        correct = check_checkpoint_ids()
+        print(f"{'ok  ' if correct else 'FAIL'} the id of a checkpoint: 1 to 31 bytes, one checkpoint of an id in a mode and map (review DG3R-R3)")
+        failures += 0 if correct else 1
     return 0 if failures == 0 else 1
+
+
+def check_checkpoint_ids() -> bool:
+    """Code review of stage DG3, finding DG3R-R3 (tool.checkpoint_id): two checkpoints of one mode and map with one id stop the tool; the same
+    id in an other mode, or an other id in the same mode, is a checkpoint; an id of 32 bytes stops the tool."""
+    known = [{"mode": "Test_Expedition", "map": "Test_Expedition", "spawner": "Checkpoint_A"}]
+
+    def stops(*arguments) -> bool:
+        try:
+            tool.checkpoint_id(*arguments)
+        except tool.Failure:
+            return True
+        return False
+    return (tool.checkpoint_id(known, "Test_Expedition", "Test_Expedition", " Checkpoint_B ", "root") == "Checkpoint_B"
+            and tool.checkpoint_id(known, "Test_Other", "Test_Other", "Checkpoint_A", "root") == "Checkpoint_A"
+            and stops(known, "Test_Expedition", "Test_Expedition", "Checkpoint_A", "root")
+            and stops(known, "Test_Expedition", "Test_Expedition", "x" * 32, "root") and stops(known, "Test_Expedition", "Test_Expedition", " ", "root"))
 
 
 def check_station_overrides() -> bool:

@@ -14,6 +14,7 @@
 
 #include "gamedata/encounter_data.h"
 #include "gamedata/interaction_data.h"
+#include "gamedata/level_data.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/load_meter.h"
@@ -251,6 +252,16 @@ struct EncounterInstance {
 /** One placement of a recipe, taken or refused. */
 struct EncounterPlacement {
     const gamedata::EncounterRecipe* recipe{nullptr};
+    /**
+     * Stage QG9e: the data of the recipe: its file (the members of its spawns), the creature data of its member kinds, and the catalog of
+     * the templates of its objects. The main world level: the files of the backend start; an own level (`level`): the files of the data set
+     * of that level (gamedata::LevelData), read at the first use of the level.
+     */
+    const gamedata::EncounterData* data{nullptr};
+    const gamedata::CreatureData* creatures{nullptr};
+    const gamedata::InteractionData* interactions{nullptr};
+    /** Stage QG9e: the own level of an instance recipe of a level set; empty: a recipe of the main world level. */
+    std::string level;
     /** The causes of a refusal (the tool and the other game data files). Empty: the runner takes it. */
     std::vector<std::string> refused;
     /**
@@ -404,8 +415,14 @@ public:
      */
     [[nodiscard]] bool runs_mode(std::string_view mode);
     /**
+     * Stage QG9e: the world read the data set of an own level (Levels, the first use of the level): the instance recipes of its file
+     * encounter-data.json become placements of that level, resolved with the creature data and the interaction data of the set (no cell of
+     * the main world: they run only in a space of that level). @return The number of the recipes added.
+     */
+    std::size_t add_level(const std::string& level, const gamedata::LevelData& data);
+    /**
      * The instance system made an instance of a mode in a space: each taken instance recipe of the mode (not a daily alternative) waits in
-     * that space. Its encounter starts when a character of the space is in its detector [agent: the mode script and the AreaBoss trigger of
+     * that space. Stage QG9e: only a recipe of the level of the space (the main world level, or the own level of its set). Its encounter starts when a character of the space is in its detector [agent: the mode script and the AreaBoss trigger of
      * the mode root that would start it are not in the client]; a failed fight starts again the same way; a success ends the recipe in that
      * space. @return The number of the recipes of the space.
      */
@@ -543,6 +560,11 @@ private:
     };
 
     void load();
+    /** Stage QG9e: adds a placement of each recipe of a file, with the data of its level (EncounterPlacement::data). */
+    std::size_t add_recipes(const gamedata::EncounterData& data, const gamedata::CreatureData* creatures,
+                            const gamedata::InteractionData* interactions, const std::string& level);
+    /** The gate and the task keys of the instance recipes of each mode (stage QG9b, QG9d); stage QG9e: again after a level set. */
+    void assign_task_keys();
     void resolve(EncounterPlacement& placement);
     void scan();
     void take_due();
@@ -597,8 +619,8 @@ private:
      * @return True when an objective counts a spawn: it tracks no slice, its slice, its alias (stage QG5c5), or the body slice or an alias
      *         slice of the member. Stage QG5c5: `part` is a part of a group member (its body); -1: the member, or any part of a group.
      */
-    [[nodiscard]] bool counts_toward(const gamedata::EncounterObjective& objective, const gamedata::EncounterSpawn& spawn,
-                                     std::int32_t part = -1) const;
+    [[nodiscard]] static bool counts_toward(const gamedata::EncounterData& data, const gamedata::EncounterObjective& objective,
+                                            const gamedata::EncounterSpawn& spawn, std::int32_t part = -1);
     /** Stage QG5c5: the members of the instance whose slice, alias, or body a DestroySliceAction names go (no count, no reward). */
     void destroy_slices(EncounterInstance& instance, const std::vector<gamedata::EncounterDestroy>& actions);
     /** Stage QG5c5: the child stages of a stage that it waits for (not optional) ended: each one that is not a WaitForParentObjective stage. */

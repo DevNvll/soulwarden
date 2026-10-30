@@ -1102,6 +1102,15 @@ button on "Confirm").
   ExitDungeon in an instance of its mode ([Instances](systems/instances.md)). `tools/world instance list` shows the quest objects that the
   instances made and that a member gathered; `tools/world encounter NAME` shows `spawnsWaited` (a spawn that waited for its navigation
   tile).
+- Stage QG9e ([Instances](systems/instances.md), "The solo story modes of an own level"; [Encounters](systems/encounters.md)): the
+  instance recipes of a solo mode with a level of its own are in the level set (`encounter-data.json` of `levels/LEVEL`, from
+  `tools/gamedata/level.sh`); the backend adds them at the first read of the set. QuestAdiana and QuestDracula run; QuestLiang,
+  QuestIsabella, QuestMotherwell, QuestNihilo, and the season trials refuse the entry (result 10; the causes are in the table of
+  [Instances](systems/instances.md)). The level information 1635 has the grid layer 1, so the client accepts the membership of a mode: the
+  compass shows the name of the mode in an own level, and the game menu has "Leave" in a mode with IsDungeon. Its Yes sends 926
+  (ForfeitArena) while the PlayerArena state (slot 4) says isInArena; the backend leaves the instance as for 3309 and 1980. The
+  GameModeParticipant state has no PlayerCanQuit flag (that button does nothing in this client). `tools/world instance list` shows the
+  bytes of the navigation tiles of each level (`tileBytes`) and the encounter part of a set.
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is

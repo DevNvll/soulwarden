@@ -15,12 +15,18 @@
 //   3309 GameModeParticipantComponentServerFacet_RequestLeaveGameMode (client to server; reader 0x3273BB0, caller 0x32D2A10): a mode
 //        reference `id:16 u64 u64` (16 raw bytes and two u64).
 //   946  PlayerArenaComponentServerFacet_TeleportIntoDungeon (client to server; reader 0x259E1E0, send stub 0x2760D20): no field.
+//   926  PlayerArenaComponentServerFacet_ForfeitArena (client to server; ForfeitArena 0x2780110; static read LEAVE of stage QG9e, E4):
+//        leaveDungeon:u8. The Yes of the dungeon leave of the escape menu sends it with 1 while the PlayerArena state says isInArena
+//        (live: 17 bytes).
 
 namespace soulwarden::backend::server::rep {
 
 inline constexpr std::uint32_t kTypeDungeonActivateResult = 3094;
 inline constexpr std::uint32_t kTypeRequestLeaveGameMode = 3309;
 inline constexpr std::uint32_t kTypeTeleportIntoDungeon = 946;
+inline constexpr std::uint32_t kTypeForfeitArena = 926;
+/** The PlayerArena component of the player slice (slot 4), by its name in slice-ids.json (component 0ADF8519A10C374D; live: 926). */
+inline constexpr const char* kPlayerArenaComponentName = "RootPlayer/7158ce3f-e02d-44cb-badd-ba2a43f1eff4";
 /**
  * 1980 GameModeParticipantComponentServerFacet_OnReceivedClientEvent (client to server; reader 0x26FEC60): event:u32. The escape menu and the
  * leave confirmation of the dungeon HUD send the event 2612035792 = 9BB080D0 (SendClientEvent; static read E2d of stage QG9a): the leave.
@@ -43,5 +49,14 @@ struct LeaveGameModeRequest {
 };
 /** @return The body of 3309, or no value for a body that does not have its form (exactly 48 bytes). */
 [[nodiscard]] std::optional<LeaveGameModeRequest> read_leave_game_mode(std::span<const std::uint8_t> body);
+
+/** The body of 926: the facet prefix and the flag leaveDungeon. */
+struct ForfeitArenaRequest {
+    std::uint64_t target{0};
+    std::uint64_t entity{0};
+    bool leaveDungeon{false};
+};
+/** @return The body of 926, or no value for a body that does not have its form (exactly 17 bytes). */
+[[nodiscard]] std::optional<ForfeitArenaRequest> read_forfeit_arena(std::span<const std::uint8_t> body);
 
 } // namespace soulwarden::backend::server::rep

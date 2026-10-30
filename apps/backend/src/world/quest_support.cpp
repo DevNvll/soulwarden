@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -793,12 +794,30 @@ void QuestSupport::build() {
         // QG9a: an instance recipe only for a mode that the backend runs (its entrance and its content), and its kinds are the kill sources
         // of the tasks of that mode too.
         std::vector<std::string> modeOf(creatures->kinds().size());
+        // Stage QG9e: the member kinds of an instance recipe of an own level are kinds of the creature data of its set (their indexes are
+        // not indexes of the main data): each one is a source of its mode with that data.
+        std::vector<std::tuple<const gamedata::CreatureData*, const gamedata::CreatureKind*, std::string>> levelKinds;
         for (const EncounterPlacement& placement : m_world.encounters().loaded_placements()) {
             if (!placement.refused.empty()) {
                 continue;
             }
             const std::string mode = lower_text(placement.recipe->mode);
             if (!mode.empty() && index.modes.count(mode) == 0) {
+                continue;
+            }
+            if (placement.creatures != creatures) {
+                for (const gamedata::CreatureKind* kind : placement.kinds) {
+                    if (kind != nullptr && placement.creatures != nullptr) {
+                        levelKinds.emplace_back(placement.creatures, kind, mode);
+                    }
+                }
+                for (const auto& parts : placement.partKinds) {
+                    for (const gamedata::CreatureKind* kind : parts) {
+                        if (kind != nullptr && placement.creatures != nullptr) {
+                            levelKinds.emplace_back(placement.creatures, kind, mode);
+                        }
+                    }
+                }
                 continue;
             }
             for (const gamedata::CreatureKind* kind : placement.kinds) {
@@ -821,11 +840,7 @@ void QuestSupport::build() {
                 }
             }
         }
-        for (std::uint32_t at = 0; at < creatures->kinds().size(); ++at) {
-            if (!placed[at]) {
-                continue;
-            }
-            const gamedata::CreatureKind& kind = creatures->kinds()[at];
+        const auto take_kind = [&](const gamedata::CreatureData& source, const gamedata::CreatureKind& kind, const std::string& mode) {
             const gamedata::LootVitals* vitals = options.lootTables != nullptr ? options.lootTables->vitals_of(kind.vitals) : nullptr;
             // Stage QG2a: the rule of the kill credit and of the quest drops (LootTables::kill_categories: the base row, the spawn category,
             // the direct parent of each; the kill also the id of the base row).
@@ -836,8 +851,8 @@ void QuestSupport::build() {
                                                        ? options.lootTables->kill_categories(vitals, kind.vitals, kind.category, false)
                                                        : std::vector<std::string>{lower_text(kind.vitals), lower_text(kind.category)};
             index.killCategories.insert(categories.begin(), categories.end());
-            if (!modeOf[at].empty()) {
-                index.modeKillCategories[modeOf[at]].insert(categories.begin(), categories.end());
+            if (!mode.empty()) {
+                index.modeKillCategories[mode].insert(categories.begin(), categories.end());
             }
             index.dropCategories.insert(drops.begin(), drops.end());
             // Stage QG6b (GATHERDROP.md): the gather of a skinned body matches a category of its creature too (Gathering::complete).
@@ -845,7 +860,7 @@ void QuestSupport::build() {
             // refusal cause, no rank gate of a trade skill that is not a gathering skill; Gathering::check_gates).
             const bool skinnable = options.gatheringData != nullptr
                                    && std::any_of(kind.bodies.begin(), kind.bodies.end(), [&](const gamedata::CreatureBody& body) {
-                                          const gamedata::CreatureSlice& slice = creatures->slices()[body.slice];
+                                          const gamedata::CreatureSlice& slice = source.slices()[body.slice];
                                           const std::optional<gamedata::GatheringLink> link = options.gatheringData->creature(slice.asset, slice.subId);
                                           if (!link || link->row >= options.gatheringData->rows().size()) {
                                               return false;
@@ -863,6 +878,14 @@ void QuestSupport::build() {
             if (vitals != nullptr && vitals->canDropLoot && vitals->table && *vitals->table < options.lootTables->data().tables.size()) {
                 roots.emplace_back(options.lootTables->data().tables[*vitals->table].id, "the loot of the creature " + kind.vitals);
             }
+        };
+        for (std::uint32_t at = 0; at < creatures->kinds().size(); ++at) {
+            if (placed[at]) {
+                take_kind(*creatures, creatures->kinds()[at], modeOf[at]);
+            }
+        }
+        for (const auto& [source, kind, mode] : levelKinds) {
+            take_kind(*source, *kind, mode);
         }
     }
     // The gatherable rows with a node in the world: the records of the regions (natural nodes), the capital nodes and quest objects, the
@@ -978,7 +1001,7 @@ void QuestSupport::build() {
             }
             for (const gamedata::EncounterStage& stage : recipe.stages) {
                 for (const gamedata::EncounterSpawn& spawn : stage.spawns) {
-                    const gamedata::EncounterMember* member = encounters->member(spawn.member);
+                    const gamedata::EncounterMember* member = placement.data->member(spawn.member);
                     if (member == nullptr || member->kind != gamedata::EncounterMemberKind::object || member->event.empty()) {
                         continue;
                     }
@@ -1011,6 +1034,22 @@ void QuestSupport::build() {
             const std::optional<std::uint32_t> templateIndex = catalog != nullptr ? catalog->instance_object(object.slice) : std::nullopt;
             const std::optional<gamedata::GatheringLink> link = gathering != nullptr ? gathering->encounter_object(object.slice) : std::nullopt;
             if (templateIndex && link && catalog->templates()[*templateIndex].kind == gamedata::InteractionKind::gathering
+                && index.modes.count(lower_text(object.mode)) != 0) {
+                add_row(link->row, "the quest object " + object.spawner + " of the mode " + object.mode);
+            }
+        }
+    }
+    // Stage QG9e: the quest objects of the mode roots of the own levels that the world read (the templates in the catalog of each set; the
+    // rows of the gathering data of the backend), with the rule above.
+    for (const auto& [name, level] : m_world.levels().levels()) {
+        if (level.data == nullptr || !level.data->accepted() || !level.data->encounter_part().loaded || !level.data->interaction_part().loaded) {
+            continue;
+        }
+        const gamedata::InteractionData& catalog = level.data->interactions();
+        for (const gamedata::InstanceObject& object : level.data->encounters().instance_objects()) {
+            const std::optional<std::uint32_t> templateIndex = catalog.instance_object(object.slice);
+            const std::optional<gamedata::GatheringLink> link = gathering != nullptr ? gathering->encounter_object(object.slice) : std::nullopt;
+            if (templateIndex && link && catalog.templates()[*templateIndex].kind == gamedata::InteractionKind::gathering
                 && index.modes.count(lower_text(object.mode)) != 0) {
                 add_row(link->row, "the quest object " + object.spawner + " of the mode " + object.mode);
             }

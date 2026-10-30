@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gamedata/creature_data.h"
+#include "gamedata/encounter_data.h"
 #include "gamedata/height_maps.h"
 #include "gamedata/interaction_data.h"
 #include "gamedata/navigation_data.h"
@@ -16,7 +17,9 @@
 // of the main world (Amrine, nw_dungeon_windsward_00; a solo story level). The tool tools/gamedata/level.sh makes the set from the game copy
 // of the user into the folder levels/LEVEL of the game data folder: the manifest level.json, the creature data of its terrain project
 // (creatures.json, the format of the main world file with the spawn points of the level), the terrain heights (heights/), the navigation data
-// (navigation/), and the interaction objects (interaction-data.json). The files stay outside the repository.
+// (navigation/), and the interaction objects (interaction-data.json). Stage QG9e: the instance recipes of the mode roots of its solo modes
+// (encounter-data.json; their member kinds are in creatures.json, the templates of their objects in interaction-data.json). The files stay
+// outside the repository.
 //
 // The backend reads a set when the first space of its level starts (World, world/levels.h), not at its start. A level with no set, or a set
 // that the reader refuses, is a level with no content (the instance of stage DG1). A part of a set that is not there, or that its reader
@@ -99,6 +102,13 @@ public:
     [[nodiscard]] InteractionData& interactions() {
         return m_interactions;
     }
+    /** Stage QG9e: the instance recipes of the mode roots of the solo modes of the level (world/encounters.h, Encounters::add_level). */
+    [[nodiscard]] const EncounterData& encounters() const {
+        return m_encounters;
+    }
+    [[nodiscard]] EncounterData& encounters() {
+        return m_encounters;
+    }
 
     [[nodiscard]] const LevelPart& creature_part() const {
         return m_creaturePart;
@@ -112,9 +122,12 @@ public:
     [[nodiscard]] const LevelPart& interaction_part() const {
         return m_interactionPart;
     }
+    [[nodiscard]] const LevelPart& encounter_part() const {
+        return m_encounterPart;
+    }
     /** @return True when one part has data. */
     [[nodiscard]] bool has_content() const {
-        return m_creaturePart.loaded || m_navigationPart.loaded || m_heightPart.loaded || m_interactionPart.loaded;
+        return m_creaturePart.loaded || m_navigationPart.loaded || m_heightPart.loaded || m_interactionPart.loaded || m_encounterPart.loaded;
     }
 
     /** Tests: the set with no file (the manifest is accepted, the parts come from the test). */
@@ -128,6 +141,7 @@ public:
         m_navigationPart.loaded = m_navigation.available();
         m_heightPart.loaded = m_heights.available();
         m_interactionPart.loaded = m_interactions.loaded();
+        m_encounterPart.loaded = m_encounters.loaded();
     }
 
 private:
@@ -139,10 +153,12 @@ private:
     NavigationData m_navigation;
     HeightMaps m_heights;
     InteractionData m_interactions;
+    EncounterData m_encounters;
     LevelPart m_creaturePart;
     LevelPart m_navigationPart;
     LevelPart m_heightPart;
     LevelPart m_interactionPart;
+    LevelPart m_encounterPart;
 };
 
 /** The source of the level data sets (the backend: a folder; a test: sets in the memory). */

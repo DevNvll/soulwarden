@@ -391,7 +391,7 @@ def case_complete() -> bool:
             if self.absent:
                 raise tool.Failure(f"{len(self.absent)} file(s) of the game copy have no source (first: {self.absent[0]})")
 
-    def read_stub(sources, catalog):
+    def read_stub(sources, catalog, level=None):
         if sources.missing:
             sources.absent.append("regions/r_+00_+00/capitals/test/test.capitals.json")
         return type("Reader", (), {"members": {}, "mode_objects": []})(), [], {"encounters": 0, "notQuest": 0, "parentsRead": 0,
@@ -684,9 +684,66 @@ def case_mode_none() -> bool:
     empty["stageOrder"] = [0, 1]
     world = open_world(instance_recipe())
     world["stages"][3]["objective"] = {"type": tool.NONE}
+    # Stage QG9e: the recipe `empty` has no stage that a player ends: the guard of stage QG9e is its one cause (case mode-player).
+    empty_causes = tool.refusals(empty, members())
     return (tool.refusals(value, members()) == [] and value["stages"][3]["objective"].get("end") == "start"
-            and tool.refusals(empty, members()) == [] and empty["stages"][1]["objective"].get("end") == "start"
+            and len(empty_causes) == 1 and has(empty_causes, "no stage of the encounter ends by the act of a player")
+            and empty["stages"][1]["objective"].get("end") == "start"
             and has(tool.refusals(world, members()), "the objective none of the stage Phase 03 - Cleanup"))
+
+
+def case_level_roots() -> bool:
+    """Stage QG9e: the reader of an own level: the regions of its terrain project, the mode roots of the maps of its solo modes only (an
+    expedition of the same level has none: stage DG5), compared by slice_key ("slices/Dungeon/MadeUp/MadeUpScript" and the SlicePath
+    "Dungeon/MadeUp/MadeUpScript"); the main world reader keeps its own folder and its own roots."""
+    from check_combat_tool import sheet  # noqa: PLC0415 (made-up tables of the game data)
+    import interactions  # noqa: PLC0415
+
+    def mode_row(identifier: str, solo: bool) -> dict:
+        return {"GameModeId": identifier, "IsSoloTrial": solo, "IsDungeon": not solo}
+
+    def map_row(identifier: str, path: str, terrain: str) -> dict:
+        return {"GameModeMapId": identifier, "GameModeId": identifier, "SlicePath": path, "CoatlicueName": terrain}
+
+    class Sources:
+        def __init__(self) -> None:
+            self.files = {
+                interactions.MODES_TABLE: sheet("GameModes", "GameModeData", [mode_row("QuestMadeUp", True), mode_row("DungeonMadeUp", False)]),
+                interactions.MAPS_TABLE: sheet("GameModeMap", "GameModeMapData", [
+                    map_row("QuestMadeUp", "Dungeon/MadeUp/MadeUpScript", "coatlicue\\NW_Made_Up_Quest"),
+                    map_row("DungeonMadeUp", "Dungeon/LevelScripts/MadeUpDungeon", "coatlicue\\NW_Made_Up_Quest")])}
+
+        def read(self, path: str):
+            return self.files.get(path)
+
+    level = reader.Reader(Sources(), None, ("nw_made_up_quest", "coatlicue/nw_made_up_quest"))
+    roots = level.mode_roots()
+    quest = level.root_of(roots, "slices/dungeon/madeup/madeupscript")
+    dungeon = level.root_of(roots, "slices/dungeon/levelscripts/madeupdungeon")
+    main = reader.Reader(Sources(), None)
+    return (level.regions == "sharedassets/coatlicue/nw_made_up_quest/regions/" and quest == {"mode": "QuestMadeUp", "map": "QuestMadeUp"}
+            and dungeon is None and list(roots) == ["dungeon/madeup/madeupscript"] and main.regions == reader.REGIONS_FOLDER
+            and main.mode_roots() == {})
+
+
+def case_mode_player() -> bool:
+    """Stage QG9e: an instance recipe whose stages all end by themselves (the events of the boss tree, a time, a cutscene: QuestIsabella,
+    QuestLiang) is refused; a kill stage, an entity-state stage with a trigger, or a health phase of a boss lets a player end it. An open
+    world recipe does not take this rule."""
+    events = instance_recipe()
+    events["stages"][0] = stage("Wave 1 - Isabella_Normal", tool.EVENT, [spawn(MEMBER)], objective={"eventId": "Transform_Winged"})
+    events["stages"][2] = stage("Wave 2 - Transformation", tool.EVENT, [], children=[4], objective={"eventId": "Winged_Ready"})
+    refused = tool.refusals(events, members())
+    kill = instance_recipe()
+    triggered = instance_recipe()
+    triggered["stages"][2] = stage("Phase 02 - Wait", tool.STATE, [], objective={"completeOn": "deactivated", "triggers": [
+        {"entity": "Trigger_Start", "position": [0.0, 0.0, 0.0], "filter": "PlayerOnly", "deadTargets": False,
+         "shapes": [{"shape": "sphere", "radius": 20.0, "center": [0.0, 0.0, 0.0]}]}]})
+    world = open_world(instance_recipe())
+    world["stages"][2] = stage("Phase 02 - Event", tool.EVENT, [], objective={"eventId": "Phase2_started"})
+    return (has(refused, "no stage of the encounter ends by the act of a player") and tool.refusals(kill, members()) == []
+            and not has(tool.refusals(triggered, members()), "no stage of the encounter ends by the act of a player")
+            and not has(tool.refusals(world, members()), "no stage of the encounter ends by the act of a player"))
 
 
 def case_mode_earlier() -> bool:
@@ -781,7 +838,7 @@ CASES = {"taken": case_taken, "manager": case_manager, "parent": case_parent, "o
          "group": case_group, "shape": case_shape, "wait": case_wait, "destroy": case_destroy, "season": case_season,
          "earlier": case_earlier, "ancestor": case_ancestor, "removed-earlier": case_removed_earlier,
          "removed-by-child": case_removed_by_child, "instance": case_instance, "skip": case_skip, "mode-wait": case_mode_wait,
-         "mode-none": case_mode_none, "mode-earlier": case_mode_earlier, "mode-phase": case_mode_phase, "mode-areas": case_mode_areas,
+         "mode-none": case_mode_none, "mode-player": case_mode_player, "level-roots": case_level_roots, "mode-earlier": case_mode_earlier, "mode-phase": case_mode_phase, "mode-areas": case_mode_areas,
          "axes": case_axes}
 
 

@@ -9,7 +9,8 @@
 //         "instance enter" with no data and with an unknown map; the check of the data tool (runs check_game_modes_tool.py)
 //   IN4   the level change of the session in one connection (research dungeons.md 2.1): 1628 with the new instance, 1635 with the level of
 //         the space, a new version and a new instance, 1617, an empty bundle with sequence 1, then the full owner record at interest 1
-//         with its metadata state (no wait for 5181); the 5181 of the client is a log line; the return and a second entry
+//         with its metadata state (no wait for 5181); the 5181 of the client is a log line; the return and a second entry; each 1635 has
+//         the grid layer that is not zero (stage QG9e)
 //   IN5   the account rule of the version and the context instance (open problem P1): the table; a session of the account after a level
 //         change and a disconnect gets the next instance (3), not the instance of its session id (2, the instance that the client has)
 //   IN6   the instance object and its two transactions: the rows of the entry and of the exit, a refused row changes nothing, the
@@ -40,6 +41,7 @@
 #include "gamedata/creature_data.h"
 #include "gamedata/game_modes.h"
 #include "server/rep/level_contexts.h"
+#include "server/rep/rep_session.h"
 #include "support/cases.h"
 #include "support/check.h"
 #include "support/server_host.h"
@@ -105,6 +107,8 @@ struct LevelInfo {
     std::uint8_t instance{0};
     std::uint8_t reload{0};
     std::uint64_t version{0};
+    /** Stage QG9e: the u64 after the four u32 values (IsInGridLayer of the client needs it not zero). */
+    std::uint64_t gridLayer{0};
     bool ok{false};
 };
 
@@ -116,7 +120,7 @@ LevelInfo level_info(const Sent& sent) {
     for (int index = 0; index < 4; ++index) {
         reader.u32();
     }
-    reader.u64();
+    info.gridLayer = reader.u64();
     reader.size();
     reader.u8();
     info.instance = reader.u8();
@@ -337,6 +341,8 @@ void level_change(const Options&) {
     const LevelInfo first = level_info(a.got.at(2));
     check(first.ok && first.level == "newworld_vitaeeterna" && first.instance == 1 && first.version == 1,
           "setup: the world entry has the main world, instance 1, version 1 (the values of the stored bytes of T2)");
+    check(first.gridLayer == server::rep::kGridLayerId && first.gridLayer != 0,
+          "stage QG9e: the level information of the world entry has a grid layer that is not zero (IsInGridLayer of the client)");
     const world::Entity& entity = *host.world.find_character(kCharacterA);
     const auto change = [&](const char* what, const std::function<bool()>& run, const char* level, std::uint8_t instance) {
         const std::size_t before = a.got.size();
@@ -350,9 +356,9 @@ void level_change(const Options&) {
         }
         const LevelInfo info = level_info(*got[1]);
         check(info.ok && info.level == level && info.terrain == std::string("coatlicue/") + level && info.instance == instance
-                  && info.version == instance && info.reload == 1,
+                  && info.version == instance && info.reload == 1 && info.gridLayer == server::rep::kGridLayerId,
               std::string(what) + ": the level information has the level " + level + ", a new version and a new instance (" + std::to_string(instance)
-                  + "), and the reload flag");
+                  + "), the reload flag, and the grid layer (stage QG9e)");
         check(self_instance(*got[0]) == instance, std::string(what) + ": the self identification has the new instance in its level block");
         const Bundle empty = read_bundle(got[3]->body);
         check(empty.complete && empty.sequence == 1 && empty.instance == instance && empty.records.empty() && empty.stops.empty(),

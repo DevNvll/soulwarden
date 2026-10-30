@@ -1,6 +1,7 @@
 #include "world/levels.h"
 
 #include "core/logging/log.h"
+#include "world/encounters.h"
 #include "world/instances.h"
 #include "world/world.h"
 
@@ -47,18 +48,24 @@ Level& Levels::read(const std::string& level) {
         ++m_counts.reads;
         const gamedata::LevelData& data = *entry.data;
         log::write("world: level %s: its data set is read in %.1f ms: creatures %s (%zu spawn points, %zu kinds, %zu slices), navigation %s "
-                   "(%zu regions), heights %s, interactions %s (%zu objects, %zu checkpoints)",
+                   "(%zu regions), heights %s, interactions %s (%zu objects, %zu checkpoints), encounters %s (%zu instance recipes)",
                    level.c_str(), milliseconds, part_text(data.creature_part()).c_str(), data.creatures().spawn_points().size(),
                    data.creatures().kinds().size(), data.creatures().slices().size(), part_text(data.navigation_part()).c_str(),
                    data.navigation().regions(), part_text(data.height_part()).c_str(), part_text(data.interaction_part()).c_str(),
-                   data.interactions().objects().size(), data.interactions().checkpoints().size());
+                   data.interactions().objects().size(), data.interactions().checkpoints().size(), part_text(data.encounter_part()).c_str(),
+                   data.encounters().recipes().size());
         if (data.navigation_part().loaded || data.height_part().loaded) {
             entry.navigation = std::make_unique<Navigation>(m_world, data.navigation_part().loaded ? &entry.data->navigation() : nullptr,
                                                             data.height_part().loaded ? &entry.data->heights() : nullptr, m_navigationThread,
                                                             level);
         }
     }
-    return m_levels.emplace(level, std::move(entry)).first->second;
+    Level& stored = m_levels.emplace(level, std::move(entry)).first->second;
+    if (stored.data != nullptr && stored.data->accepted() && stored.data->encounter_part().loaded) {
+        // Stage QG9e: the instance recipes of the set become placements of the encounter system (one time: the set stays to the stop).
+        (void)m_world.encounters().add_level(level, *stored.data);
+    }
+    return stored;
 }
 
 bool Levels::available(const std::string& level) {
@@ -77,6 +84,9 @@ void Levels::space_started(SpaceId space, const std::string& level) {
     ++m_counts.spacesStarted;
     Level& found = read(level);
     found.spaces.insert(space);
+    if (found.navigation != nullptr) {
+        m_active.insert(level);
+    }
     const gamedata::LevelData* data = found.data.get();
     if (data != nullptr && data->accepted() && data->creature_part().loaded) {
         if (m_world.creatures().has_data()) {
@@ -128,13 +138,26 @@ const Navigation* Levels::navigation_of(SpaceId space) const {
 }
 
 void Levels::tick() {
-    for (auto& [name, level] : m_levels) {
-        // A level with no space keeps its tiles until their drop time; its paths end with their creatures. Code review of stage DG2,
-        // finding DG2R-R5: a level with no space and no work (no tile, no route, no search) gets no tick: its tick would scan the characters
-        // of the world each 500 ms for no tile. The data of the level stays.
-        if (level.navigation != nullptr && (!level.spaces.empty() || level.navigation->busy())) {
-            level.navigation->tick();
+    // Code review of stage DG3, finding DG3R-R4: only the active levels (MP-8: the cost depends on the levels with a space or with work, not on
+    // the levels that the world read). A level with no space keeps its tiles until their drop time; its paths end with their creatures. Code
+    // review of stage DG2, finding DG2R-R5: a level with no space and no work (no tile, no route, no search) gets no tick: its tick would scan
+    // the characters of the world each 500 ms for no tile. The data of the level stays.
+    for (auto name = m_active.begin(); name != m_active.end();) {
+        ++m_counts.visits;
+        const auto found = m_levels.find(*name);
+        Level* level = found != m_levels.end() ? &found->second : nullptr;
+        if (level == nullptr || level->navigation == nullptr) {
+            name = m_active.erase(name);
+            continue;
         }
+        if (!level->spaces.empty() || level->navigation->busy()) {
+            level->navigation->tick();
+        }
+        if (level->spaces.empty() && !level->navigation->busy()) {
+            name = m_active.erase(name);
+            continue;
+        }
+        ++name;
     }
 }
 

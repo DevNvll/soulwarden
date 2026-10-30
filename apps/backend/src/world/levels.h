@@ -50,6 +50,11 @@ struct LevelCounts {
     /** Spaces of the own levels that started, and that ended. */
     std::uint64_t spacesStarted{0};
     std::uint64_t spacesEnded{0};
+    /**
+     * Code review of stage DG3, finding DG3R-R4: the levels that a tick looked at (each tick, each level with a space or with work of its
+     * navigation: a tile, a route, a search), not the cache of all the levels that the world read.
+     */
+    std::uint64_t visits{0};
 };
 
 class Levels {
@@ -85,7 +90,7 @@ public:
     [[nodiscard]] Navigation* navigation_of(SpaceId space);
     [[nodiscard]] const Navigation* navigation_of(SpaceId space) const;
 
-    /** The tick of the navigation of each level with a space. */
+    /** The tick of the navigation of each level with a space or with work of its navigation (code review of stage DG3, finding DG3R-R4). */
     void tick();
 
     [[nodiscard]] const std::map<std::string, Level>& levels() const {
@@ -108,6 +113,11 @@ private:
     std::map<std::string, Level> m_levels;
     /** The level of each space of an own level that runs. */
     std::map<SpaceId, std::string> m_spaces;
+    /**
+     * Code review of stage DG3, finding DG3R-R4: the levels whose navigation the tick runs: a level gets in at the start of a space, and goes
+     * out after a tick with no space and no work of its navigation. The data of a level stays in m_levels with no tick.
+     */
+    std::set<std::string> m_active;
     LevelCounts m_counts;
 };
 

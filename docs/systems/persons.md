@@ -220,6 +220,14 @@ the stage (with the cause), [review] a finding of the code review of stage 2.5c 
   character has Quest_18018 and its task 5 is not Complete, for that character only (MP-10). A change of the Objectives state of a character
   with a person conversation checks the presence of its person at the next tick, as a change of its bits (`World::touch`) [agent: the
   refresh event of the client (static read A4) is not found]. Cases QG5BA, QGR4A2, NC1 (`person-flow`).
+- Stage QG9e, the person `09a_Taurus_HG` of the task `09A_M12_TalkToTaurus` (not done; an open problem) [data; agent]: the person is the
+  spawner `09A_Taurus_HG` of the mode root of QuestMedusa (`medusascript`), with m_spawnOnInitialize false: the client does not make it
+  (the rule of the person children above), and the tool keeps it in `personsApart` with the cause `event`. The mode script that spawns it
+  is not in the client. A person made by the server is a server child with the person binding of its template (the NPC row, the variant
+  state, the conversation data), its presence for one character, and a conversation handler on a server child (the person path of this
+  document starts from a client id). The backend has no such path, and no live proof shows that the client takes an NPC from a server
+  record. The input of a later stage: the server child of a person template at the end of the Medusa encounter, its record, and a live
+  proof of its conversation.
 
 ## Commands
 

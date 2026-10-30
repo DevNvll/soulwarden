@@ -521,6 +521,8 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         reader.raw(56U * count);
         return reader.ok() ? static_cast<int>(reader.position()) : -1;
     }
+    case 2406: // PlayerArena (stage QG9e): field 0 isInArena, a bool.
+        return group == 0 && field == 0 ? 1 : -1;
     case 3652: { // PlayerHome (stage DG3): field 0 the full list homePointList (research death-travel.md 4.2).
         if (group != 0 || field != 0) {
             return -1;
@@ -631,6 +633,7 @@ inline unsigned group_count(std::uint32_t type) {
     case 497:
     case 3312:
     case 3652:
+    case 2406:
         return 1;
     case 3752:
     case 81:

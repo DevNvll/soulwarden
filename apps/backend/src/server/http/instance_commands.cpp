@@ -98,11 +98,15 @@ json levels_json(const world::World& world) {
                 entry["navigationData"]["regions"] = data.navigation().regions();
                 entry["interactions"] = part_json(data.interaction_part());
                 entry["interactions"]["objects"] = data.interactions().objects().size();
+                // Stage QG9e: the instance recipes of the set.
+                entry["encounters"] = part_json(data.encounter_part());
+                entry["encounters"]["recipes"] = data.encounters().recipes().size();
             }
         }
         if (level.navigation != nullptr) {
             const world::NavigationCounts& counts = level.navigation->counts();
             entry["tilesHeld"] = counts.tilesHeld;
+            entry["tileBytes"] = counts.tileBytes;  // Stage QG9e: the memory of the tiles of the level (part 4).
             entry["tilesLoaded"] = counts.tilesLoaded;
             entry["searches"] = counts.searches;
         }

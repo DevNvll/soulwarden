@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 36> codecs{{
+    static constexpr std::array<StateCodec, 37> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -87,6 +87,8 @@ std::span<const StateCodec> player_codecs() {
         // The dungeon checkpoints of the instance (stage DG3): owner only (a home point list is of the local player: 0x34F0AB0), and the
         // empty list after its leave.
         {world::ComponentKey::playerHome, kPlayerHomeSlot, kTypePlayerHomeState, encode_player_home_state, nullptr, true},
+        // The arena flag of the dungeon leave (stage QG9e): owner only, after the first membership of the world entry.
+        {world::ComponentKey::playerArena, kPlayerArenaSlot, kTypePlayerArenaState, encode_player_arena_state, nullptr, true},
     }};
     return codecs;
 }

@@ -335,13 +335,21 @@ CreatureResult Creatures::spawn(const std::string& kindId,
     return result;
 }
 
-Entity* Creatures::spawn_member(const gamedata::CreatureKind& kind, const state::WorldPosition& position, float yaw, std::uint32_t placement,
-                                std::uint64_t generation, const gamedata::PatrolRoute* route, SpaceId space) {
-    if (!has_data() || !valid_position(position) || !std::isfinite(yaw) || !m_data->has_level(kind.level)) {
+Entity* Creatures::spawn_member(const gamedata::CreatureData& data, const gamedata::CreatureKind& kind, const state::WorldPosition& position,
+                                float yaw, std::uint32_t placement, std::uint64_t generation, const gamedata::PatrolRoute* route, SpaceId space) {
+    if (!has_data() || !valid_position(position) || !std::isfinite(yaw) || !data.has_level(kind.level)) {
         return nullptr;
     }
+    // Stage QG9e: a kind of the creature data of a level set: only in a space of that level, whose spawn set has that data (Levels: the
+    // indexes of the creature are indexes of that data, data_of). The other data is the data of the backend start.
+    if (&data != m_data) {
+        const SpawnSet* set = spawn_set(space);
+        if (space == kMainSpace || set == nullptr || set->data != &data) {
+            return nullptr;
+        }
+    }
     load_points();
-    Entity* entity = make(*m_data, kind, kind.level, position, yaw, std::nullopt, m_commandSpawns++, space);
+    Entity* entity = make(data, kind, kind.level, position, yaw, std::nullopt, m_commandSpawns++, space);
     if (entity == nullptr) {
         return nullptr;
     }

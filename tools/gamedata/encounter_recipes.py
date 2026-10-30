@@ -59,8 +59,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure, field_id  # noqa: E402
 from creature_data import (REGIONS_FOLDER, TABLES_FOLDER, Catalog, Sources, asset_id, read_alias, read_target_list,  # noqa: E402
                            slice_assets, spawner_path)
-from interactions import (IDENTITY, INTERACT_CLASS, child_of, matrix_of, mode_root_slices, multiply, placement_matrix,  # noqa: E402
-                          quaternion_of, text_of, walk)
+from interactions import (IDENTITY, INTERACT_CLASS, child_of, level_mode_roots, matrix_of, mode_root_slices, multiply,  # noqa: E402
+                          placement_matrix, quaternion_of, slice_key, text_of, walk)
 from item_catalog import Sheet, sheet_type  # noqa: E402
 from slice_ids import (COMPONENTS_FIELD, ENTITY_TYPE, ID_FIELD, NAME_FIELD, component_id, find_field, id_value)  # noqa: E402
 
@@ -302,24 +302,30 @@ def mode_area(entities: dict[int, dict], info: dict, world: tuple[float, ...]) -
     area = {"name": info["name"], "position": place_of(matrix)["position"], "filter": flt, **shape}
     if shape["shape"] != "none":
         return area
+    area.update(engine_shape(holder, matrix))
+    return area
+
+
+def engine_shape(holder: dict, matrix: tuple[float, ...]) -> dict:
+    """Stage QG9b (stage QG9e: one function for the areas of a mode root and the detector of an encounter slice): @return The shape of the
+    shape component of the engine of the entity `holder` (its world matrix `matrix`) for a detection volume with no query shape: "shape"
+    with its sizes times the scale of the entity (the rule of triggers.py), or "cause" for no shape component, a box with a turn, or a
+    capsule (no shape that the runner tests)."""
     engine = next((part for part in holder["components"] if part.type_id in ENGINE_SHAPE_CLASSES), None)
     if engine is None:
-        area["cause"] = "no query shape and no shape component"
-        return area
+        return {"cause": "no query shape and no shape component"}
     kind = ENGINE_SHAPE_CLASSES[engine.type_id]
     scale = axis_scales(matrix)
     if kind == "sphere":
-        area.update(shape="sphere", radius=round(real(field(engine, "Radius")) * max(scale), 3))
-    elif kind == "cylinder":
-        area.update(shape="cylinder", radius=round(real(field(engine, "Radius")) * max(scale[0], scale[1]), 3),
-                    height=round(real(field(engine, "Height")) * scale[2], 3))
-    elif kind == "box" and all(abs(matrix[row * 4 + column]) < 1e-3 * max(scale) for row in range(3) for column in range(3) if row != column):
+        return {"shape": "sphere", "radius": round(real(field(engine, "Radius")) * max(scale), 3)}
+    if kind == "cylinder":
+        return {"shape": "cylinder", "radius": round(real(field(engine, "Radius")) * max(scale[0], scale[1]), 3),
+                "height": round(real(field(engine, "Height")) * scale[2], 3)}
+    if kind == "box" and all(abs(matrix[row * 4 + column]) < 1e-3 * max(scale) for row in range(3) for column in range(3) if row != column):
         # An axis box only: a box with no turn (a box with a turn would be an oriented box, which the runner does not test).
         size = vector(field(engine, "Dimensions")) or [0.0, 0.0, 0.0]
-        area.update(shape="aabb", extents=[round(size[axis] * scale[axis] * 0.5, 4) for axis in range(3)])
-    else:
-        area["cause"] = f"a {kind} shape component with a turn or a capsule (no shape that the runner tests)"
-    return area
+        return {"shape": "aabb", "extents": [round(size[axis] * scale[axis] * 0.5, 4) for axis in range(3)]}
+    return {"cause": f"a {kind} shape component with a turn or a capsule (no shape that the runner tests)"}
 
 
 def boss_phases(entities: dict[int, dict]) -> list[dict]:
@@ -618,12 +624,31 @@ def alias_tiers(roots) -> list[tuple[int, list]]:
     return out
 
 
-class Reader:
-    """Reads the recipes of the game copy one time: the placements, the encounter slices, and the member slices."""
+def testable(detector: dict | None) -> bool:
+    """Stage QG9e: @return True when a detector has a shape and each of its shapes has the sizes of a shape that the runner tests (a sphere,
+    a cylinder, an axis box; the rule of encounters.good_shape)."""
+    shapes = (detector or {}).get("shapes") or []
+    return bool(shapes) and all(
+        (shape.get("shape") == "sphere" and shape.get("radius", 0.0) > 0.0)
+        or (shape.get("shape") == "cylinder" and shape.get("radius", 0.0) > 0.0 and shape.get("height", 0.0) > 0.0)
+        or (shape.get("shape") == "aabb" and len(shape.get("extents", [])) == 3 and all(value > 0.0 for value in shape["extents"]))
+        for shape in shapes)
 
-    def __init__(self, sources: Sources, catalog: Catalog) -> None:
+
+class Reader:
+    """Reads the recipes of the game copy one time: the placements, the encounter slices, and the member slices.
+
+    Stage QG9e: `level` (the level and its terrain folder of a map row, game_modes.level_terrain) reads the instance recipes of an own level:
+    the placements of the capitals of its terrain project (sharedassets/coatlicue/LEVEL/regions/) whose slice is the mode root of a map of a
+    solo mode of that level (interactions.level_mode_roots, compared by slice_key: "slices/Dungeon/AbominableLiangEbonscale/
+    AbominableLiangScript" and the SlicePath "Dungeon/AbominableLiangEbonscale/AbominableLiangScript"). The other placements of a level
+    make no recipe (a rule of this project: the expeditions are a later stage, DG5; the open world encounters are of the main world)."""
+
+    def __init__(self, sources: Sources, catalog: Catalog, level: tuple[str, str] | None = None) -> None:
         self.sources = sources
         self.catalog = catalog
+        self.level = level
+        self.regions = REGIONS_FOLDER if level is None else f"sharedassets/{level[1]}/regions/"
         self.streams: dict[str, list | None] = {}
         self.members: dict[str, dict] = {}
         self.counts = {"layers": 0, "placements": 0, "parentsRead": 0, "encounters": 0, "quest": 0, "notQuest": 0}
@@ -669,8 +694,16 @@ class Reader:
         return chosen, every
 
     def mode_roots(self) -> dict[str, dict]:
-        """Stage QG9a: @return The mode root slices of the solo modes whose level is the main world (interactions.mode_root_slices)."""
+        """Stage QG9a: @return The mode root slices of the solo modes whose level is the main world (interactions.mode_root_slices). Stage
+        QG9e: of an own level, the mode roots of the maps of its solo modes by their slice_key (interactions.level_mode_roots)."""
+        if self.level is not None:
+            return level_mode_roots(self.sources, self.level[1], solo_only=True)
         return mode_root_slices(self.sources)
+
+    def root_of(self, roots: dict[str, dict], name: str) -> dict | None:
+        """Stage QG9e: @return The mode root of the slice name of a placement (lower case): of the main world by its path with "/", of an
+        own level by its slice_key."""
+        return roots.get(slice_key(name) if self.level is not None else name.replace("\\", "/"))
 
     def task_events(self) -> set[str]:
         """@return The game events (lower case) that a quest task names: KillEnemyType of the task tables."""
@@ -1081,7 +1114,7 @@ class Reader:
         encounter_cache: dict[str, bool] = {}
         mode_roots = self.mode_roots()
         self.counts["modeRoots"] = 0
-        for layer in self.sources.paths(REGIONS_FOLDER, ".capitals.json"):
+        for layer in self.sources.paths(self.regions, ".capitals.json"):
             data = self.sources.read(layer)
             if data is None:
                 continue
@@ -1094,9 +1127,9 @@ class Reader:
                 self.counts["placements"] += 1
                 name = str(placement.get("sliceName", "")).lower()
                 # Stage QG9a: the placement of a mode root slice of a solo mode of the main world level (its encounters are the content of
-                # an instance of the mode, never of the main world).
-                mode_root = mode_roots.get(name.replace("\\", "/"))
-                if mode_root is None and not any(part in name for part in PARENT_TEXTS):
+                # an instance of the mode, never of the main world). Stage QG9e: of an own level only its mode roots.
+                mode_root = self.root_of(mode_roots, name)
+                if mode_root is None and (self.level is not None or not any(part in name for part in PARENT_TEXTS)):
                     continue
                 path = spawner_path(placement, self.catalog, self.sources)
                 if path is None:
@@ -1154,7 +1187,7 @@ class Reader:
                             recipe["mode"] = mode_root["mode"]
                             recipe["map"] = mode_root["map"]
                             recipe["daily"] = DAILY_TEXT in target.rsplit("/", 1)[-1]
-                        recipe["layer"] = layer[len(REGIONS_FOLDER):-len(".capitals.json")]
+                        recipe["layer"] = layer[len(self.regions):-len(".capitals.json")]
                         recipe["parentSlice"] = path
                         recipe["parent"] = spawner_rules(info, component)
                         self.counts["encounters"] += 1
@@ -1167,8 +1200,11 @@ class Reader:
         # volume: Caer Dun, the four seraphs, the mammoth, Apophis, Varlaam) has the areas of its mode root as its detector (a rule of this
         # project: the mode script, which reads them, is not in the client; a character in one of them is a participant, the rule of two
         # volumes of stage QG5c3). "fromMode" names the areas; the offsets are from the root of the encounter, in world axes.
+        # Stage QG9e [a rule of this project from the data]: also an instance recipe with no ParticipantTracker whose detection volumes have no
+        # shape that the runner tests (QuestAdiana: the only volume of its slice is the volume of the area spawner of its root, with no query
+        # shape and an empty filter: not a detector of the players).
         for recipe in recipes.values():
-            if not recipe.get("mode") or (recipe.get("detector") or {}).get("shapes"):
+            if not recipe.get("mode") or (recipe.get("detector") or {}).get("shapes") and (recipe.get("tracker") or testable(recipe.get("detector"))):
                 continue
             areas = [area for area in self.mode_areas.get(recipe["mode"].lower(), []) if area["shape"] != "none"]
             if not areas:
@@ -1239,9 +1275,10 @@ class Reader:
         return [self.member(path) for path in paths]
 
 
-def read_recipes(sources: Sources, catalog: Catalog) -> tuple[Reader, list[dict], dict]:
-    """@return The reader (its caches), the quest recipes, and the counts."""
-    reader = Reader(sources, catalog)
+def read_recipes(sources: Sources, catalog: Catalog, level: tuple[str, str] | None = None) -> tuple[Reader, list[dict], dict]:
+    """@return The reader (its caches), the quest recipes, and the counts. Stage QG9e: `level` (the level and its terrain folder) reads the
+    instance recipes of the mode roots of an own level (Reader)."""
+    reader = Reader(sources, catalog, level)
     recipes, counts = reader.read()
     # The start object events (the game event of the gatherable row of a start object) are read by gathering.py; a recipe whose only
     # quest event is such an event is selected by encounters.py with the rows (a second pass with the gatherable rows).

@@ -43,6 +43,10 @@ adds the causes of the other game data files: a member kind, a template, or a ro
     creature member (else it is an interaction sequence), and a start object is only in a stage that tracks it.
 
 Usage: encounters.py [OUTPUT.json]      (default: GAMEDATA_DIR/encounter-data.json; a test: a path outside the common folder)
+       encounters.py [OUTPUT.json] --level LEVEL
+                                        stage QG9e: the instance recipes of the mode roots of the solo modes of an own level (a level or a map
+                                        id; default GAMEDATA_DIR/levels/LEVEL/encounter-data.json; tools/gamedata/level.sh writes it into the
+                                        level set). The document has "level"; the backend reads it with the set of the level.
 
 The document (format 1):
   {"format": 1, "world": TEXT, "counts": {...},
@@ -526,6 +530,27 @@ def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracke
     return causes
 
 
+def player_ends(recipe: dict) -> bool:
+    """Stage QG9e: @return True when a stage of the recipe can end by the act of a player: a destroyed objective with something to count (a
+    kill, a gather, a find of an area trigger), an entity-state objective with a trigger (a player walks into it), or a boss phase whose phase
+    ends at a health of the boss. The other objectives end by themselves: an event of the boss tree (met at the start of its stage, the rule of
+    stage QG9a), a time, a cutscene, a spawn of the runner, a wait."""
+    members = recipe.get("_members") or {}
+    for stage in recipe["stages"]:
+        for objective in objectives_of(stage):
+            kind = objective["type"]
+            if kind == DESTROYED and objective.get("end") != "start" and objective.get("requiredCount", 0) > 0:
+                return True
+            if kind == STATE and objective.get("triggers"):
+                return True
+            if kind == BOSS_PHASE and objective.get("phaseOf"):
+                phases = members.get(objective["phaseOf"], {}).get("phases", [])
+                index = objective.get("phaseIndex", -1)
+                if 0 <= index < len(phases) and phases[index].get("kind") == "health":
+                    return True
+    return False
+
+
 def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
     """@return The causes of the data that the runner does not run (the rules of the docstring). Empty: supported."""
     causes = list(recipe["unsupported"])
@@ -625,6 +650,14 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
                 causes.append(f"the DestroySliceAction of the stage {name} names no slice and no alias")
     # Stage QG5c4: a recipe with no creature member (an interaction sequence: the Disk of Atum of 1624_0401) is no cause; its stages count
     # its start objects.
+    # Stage QG9e [a rule of this project]: an instance recipe in which no stage ends by the act of a player (each stage ends at an event of the
+    # boss tree, a time, a cutscene, a spawn, or a wait: QuestIsabella, QuestLiang) would succeed at its start with no fight, and its success
+    # event would complete the quest task of the fight. Its events come from the boss tree (stage BT3).
+    recipe["_members"] = members
+    if recipe.get("mode") and not player_ends(recipe):
+        causes.append("no stage of the encounter ends by the act of a player (each one ends at an event of the boss tree, a time, a cutscene, "
+                      "a spawn, or a wait): it would succeed with no fight; the events of the boss tree are a later stage (BT3)")
+    recipe.pop("_members", None)
     return list(dict.fromkeys(causes))
 
 
@@ -632,9 +665,11 @@ def hex16(value: int) -> str:
     return f"{value:016X}"
 
 
-def build(sources: Sources) -> dict:
+def build(sources: Sources, level: tuple[str, str] | None = None) -> dict:
+    """@param level Stage QG9e: the level and its terrain folder of an own level (game_modes.level_terrain): the instance recipes of the mode
+    roots of its solo modes (encounter_recipes.Reader), for the file levels/LEVEL/encounter-data.json of its level set."""
     catalog = Catalog(sources.read(CATALOG_PATH))
-    reader, recipes, counts = read_recipes(sources, catalog)
+    reader, recipes, counts = read_recipes(sources, catalog, level)
     # Code review of stage QG5c2, finding QG5C2R-R2: a source that the reads needed and that the game copy did not give (an Oodle entry
     # with no library) stops the tool before a file is written; a smaller document with no message is not a result.
     sources.check_complete()
@@ -684,7 +719,11 @@ def build(sources: Sources) -> dict:
                   instanceObjects=len(instance_objects),
                   members=dict(collections.Counter(member["kind"] for member in members.values())),
                   refusals=dict(refused.most_common()))
-    return {"format": FORMAT, "world": WORLD, "counts": counts, "recipes": out, "members": members, "instanceObjects": instance_objects}
+    document = {"format": FORMAT, "world": WORLD if level is None else level[0], "counts": counts, "recipes": out, "members": members,
+                "instanceObjects": instance_objects}
+    if level is not None:
+        document["level"] = level[0]
+    return document
 
 
 def main() -> int:
@@ -692,10 +731,28 @@ def main() -> int:
     game = Path(os.environ.get("SOULWARDEN_GAME_DIR") or home / "Games/soulwarden/game")
     data_home = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share")
     gamedata = Path(os.environ.get("SOULWARDEN_GAMEDATA_DIR") or data_home / "soulwarden/gamedata")
-    target = Path(sys.argv[1]) if len(sys.argv) > 1 else gamedata / OUTPUT_NAME
+    arguments = list(sys.argv[1:])
+    # Stage QG9e: --level LEVEL (a level or a map id of the map table): the instance recipes of an own level (the default output is the file
+    # of its level set, GAMEDATA/levels/LEVEL/encounter-data.json; tools/gamedata/level.sh runs it).
+    level_name = None
+    if "--level" in arguments:
+        at = arguments.index("--level")
+        if at + 1 >= len(arguments):
+            print("encounters: --level needs a level or a map id. No file was written.", file=sys.stderr)
+            return 1
+        level_name = arguments[at + 1]
+        del arguments[at:at + 2]
+    target = Path(arguments[0]) if arguments else gamedata / OUTPUT_NAME
     try:
         sources = Sources(game / "assets", WANTED)
-        document = build(sources)
+        level = None
+        if level_name is not None:
+            import game_modes  # noqa: PLC0415 (the module imports creature_data)
+            name, terrain, _rows = game_modes.level_terrain(sources, level_name)
+            level = (name, terrain)
+            if not arguments:
+                target = gamedata / "levels" / name / OUTPUT_NAME
+        document = build(sources, level)
         text = json.dumps(document, indent=1, sort_keys=True)
         partial = target.with_name(target.name + f".partial-{os.getpid()}")
         partial.write_text(text + "\n", encoding="utf-8")

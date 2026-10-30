@@ -41,6 +41,8 @@
 
 namespace soulwarden::backend::gamedata {
 struct DungeonEntrance;
+class EncounterData;
+class InteractionData;
 } // namespace soulwarden::backend::gamedata
 
 namespace soulwarden::backend::world {
@@ -83,7 +85,7 @@ enum class InstanceLeave : std::uint8_t {
     command,
     /** The exit portal of the instance (ExitDungeon, action 74). */
     exitPortal,
-    /** The request 3309 of the client (RequestLeaveGameMode). */
+    /** A leave request of the client: 3309 (RequestLeaveGameMode), 1980 (the leave event), or 926 (ForfeitArena, stage QG9e). */
     request,
 };
 
@@ -108,8 +110,6 @@ struct InstanceMember {
     /** The place in the main world where the character goes at the exit: its position at the entry. */
     state::WorldPosition returnPlace;
     WorldClock::time_point entered{};
-    /** Stage DG3: the end of the cooldown of each checkpoint that the member used for a respawn (the id of the checkpoint). */
-    std::map<std::string, WorldClock::time_point> checkpointCooldowns;
 };
 
 /**
@@ -186,6 +186,12 @@ struct Instance {
     std::vector<InstanceQuestObject> questObjects;
     /** Stage DG3: the dungeon checkpoints of the mode root of its map (an own level with a level set). */
     std::vector<InstanceCheckpoint> checkpoints;
+    /**
+     * Code review of stage DG3, finding DG3R-R1: the end of the cooldown of each checkpoint that a character used for a respawn, by the id of
+     * the character and then by the id of the checkpoint. The instance keeps it when the character leaves or disconnects (a member that
+     * joins again has its cooldown); it goes with the instance, and an entry that ended goes at the next use of that character.
+     */
+    std::map<std::string, std::map<std::string, WorldClock::time_point>> checkpointCooldowns;
     /**
      * Stage QG9d: the encounters of the mode wait (Encounters::hold_space) until each quest object is gathered or a member has an active
      * task of the mode that names a recipe of the space (a later step of the quest: an entry after the objects).
@@ -301,8 +307,9 @@ public:
     /**
      * Stage DG3: @return True when the backend runs the content of a mode (the one rule of the entrance and of the support manifest): the
      * game modes have one map of the mode, and an expedition (IsDungeon) of an own level has an accepted data set of its level
-     * (Levels::available, the first read of the set), each other mode the content of the encounter system (Encounters::runs_mode). The
-     * setting of QuestMedusa is a check of its own.
+     * (Levels::available, the first read of the set), each other mode the content of the encounter system (Encounters::runs_mode); stage
+     * QG9e: a solo mode of an own level both (its instance recipes are in the set of its level). The setting of QuestMedusa is a check of its
+     * own.
      */
     [[nodiscard]] bool mode_runs(std::string_view mode) const;
     /**
@@ -373,6 +380,16 @@ private:
     void member_gone(Instance& instance, const std::string& characterId, const char* cause);
     /** Stage QG9a: the content of the mode of a new instance: the encounters of its mode and its objects (the exit portal). */
     void start_content(Instance& instance);
+    /**
+     * Stage QG9e: the files of the objects of the mode root of the instance of a space: its recipes (instanceObjects), the catalog of their
+     * templates, and `own` (the catalog of a level set for Interactions::spawn_container; null: the catalog of the backend start).
+     */
+    struct ModeRootFiles {
+        const gamedata::EncounterData* recipes{nullptr};
+        const gamedata::InteractionData* catalog{nullptr};
+        const gamedata::InteractionData* own{nullptr};
+    };
+    [[nodiscard]] ModeRootFiles mode_root_files(SpaceId space) const;
     /** Stage QG9d: the quest objects of an instance: make one whose task a member has, remove a gathered one, end the wait of the encounters. */
     void look_quest_objects(Instance& instance);
     /** Stage DG3: the checkpoints of the mode root of a new instance of an own level (their server children and their home points). */

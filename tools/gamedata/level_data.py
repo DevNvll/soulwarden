@@ -9,13 +9,15 @@ with no region.chunks: its geometry is in its capitals.
 The set is the folder OUTPUT/levels/LEVEL:
   level.json               the manifest: {"format": 1, "tool": N, "level", "terrain", "maps": [map ids], "parts": {...}, "spawnEntries":
                            {...}, "seconds"}; the backend refuses a set with no manifest or with a different format
-  creatures.json           the spawn points of the layers of the level with their kinds and slices (creature_data.py --level); not there
-                           for a level whose layers have no usual spawn point (its creatures are members of the encounters of its mode
-                           root: "spawnEntries" counts the entries of each flag)
+  creatures.json           the spawn points of the layers of the level with their kinds and slices (creature_data.py --level), and (stage
+                           QG9e) the kinds of the creature members of its instance recipes ("members"); not there for a level with no
+                           usual spawn point and no member kind ("spawnEntries" counts the entries of each flag)
   navigation/, heights/    the navigation data and the terrain heights of its region (navigation_data.py --level: the collision of the
                            capitals, the terrain in the scale of its terrain.json)
   interaction-data.json    the objects of its capitals (interactions.py --level)
   chest-data.json          the chests of its layers (chests.py --level); not there for a level with no chest
+  encounter-data.json      stage QG9e: the instance recipes of the mode roots of its solo modes (encounters.py --level); not there for a
+                           level with no such recipe
 The tool makes the set in OUTPUT/levels/LEVEL.part and then puts it in the place of the old set: the backend never reads a part of a set.
 A tool that stops (status 1) stops this tool: the old set stays. The work files of the navigation are in
 SOULWARDEN_NAVIGATION_WORK/levels/LEVEL.
@@ -47,7 +49,8 @@ import game_modes  # noqa: E402
 from appearance_tables import Failure  # noqa: E402
 
 FORMAT = 1
-TOOL_VERSION = 1
+# Stage QG9e: tool 2 (the part "encounters" and the member kinds of the part "creatures"; the manifest keeps the format 1).
+TOOL_VERSION = 2
 MANIFEST = "level.json"
 LEVELS_FOLDER = creature_data.LEVELS_FOLDER
 # The text of the stop of the creature tool for a level with no usual spawn point (creature_data.build_document).
@@ -114,7 +117,8 @@ def make_set(sources, name: str, output: Path, jobs: int, runner: ToolRunner = r
             document = read_json(part / "creatures.json")
             parts["creatures"] = {"file": "creatures.json", "bytes": bytes_of(part / "creatures.json"),
                                   "spawnPoints": len(document.get("spawnPoints", [])), "kinds": len(document.get("kinds", [])),
-                                  "slices": len(document.get("slices", []))}
+                                  "slices": len(document.get("slices", [])),
+                                  "memberKinds": sum(1 for entry in document.get("members", []) if entry[1] >= 0)}
         elif NO_SPAWN_POINT in text:
             parts["creatures"] = {"file": None, "spawnPoints": 0,
                                   "cause": "the layers of the level have no usual spawn point (its creatures are members of the encounters "
@@ -147,6 +151,19 @@ def make_set(sources, name: str, output: Path, jobs: int, runner: ToolRunner = r
         else:
             (part / "chest-data.json").unlink()
             parts["chests"] = {"file": None, "chests": 0}
+        # Stage QG9e: the instance recipes of the mode roots of the solo modes of the level (their member kinds are in creatures.json, the
+        # templates of their objects in interaction-data.json).
+        status, text = runner("encounters.py", [str(part / "encounter-data.json"), "--level", level])
+        if status != 0:
+            raise Failure(f"the encounter tool stopped: {text}")
+        encounters = read_json(part / "encounter-data.json").get("counts", {})
+        if encounters.get("recipes", 0):
+            parts["encounters"] = {"file": "encounter-data.json", "bytes": bytes_of(part / "encounter-data.json"),
+                                   "recipes": encounters.get("recipes", 0), "taken": encounters.get("taken", 0),
+                                   "instanceObjects": encounters.get("instanceObjects", 0)}
+        else:
+            (part / "encounter-data.json").unlink()
+            parts["encounters"] = {"file": None, "recipes": 0}
         manifest = {"format": FORMAT, "tool": TOOL_VERSION, "level": level, "terrain": terrain, "maps": [row["id"] for row in rows],
                     "modes": sorted({row["mode"] for row in rows}), "parts": parts, "spawnEntries": spawn_entries(sources, terrain),
                     "bytes": bytes_of(part), "seconds": round(time.perf_counter() - started, 1)}
@@ -216,6 +233,8 @@ def main() -> int:
     print(f"  navigation: {parts['navigation']['regions']} region(s), {parts['navigation']['bytes']} bytes, "
           f"{parts['navigation']['placements']} placements; heights {parts['heights']['bytes']} bytes")
     print(f"  interactions: {parts['interactions']['objects']} objects {parts['interactions']['byKind']}; chests: {parts['chests']['chests']}")
+    print(f"  encounters: {parts['encounters'].get('recipes', 0)} instance recipes ({parts['encounters'].get('taken', 0)} with no refusal of "
+          f"the data); member kinds: {parts['creatures'].get('memberKinds', 0)}")
     return 0
 
 

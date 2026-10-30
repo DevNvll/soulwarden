@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <fstream>
 #include <set>
+#include <tuple>
 
 #include <nlohmann/json.hpp>
 
@@ -913,6 +914,9 @@ bool InteractionData::load(const std::string& path) {
             return false;
         }
         Reader reader;
+        // Code review of stage DG3, finding DG3R-R3: the id of a checkpoint (the name of its spawner) is the request id of the respawn 1938;
+        // two checkpoints of one mode and map with one id cannot be told apart (the second one could not be selected).
+        std::set<std::tuple<std::string, std::string, std::string>> ids;
         for (const json& entry : list) {
             ModeCheckpoint point;
             std::uint64_t index = 0;
@@ -932,6 +936,12 @@ bool InteractionData::load(const std::string& path) {
                 const std::string cause = reader.error.empty() ? "a template that the file does not have, an id of more than 31 bytes, or a "
                                                                  "volume with no radius"
                                                                : reader.error;
+                *this = InteractionData{};
+                m_error = "a checkpoint is not correct: " + cause;
+                return false;
+            }
+            if (!ids.emplace(lower_ascii(point.mode), lower_ascii(point.map), point.spawner).second) {
+                const std::string cause = "two checkpoints of the mode " + point.mode + " and its map " + point.map + " have the id " + point.spawner;
                 *this = InteractionData{};
                 m_error = "a checkpoint is not correct: " + cause;
                 return false;
