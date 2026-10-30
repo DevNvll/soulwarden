@@ -8135,6 +8135,35 @@ The event `Intro_Complete` of the child stage: no slice or table of the client s
 QuestMedea) and offers the dungeon entrance fallback; the client sends 1938 with `random=01` and an empty id. The backend puts the character
 at the start of the map in its space [project rule; live: a death by Medea, the respawn at the start, the fight again].
 
+**Stage QG9b: the order of 3094** [project rule; code review of stage QG9a, finding QG9AR-R6]: the result 0 goes after the commit of the
+rows of the entry and before the move of the character; a store that refuses the rows sends 10 (EntranceActivationFailure). A refusal of
+the checks sends its result at once. Live: QuestMedusa, QuestMammoth, QuestApophis (3094 result 0, the level change, the instance).
+
+**Stage QG9b: BossPhaseComponent, state 403** [static: static read F of stage QG9b, F1]: constructor 0x25BE020, one group with a chained
+field mask; field 0 `m_bossPhase` (4-byte integer, network byte order, reader 0x17B3620), field 1 `m_spawnedInEncounter` (one byte, 0 or
+1, reader 0x17B3CB0); framing `01 03 phase:i32 spawned:u8`, field 0 alone `01 01 phase:i32`. The value is the zero-based index of the
+full phase list; the client starts at -1, and its apply (0x25D68C0) runs the phase events of the entries up to that index (0x25D7290),
+never back. The backend does not send this state [project rule: the backend tracks the phases on the server for BossPhaseObjective; the
+phase events of the slices on the client are not checked live]. The rules of the phases (0x25D8F80 the health compare, 0x25DB940 the wave
+end) are in docs/systems/encounters.md.
+
+**Stage QG9b: BossPhaseObjective** [static: F2]: the completion 0x26CA1B0 needs the objective state 1 or 2 and an incoming phase value of
+`m_trackedPhase` or more (unsigned compare); with no tracked slice and no alias it takes any phase notification of its encounter. The
+factory 0x2714D40 makes a task only with a description (`%s: BossPhase %s: tracked phase: %u`, type text `EncounterObjectiveBossPhase`).
+The sender of the value is not in the client; the backend meets the objective when the phase number T of the phases of the key
+Boss_Phase of its boss ended [project rule].
+
+**Stage QG9b: a stop of the client at the kill of Medusa** [live; static: static read CRASH of stage QG9b]: the client stops with an
+access violation at 0x4871DB6 (`mov rax,[r14]`, r14 = 0) in 0x4871B60, a repair of the action history of an `ActionListComponentClientFacet`
+(owner `ALCRemoteEntityManagerComponent`, tick 0x2A400F0 to 0x4873040). A flag at the component +0xCC8 starts the repair (the only
+writer found: 0x4873284 in 0x48731C0, when the counters of the ReactionTrackingComponent of the context differ); the second history
+insertion 0x4873330 returns no entry when the history is full and the time lookup 0x485A4E0 reaches its end, and the caller does not test
+it. Live: each kill of Medusa by a hit of the player (four runs, with and without the minions, with and without a cast of Medusa) stops
+the client 0 s to 0.4 s after the death; the kill by the development command does not; the kills of Mahantaram and Apophis by hits do
+not. The server bundles of the kill by a hit and by the command are the same (385 bytes, two records). The trigger is not known (open
+problem): the slice of Medusa has no Reaction, no Reaction_Additive, and no Death_FB action and no reaction tables (reactions
+`[61, -1, 99, -1, -1]`), a difference from the other bosses [inference].
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

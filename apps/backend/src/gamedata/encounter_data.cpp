@@ -19,6 +19,11 @@ using nlohmann::json;
 constexpr std::uint64_t kFormat = 1;
 /** Stage QG9a: format 2: the instance recipes (members mode, map, daily), the spawns that the runner skips, and instanceObjects. */
 constexpr std::uint64_t kFormatInstances = 2;
+/**
+ * Stage QG9b: format 3: the end rules of the stages of an instance recipe (objective member "end"), the boss phases (member "phases" of a
+ * creature member; objective members "trackedPhase", "phaseOf", "phaseIndex"), and the detector of the areas of a mode root ("fromMode").
+ */
+constexpr std::uint64_t kFormatPhases = 3;
 // The coordinates of the world (the rule of the other loaders of places).
 constexpr double kMaxCoordinate = 100000.0;
 // Stage QG5c3: the largest radius of a proximity object and the largest size of a detector shape (meters; the data has 35 m and 50 m).
@@ -248,6 +253,8 @@ EncounterObjectiveKind objective_kind(const std::string& type) {
            : type == "WaitForParentObjective"            ? EncounterObjectiveKind::waitParent
            : type == "CutsceneFinishedObjective"         ? EncounterObjectiveKind::cutscene
            : type == "EncounterEventObjective"           ? EncounterObjectiveKind::event
+           : type == "BossPhaseObjective"                ? EncounterObjectiveKind::bossPhase
+           : type == "none"                              ? EncounterObjectiveKind::none
                                                          : EncounterObjectiveKind::other;
 }
 
@@ -260,6 +267,12 @@ bool read_objective(const json& objective, EncounterObjective& out) {
     out.kind = objective_kind(out.type);
     if (out.kind == EncounterObjectiveKind::other) {
         return true; // A class that the runner does not run: the tool refused the recipe, and the runner refuses it too.
+    }
+    // Stage QG9b: the end rule of the tool (an instance recipe).
+    const std::string end = text_of(objective, "end");
+    out.end = end == "time" ? StageEnd::time : end == "after" ? StageEnd::after : end == "start" ? StageEnd::start : StageEnd::normal;
+    if (out.kind == EncounterObjectiveKind::none) {
+        return true; // Stage QG9b: a stage with no objective has no time limit and no count.
     }
     if (!seconds(objective, "timeLimit", out.timeLimit)) {
         return false;
@@ -278,6 +291,13 @@ bool read_objective(const json& objective, EncounterObjective& out) {
     out.cutscene = text_of(objective, "cutscene");
     out.cutsceneCrc = out.cutscene.empty() ? 0 : quest_crc(out.cutscene);
     out.eventId = text_of(objective, "eventId");
+    if (out.kind == EncounterObjectiveKind::bossPhase) {
+        // Stage QG9b: the phase of the boss (the tool found the member and the index of the phase in its list).
+        std::uint64_t value = 0;
+        out.trackedPhase = whole(objective, "trackedPhase", EncounterData::kMaxPhases, value) ? static_cast<std::uint32_t>(value) : 0;
+        out.phaseOf = lower_text(text_of(objective, "phaseOf"));
+        out.phaseIndex = whole(objective, "phaseIndex", EncounterData::kMaxPhases - 1, value) ? static_cast<std::int32_t>(value) : -1;
+    }
     if (out.kind == EncounterObjectiveKind::entityState && objective.contains("triggers") && objective["triggers"].is_array()) {
         for (const json& item : objective["triggers"]) {
             EncounterTrigger trigger;
@@ -334,8 +354,8 @@ bool EncounterData::load_text(const std::string& text) {
         return fail("the file is not a JSON object");
     }
     const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kFormat && format != kFormatInstances) {
-        return fail("the file does not have format 1 or 2");
+    if (format != kFormat && format != kFormatInstances && format != kFormatPhases) {
+        return fail("the file does not have format 1, 2, or 3");
     }
     if (!document.contains("recipes") || !document["recipes"].is_array() || !document.contains("members") || !document["members"].is_object()) {
         return fail("the file does not have the members recipes and members");
@@ -383,6 +403,29 @@ bool EncounterData::load_text(const std::string& text) {
                                 "correct");
                 }
                 member.parts.push_back(std::move(part));
+            }
+        }
+        // Stage QG9b: the boss phases of the body of a creature member (its BossPhaseComponent, in the order of the list).
+        if (entry.contains("phases") && entry["phases"].is_array()) {
+            if (entry["phases"].size() > kMaxPhases) {
+                return fail("the member " + slice + " has more than " + std::to_string(kMaxPhases) + " boss phases");
+            }
+            for (const json& item : entry["phases"]) {
+                BossPhase phase;
+                const std::string kind = text_of(item, "kind");
+                std::uint64_t wave = 0;
+                phase.key = text_of(item, "key");
+                if (kind == "wave" && whole(item, "wave", 255, wave)) {
+                    phase.kind = BossPhase::Kind::wave;
+                    phase.wave = static_cast<std::uint32_t>(wave);
+                } else if (kind == "health" && item.contains("health") && finite_number(item["health"]) && item["health"].get<double>() >= 0.0
+                           && item["health"].get<double>() <= 100.0) {
+                    phase.kind = BossPhase::Kind::health;
+                    phase.health = item["health"].get<float>();
+                } else if (kind != "other") {
+                    return fail("the member " + slice + " has a boss phase that is not a wave of 0 to 255 or a health of 0 to 100");
+                }
+                member.phases.push_back(std::move(phase));
             }
         }
         if (entry.contains("radius") && (!seconds(entry, "radius", member.radius) || member.radius > kMaxRadius)) {
@@ -469,6 +512,7 @@ bool EncounterData::load_text(const std::string& text) {
             }
             recipe.detectorRadius = detector["radius"].get<float>();
             recipe.detectorFilter = text_of(detector, "filter");
+            recipe.detectorFromMode = detector.contains("fromMode") && detector["fromMode"].is_array() && !detector["fromMode"].empty();
             // Stage QG5c3: the shapes of the detector (a sphere, a cylinder, an axis box); a file of before: one sphere of the radius.
             if (detector.contains("shapes") && detector["shapes"].is_array()) {
                 for (const json& item : detector["shapes"]) {
@@ -633,13 +677,6 @@ bool EncounterData::load_text(const std::string& text) {
                 }
             }
         }
-        // The collection of the client (0x26F1FD0): the user-wave stages in the stage order, from 0.
-        for (const std::uint32_t index : recipe.stageOrder) {
-            EncounterStage& stage = recipe.stages[index];
-            if (stage.userWave && stage.userIndex < 0) {
-                stage.userIndex = static_cast<std::int32_t>(recipe.userWaves++);
-            }
-        }
         // Stage QG5c4 (static read D of stage QG5c4): the task tree of the client. The collector 0x26F1FD0 walks the stages of the manager
         // and their child stages in their order and takes each objective of a user-wave stage in the order of m_objectives; 0x44650F0 gives
         // each objective that makes a task (a timed, a destroyed, a spawned objective; an entity-state objective with a description; no
@@ -649,12 +686,20 @@ bool EncounterData::load_text(const std::string& text) {
         while (!walk.empty()) {
             EncounterStage& stage = recipe.stages[walk.back()];
             walk.pop_back();
+            // The collection of the client (0x26F1FD0): the user-wave stages in this walk, from 0 (stage QG9b: the child stages too; the
+            // m_waveNumber of a boss phase).
+            if (stage.userWave && stage.userIndex < 0) {
+                stage.userIndex = static_cast<std::int32_t>(recipe.userWaves++);
+            }
             if (stage.userWave) {
                 for (std::size_t at = 0; at <= stage.more.size(); ++at) {
                     EncounterObjective& objective = at == 0 ? stage.objective : stage.more[at - 1];
+                    // Stage QG9b (static read F of stage QG9b, F2; static read E of stage QG9a): a cutscene, an event, and a boss phase
+                    // objective have the factory 0x2714D40 too: a task when the description is not empty (the phases of Sir Gawain).
+                    const bool described = objective.kind == EncounterObjectiveKind::entityState || objective.kind == EncounterObjectiveKind::cutscene
+                                           || objective.kind == EncounterObjectiveKind::event || objective.kind == EncounterObjectiveKind::bossPhase;
                     const bool task = objective.kind == EncounterObjectiveKind::timed || objective.kind == EncounterObjectiveKind::destroyed
-                                      || objective.kind == EncounterObjectiveKind::spawned
-                                      || (objective.kind == EncounterObjectiveKind::entityState && !objective.description.empty());
+                                      || objective.kind == EncounterObjectiveKind::spawned || (described && !objective.description.empty());
                     if (task) {
                         objective.leaf = static_cast<std::int32_t>(2 * recipe.taskLeaves + 1);
                         objective.target = objective.kind == EncounterObjectiveKind::destroyed || objective.kind == EncounterObjectiveKind::spawned

@@ -19,6 +19,7 @@ section 3.5 for the account rule). The encounter of a mode is in [Encounters](en
 | The entrance of a game mode, the result 3094, the exit portal, the empty timer (stage QG9a) | `world/instances.cpp` (`EntranceHandler`, `ExitHandler`, `Instances::entrance_result`, `enter_mode`, `in_mode`, `start_content`, `member_gone`, `content_succeeded`, `dungeon_result`), `gamedata/interaction_data.h` (`DungeonEntrance`, kinds `dungeonEntrance` and `dungeonExit`, `instance_object`), `server/rep/instance_messages.h`, test cases SI1, SI6, SI7 (`tests/story_instance_tests.cpp`) |
 | The GameModeParticipant state, the leave 3309 and 1980, TaskGameMode (stage QG9a) | `world/entity.h` (`GameModeMembership`), `Instances::membership_changed`, `server/rep/states/game_mode_state.cpp`, `RepSession::handle_game_mode_request`, `world/quests.cpp` (`task_type::kGameMode`, `mode_changed`), test cases SI2, SI3, SI6 |
 | The corrections of the code review of stage DG1 (the paths that cross two spaces) | `tests/review_dg1_tests.cpp` (cases DG1R1 to DG1R8), the section "The paths across two spaces" below |
+| The other story instances (stage QG9b), the corrections of the code review of stage QG9a | the section "The other story instances" below, `world/instances.cpp` (`exit_pending`, `m_unrecovered`, the `committed` call of `enter_mode`), `world/quests.cpp` (`predicate`, `mode_task_active`), `world/abilities.cpp` (`space_left`), `tests/review_qg9a_tests.cpp` (cases QG9AR1 to QG9AR6, QG9ARC), `tests/story_mode_tests.cpp` (SY1 to SY5; SY5: the setting of QuestMedusa, `encounter_rules::kQuestMedusaRuns`, `World::set_quest_medusa`) |
 
 ## Rules
 
@@ -194,6 +195,53 @@ The first one is QuestMedea (quest 06A_MSQ_21, the boss Medea in Thornhall). The
 - The cost: each rule reads only the instances, their spaces, and the recipes of their modes (MP-8). The empty timers are in the tick of
   the instances [agent].
 
+### The other story instances of the main world level (stage QG9b)
+
+Stage QG9b runs the solo modes of the main world level after QuestMedea. The encounter rules of these modes are in
+[Encounters](encounters.md) (section "The instance recipes (stage QG9b)"). The sources: the static read F and the live runs of stage QG9b
+(`~/Games/soulwarden/work/evidence/quests/qg9b/implement/`).
+
+| Mode | Runs | The bosses and their declared behavior | Known limits (the actions of the boss trees that the client does not have) |
+| --- | --- | --- | --- |
+| QuestWolf (the Sorrowthorn trial) | Yes | the werewolf lord (part 2, melee attacks of the data) and its minions | the channel phase and the summons of the tree |
+| QuestCaerDun | Yes | Brother Umberto (melee attacks of the data) | the drain locations; the heartgems of the mode script |
+| QuestMedusa | Off (the setting below; on: yes) | Medusa (declared cast `Attack_Poison_Spit_Single`), the boar, reindeer, and corvid minions | Gorgons Gaze, the maze, the tail attacks, the summons; the boar and the reindeer minions have no attack in the data |
+| QuestSeraphim (4 recipes) | Yes | the blind, mute, and heartless seraphs (declared cast `Attack_WingSweep_L`), the breathless seraph | the braziers; the breathless seraph has no attack in the data |
+| QuestHeartforge | Yes | the Heartforge Guardian (melee attacks, the cast Cast_One_Projectile, and the area attack of the data) | the flames of the pillars are gathers of the Azoth Staff |
+| QuestMammoth | Yes | Mahantaram (melee attacks of the data) and the root caster | the root spells of the caster |
+| QuestApophis | Yes | Apophis (declared cast `Attack_Projectile_Shot`), the Terra Myrmidons, the shaman minion (declared cast `Attack_Shard_Spike`) | the burrow phases pass at once (event rule) |
+| QuestYonas (3 recipes) | Yes | the hallway, the Isabella intro, Yonas (declared cast `Combat_Ritual`) | Magic1, Magic2, Time_Bomb, DeathsDoor pass at once (event rule) |
+| QuestEmpressZhou | No | | `Phase_2` tracks pedestals that no stage makes; a background activation of `BeforeIntro` |
+| QuestVarlaam | No | | a defense of the device of the mode root |
+| QuestGawain, QuestMorgaine | No (stage BT3) | | the corrupted idol and the altar of Gawain; the pedestals and the third phase of Morgaine |
+
+- The setting of the mode QuestMedusa (`encounter_rules::kQuestMedusaRuns` in `world/encounters.h`, the one place of its value; the
+  world option `questMedusaRuns` has it, and a test sets it with `World::set_quest_medusa`): off in this build, because the client stops
+  at the kill of Medusa by a hit (the trap below). Off: the runner refuses the recipe of QuestMedusa with the reason "the client stops at
+  the kill of Medusa by a hit (access violation at 0x4871DB6; open)", the entrance refuses the entry (3094 with 10, no move, no row), and
+  the support manifest counts the rows of the mode as not supported with that reason. On: the rules of this section. The code of the mode
+  stays [orchestrator; case SY5].
+- The bosses with no melee attack and no basic cast of the data get a declared cast (`gamedata::kDeclaredCasts`;
+  [Creatures](creatures.md)) [agent].
+- The entry: the checks of stage QG9a; the 3094 with 0 goes after the commit of the rows of the entry, before the move. A store that refuses
+  the rows sends 10 (EntranceActivationFailure) and moves nothing; a refusal of the checks sends its result at once [agent; code review of
+  stage QG9a, finding QG9AR-R6; case QG9AR6].
+- The recovery of the instance rows at the start of the backend: a member row that the recovery cannot remove keeps its character out of
+  the world (`Instances::exit_pending`) until a recovery succeeds; the newer position of the character is not overwritten [agent; finding
+  QG9AR-R1; case QG9AR1].
+- A task with a GameModeID counts only in its mode, also a task of a predicate (a level, a place, an item count): outside the mode its value
+  does not grow [client 0x3AD5CC0; finding QG9AR-R3; case QG9AR3]. The world entry looks again at the mode tasks of a restored quest (a
+  StayActive TaskGameMode is false outside its mode) [finding QG9AR-R2; case QG9AR2].
+- A trigger area task (TaskTriggerArea) with a GameModeID counts in an instance of the main world level of that mode (the trigger volumes
+  of the main level: `09A_M11_TalkToMammothAmbush`, `09A_M12_EnterArena`) [data; live: both done in their instances].
+- A move to a different space ends the delayed work of the casts of the character, its dashes, and its motion marks
+  (`Abilities::space_left`) [agent; finding QG9AR-R5; cases QG9AR5, QG9AR5B].
+- An achievement conditional of an entrance can end with a line end (QuestApophis: `16_ORI_Necropolis_Unlock || (...)` and CR LF): the
+  reader takes a line end as a blank [data; live: the client opens the window; case SY4].
+- Live (stage QG9b, QuestMedusa with the mode on, before its setting): QuestMedusa, QuestMammoth, and QuestApophis from the entrance to
+  the kill of the boss and the exit portal, with the
+  quest task after the success (`09A_M12_DefeatMedusa`, `09A_M11_DefeatMammoth`, `1624_0801_d_02_02_Kill_1_Apophis`) [live].
+
 ### The paths across two spaces (the code review of stage DG1)
 
 The review of stage DG1 found eight paths that crossed two spaces (`~/Games/soulwarden/work/evidence/dungeons/dg1/code-review/FINDINGS.md`).
@@ -225,7 +273,7 @@ tools/world list                                 # each entity with its space (0
 ```
 
 The commands are in the development routes only (the harness gate). Stage QG9a: the entrance of the game enters a solo mode of the main
-world level whose content the backend runs (QuestMedea); the other modes refuse it (result 10).
+world level whose content the backend runs (QuestMedea; stage QG9b: the modes of the table above); the other modes refuse it (result 10).
 
 ## Traps
 
@@ -253,3 +301,19 @@ world level whose content the backend runs (QuestMedea); the other modes refuse 
 - Stage QG9a: the handlers of the entrances and of the exit portals are handlers of the kind (`Interactions::register_kind_handler`): the
   Enter options of the data have many names (EnterQuestCaerDun, EnterDungeonAmrine, ...). A new handler of one option of these kinds
   comes before the kind handler.
+- Stage QG9b: QuestMedusa is off (the setting `encounter_rules::kQuestMedusaRuns`). For a live test of the mode, build a test backend
+  with the setting true (not into dist), and give it to the run with `SOULWARDEN_BACKEND_EXE`.
+- Stage QG9b: the client of this build stops (an access violation at 0x4871DB6, a null result of the history insertion 0x4873330 of the
+  action list of an entity, `ActionListComponentClientFacet`) at the hit of a player that kills Medusa. The kill of Medusa by the
+  development command does not stop it, and the kills of Mahantaram and Apophis by hits do not stop it. The minions, the cast of Medusa, and
+  the quest bundles are not the cause (live runs 2 to 5 of stage QG9b). The quest progress is in the store before the stop: after a new
+  start the kill task is done. The trigger in the client is not known (static read CRASH of stage QG9b; open problem). For a live test of
+  the exit of QuestMedusa, kill Medusa with `tools/world creature kill`.
+- Stage QG9b: the arena of Medusa is full of statues with collision. The start of the map and the place of the intro are between them,
+  and a walk to Medusa stops at a statue. Use `tools/world travel` to open ground near her (8621.5 1421.3 203.7).
+- Stage QG9b: the level objects of the main world are not in an instance (the rule above; stage DG2). The task `09A_M12_SaveTaurus` (the
+  statue of Taurus in the Medusa arena) gets no prompt, and the inner side of the gate of the Mammoth trial shows the prompt "Enter" of a
+  main level object (refused: "no object of the data has this reference"). Leave the Mammoth trial by the exit portal of the arena
+  (`interactobject_exitportal`, 9521.9 1974.9 62.9).
+- Stage QG9b: the quest of Apophis (1624_0801_agodawakens) needs the three trigger volumes of the teleport puzzle before the mode
+  (`TriggerVol_16_TelePuzzle_Enter`, `_FinalPlat`, `_End` of `trigger-data.json`); a travel to each one completes them.

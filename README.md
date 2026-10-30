@@ -132,9 +132,16 @@ This is an independent project with no connection to Amazon Games. The repositor
   portal near the start (hold E) takes you back to the place of the entry; then talk to Leovix and hand in the quest at Medea. A death in the instance puts
   you at its start. If you leave before the end, the instance waits 10 minutes, and the entrance takes you back to the same fight. Not
   yet: the crystal, the exhaustion, and the summons of Medea (her fight is the frost bolt only), the leave button of the escape menu (use
-  the portal), the other 12 solo instances of the main world (their entrance shows a refusal), and the expeditions. The support list has
+  the portal), and the expeditions (stage QG9b below runs more solo instances). The support list has
   647 quests now: the 8 rows of `06A_MSQ_21` are supported, and 13 rows of instances that the server does not run are not counted as
   supported any more.
+- More story instances of the main world (stage QG9b): Mahantaram (`09A_M11_FightMahantaram`), Apophis (`1624_0801_agodawakens`), the
+  Heartforge Guardian, Caer Dun, the Sorrowthorn trial, the four seraphs, and the cave of Yonas. Their entrances work as the entrance of
+  Medea; the boss fights with the attacks of its data, or with one ranged attack of its data (Apophis, the seraphs, Yonas). The quest
+  counts the kill in the instance, and the exit portal of the arena takes you back. The Medusa instance (`09A_M12_FightMedusa`) is off
+  until a crash of the game is fixed: the game stops at the kill of Medusa by a hit, so its entrance shows a refusal now. Not yet: the
+  special attacks and the summons of the bosses, the Empress Zhou, Varlaam, Sir Gawain, and Morgaine (their entrance shows a refusal).
+  The support list has 652 quests now.
 - Territory standing (stage QG1). The standing of a territory goes up to rank 300: the points above a rank go to the next rank, and each new rank gives character experience (for example 125 at rank 1 of Windsward) and one standing point ("token"). A quest gives its standing to the territory where you hand it in (the notice shows "+100 Windsward Standing"). Open the map (M), the second tab "Territories": a territory with a free token shows a badge; click it to "Claim your reward" and choose a card (Standing Gain, XP Gain, Gather, Station Fee, Trading Fee, Storage, House Ownership; the house card keeps the token). Standing Gain, XP Gain, and Gather act now while you are in that territory; the other cards are kept for their later systems. The standing, the tokens, and the cards stay after a restart. The Windsward main story goes on after "Feast to Famine" (Marcel Dupont, then Saatvik Agrawal).
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.

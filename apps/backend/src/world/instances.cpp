@@ -48,12 +48,20 @@ public:
         }
         const gamedata::DungeonEntrance& entrance = *context.object->entrance;
         const std::uint32_t result = m_world.instances().entrance_result(character, entrance);
-        m_world.dungeon_result(character.owner, entrance.target, context.object->group, result);
         if (result != dungeon_result::kSuccess) {
+            m_world.dungeon_result(character.owner, entrance.target, context.object->group, result);
             return InteractionVerdict::refused;
         }
-        m_world.after(std::chrono::milliseconds(0), [characterId = character.characterId, mode = entrance.mode](World& world) {
-            (void)world.instances().enter_mode(characterId, mode);
+        // Code review of stage QG9a, finding QG9AR-R6: the result 3094 comes from the entry of the next tick: Success after the commit of its
+        // rows and before the level change; EntranceActivationFailure when the entry fails (a store that refused the rows).
+        m_world.after(std::chrono::milliseconds(0), [characterId = character.characterId, owner = character.owner, mode = entrance.mode,
+                                                     target = entrance.target, group = context.object->group](World& world) {
+            const InstanceResult entered = world.instances().enter_mode(characterId, mode, [&world, owner, target, group]() {
+                world.dungeon_result(owner, target, group, dungeon_result::kSuccess);
+            });
+            if (entered.error != InstanceError::none) {
+                world.dungeon_result(owner, target, group, dungeon_result::kEntranceActivationFailure);
+            }
         });
         return InteractionVerdict::accepted;
     }
@@ -201,6 +209,10 @@ std::uint32_t Instances::entrance_result(const Entity& character, const gamedata
     } else if (character.progression.level < map->requiredLevel) {
         cause = "the level of the character is below RequiredLevel of the mode";
         result = dungeon_result::kEntranceActivationFailure;
+    } else if (const std::string_view off = encounter_rules::mode_off(entrance.mode, m_world.options().questMedusaRuns); !off.empty()) {
+        // Stage QG9b: the setting of the mode (encounter_rules::kQuestMedusaRuns) turns it off; the reason is a literal (it ends with NUL).
+        cause = off.data();
+        result = dungeon_result::kEntranceActivationFailure;
     } else if (!m_world.encounters().runs_mode(entrance.mode)) {
         cause = "the backend does not run the content of the mode (docs/systems/instances.md)";
         result = dungeon_result::kEntranceActivationFailure;
@@ -217,7 +229,7 @@ std::uint32_t Instances::entrance_result(const Entity& character, const gamedata
     return result;
 }
 
-InstanceResult Instances::enter_mode(const std::string& characterId, const std::string& mode) {
+InstanceResult Instances::enter_mode(const std::string& characterId, const std::string& mode, const std::function<void()>& committed) {
     InstanceResult result;
     const gamedata::GameModes* modes = data();
     const gamedata::GameMap* map = modes != nullptr ? modes->find(mode) : nullptr;
@@ -237,7 +249,7 @@ InstanceResult Instances::enter_mode(const std::string& characterId, const std::
             break;
         }
     }
-    result = enter(characterId, map->id, join);
+    result = enter(characterId, map->id, join, committed);
     if (result.error == InstanceError::none && join != 0) {
         ++m_counts.rejoined;
     }
@@ -368,13 +380,19 @@ void Instances::recover() {
              && m_store.delete_instance_member(row.characterId);
     }
     if (!ok || !batch.commit()) {
-        // Code review of stage DG1, finding DG1R-R5: the recovery is not complete: the next tick (or world entry) tries again.
+        // Code review of stage DG1, finding DG1R-R5: the recovery is not complete: the next tick (or world entry) tries again. Code review
+        // of stage QG9a, finding QG9AR-R1: the characters of the rows do not enter the world until then (World::enter, exit_pending).
+        m_unrecovered.clear();
+        for (const state::InstanceMemberRow& row : rows) {
+            m_unrecovered.insert(row.characterId);
+        }
         log::write("world: the member rows of the instances of an earlier start (%zu) were not removed: the database did not accept the "
                    "change (the next tick tries again)",
                    rows.size());
         return;
     }
     m_recovered = true;
+    m_unrecovered.clear();
     for (const state::InstanceMemberRow& row : rows) {
         ++m_counts.recovered;
         log::write("world: instance %llu (%s) of an earlier start ended with the backend stop: character %s is at its return place %.2f %.2f "
@@ -384,7 +402,8 @@ void Instances::recover() {
     }
 }
 
-InstanceResult Instances::enter(const std::string& characterId, const std::string& mapId, std::uint64_t join) {
+InstanceResult Instances::enter(const std::string& characterId, const std::string& mapId, std::uint64_t join,
+                                const std::function<void()>& committed) {
     InstanceResult result;
     const auto refuse = [&](InstanceError error) {
         ++m_counts.refused;
@@ -446,6 +465,11 @@ InstanceResult Instances::enter(const std::string& characterId, const std::strin
             || !batch.commit()) {
             return refuse(InstanceError::storage);
         }
+    }
+    // Code review of stage QG9a, finding QG9AR-R6: the rows are in the store: the caller sends its result now (3094 Success of the entrance),
+    // before the level change of the move.
+    if (committed) {
+        committed();
     }
     Instance* instance = nullptr;
     bool made = false;

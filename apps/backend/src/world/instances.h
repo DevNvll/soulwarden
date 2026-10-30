@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -206,7 +207,8 @@ public:
      * commit nothing changes. Then the system makes or changes the instance, and World::move_to_space moves the character to the start
      * of the map.
      */
-    [[nodiscard]] InstanceResult enter(const std::string& characterId, const std::string& mapId, std::uint64_t join = 0);
+    [[nodiscard]] InstanceResult enter(const std::string& characterId, const std::string& mapId, std::uint64_t join = 0,
+                                       const std::function<void()>& committed = {});
 
     /**
      * A character leaves its instance and goes to its return place (the development command "instance return"). The rows of the exit
@@ -225,7 +227,7 @@ public:
      * Stage QG9a: the entry of a character at the entrance of a mode: it joins again the empty instance of the mode that it left (the timer
      * of the instance runs), else it enters a new instance (enter). The checks of entrance_result first.
      */
-    [[nodiscard]] InstanceResult enter_mode(const std::string& characterId, const std::string& mode);
+    [[nodiscard]] InstanceResult enter_mode(const std::string& characterId, const std::string& mode, const std::function<void()>& committed = {});
     /**
      * Stage QG9a (the evaluator of TaskGameMode, docs/systems/quests.md): @return True while the character is a member of an instance of the
      * mode (IsInGameMode 0x32BA3B0 compares the mode CRC of each active game mode; the comparison of the text ignores the case).
@@ -248,7 +250,9 @@ public:
     void recover();
     /** Code review of stage DG1, finding DG1R-R5: @return True while the exit rows of a departure of the character wait for the database. */
     [[nodiscard]] bool exit_pending(const std::string& characterId) const {
-        return m_pendingExits.contains(characterId);
+        // Code review of stage QG9a, finding QG9AR-R1: also a member row of an earlier start that the database did not let the recovery
+        // remove (its return place would undo a later save of the character).
+        return m_pendingExits.contains(characterId) || m_unrecovered.contains(characterId);
     }
 
     void tick();
@@ -294,6 +298,8 @@ private:
     bool m_recovered{false};
     /** Code review of stage DG1, finding DG1R-R5: the departures whose exit rows the database refused (they try again in recover). */
     std::map<std::string, InstanceMember> m_pendingExits;
+    /** Code review of stage QG9a, finding QG9AR-R1: the characters of the member rows of an earlier start that the recovery did not remove. */
+    std::set<std::string> m_unrecovered;
     InstanceCounts m_counts;
     /** Stage QG9a: the handlers of the entrance (OpenDungeonMenu, the Enter options) and of the exit portal (ExitDungeon). */
     std::unique_ptr<InteractionHandler> m_entranceHandler;

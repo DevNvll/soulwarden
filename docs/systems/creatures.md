@@ -450,6 +450,14 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
   does not find as a basic shot (its action is not Cast_One_Projectile) gets its declared action as its basic cast. The one entry:
   `ai_ww_medea_caster_console` with Spell_Frostbolt [data: the action list of the slice; agent: the crystal, the exhaustion, and the
   summons of the boss tree are not in the client, a known limit]. Live: Medea casts the frost bolt at the character in the fight.
+- Stage QG9b: the bosses (and one minion) of the other story instances whose slice has no melee attack and no basic cast get the ranged
+  action of the slice with the fewest releases (the first one of the list for the same number) as their declared cast: Medusa
+  `Attack_Poison_Spit_Single`, Apophis (`sand_elemental_questboss`) `Attack_Projectile_Shot`, the shaman minion of Apophis
+  `Attack_Shard_Spike`, the blind, heartless, and mute seraphs `Attack_WingSweep_L`, Yonas (`yonas_msq2_combat`) `Combat_Ritual` [data: the
+  ranged attacks of each slice; agent: the choice]. The breathless seraph and the boar and reindeer minions of Medusa have no attack in
+  the data: they do not fight (a known limit). Case CRG1 (a declared slice casts; the same actions in an other slice give no shot). Live:
+  Medusa hits the character with the poison spit (1034.6 Nature damage, four hits kill a character with no armor); Apophis hits with his
+  shot (888.6 Strike damage).
 
 ## Open points
 

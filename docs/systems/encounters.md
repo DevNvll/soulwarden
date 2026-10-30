@@ -26,6 +26,7 @@ wire contracts are in the protocol notes (section 4.62). The quest events are in
 | Stage QG5c5: the Darkness events and the boat reinforcements: the season rule, the group members and their parts, the spawns of an alias, the slices of a tracked alias, the stages that wait for their parent, the DestroySliceAction, the parts that the client does not show (the fill), the start objects of an earlier stage | `world/encounters.h` (`encounter_rules::kDarknessAtAllTimes`, `EncounterPlacement::partKinds`, `fills`, `EncounterMemberRun::part`), `world/encounters.cpp` (`resolve`, `spawn`, `count_destroyed`, `children_done`, `destroy_slices`), `gamedata/encounter_data.h` (`EncounterPart`, `EncounterDestroy`, `EncounterSpawn::alias`, `EncounterObjective::trackedSlices`, `EncounterObjectiveKind::waitParent`, `EncounterRecipe::season`), `world/entity.h` (`Creature::memberRoute`), `tools/gamedata/encounter_recipes.py` (`group_parts`, `part_route`, `alias_tiers`, `Reader.alias`), test cases QG5C5A to QG5C5F (`tests/encounter_darkness_tests.cpp`) |
 | The corrections of the code review of stage QG5c4 (QG5C4R-R1 to R5) | Test cases QGR5C4A to QGR5C4F (`tests/review_qg5c4_tests.cpp`; QGR5C4F starts the world with each encounter data file missing) |
 | Stage QG9a: the instance recipes (the encounter of a mode root slice), the cutscene stage and its grant, the event stage, the background stage of the manager, the start objects that the runner skips | `world/encounters.cpp` (`runs_mode`, `start_space`, `end_space`, `space_done`, `scan_spaces`, `cutscene_requested`, `cutscene_ended`, `DueKind::eventMet`), `gamedata/encounter_data.h` (`EncounterRecipe::mode`, `map`, `daily`, `EncounterObjectiveKind::cutscene`, `event`, `EncounterSpawn::skip`, `InstanceObject`), `tools/gamedata/encounter_recipes.py` (`Reader.mode_roots`, `Reader.mode_objects`), [Instances](instances.md), test cases SI4, SI5, SI7 (`tests/story_instance_tests.cpp`) |
+| Stage QG9b: the detector of the mode areas, the end rules of the waits and of the stages with no objective, the boss phases and BossPhaseObjective, the spawns of the parent and of the earlier stages, the gate of a mode with more than one recipe | `world/encounters.cpp` (`advance_phases`, `look_phases`, `count_earlier_deaths`, `DueKind::endRule`, `DueKind::phases`, `EncounterPlacement::gated`), `gamedata/encounter_data.h` (`StageEnd`, `BossPhase`, `EncounterObjectiveKind::bossPhase`, `none`, `EncounterRecipe::detectorFromMode`), `world/quests.h` (`mode_task_active`), `tools/gamedata/encounter_recipes.py` (`mode_area`, `boss_phases`), `tools/gamedata/encounters.py` (`phase_index`, `phase_boss`), test cases SY1 to SY3 (`tests/story_mode_tests.cpp`), QG9AR4, the cases `mode-*` of `check_encounters_tool.py` |
 
 ## Rules
 
@@ -401,6 +402,88 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   `Instances::content_succeeded`) [agent].
 - The task tree of Medea has only the cleanup leaf (the client factory makes no task for a cutscene, an event, or a WaitForParent stage
   with no description, and the kill objective is on a stage with userWave 0) [client 0x2714D40; protocol notes 4.67].
+
+### The instance recipes (stage QG9b)
+
+Stage QG9b takes the story instances of the main world level after QuestMedea (docs/systems/instances.md has the list of the modes). The
+sources: the static read F of stage QG9b (`~/Games/soulwarden/work/evidence/quests/qg9b/implement/static/F/ANSWERS.md`), the data of the
+mode root slices and of the encounter slices, and the live runs of stage QG9b. Encounter data format 3 (`encounter-data.json`).
+
+- The bosses of the modes are spawns of the stages of their encounters, not of the mode script: the mode root slices spawn the encounter
+  (EncounterBoss), the exit portals, the fog walls, the checkpoints, the quest objects of the mode script (the heartgems of Caer Dun, the
+  braziers of the seraphs, the device of Varlaam, the person Taurus of Medusa), and helpers of the boss tree (the drain locations of
+  Umberto, the markers of the seraphs) [data: the spawners of the mode roots]. A boss comes in an earlier stage of the manager (the
+  werewolf lord at 5 s of `_Wave 0 - Wait`, the Heartforge Guardian in the setup, Yonas in `Wave 1 - Yonas_Boss`) or in the parent of the
+  stage that tracks it (the seraph and the 20 m trigger of `Boss_Encounter`, the mammoth of `Phase_01_Boss`) [data].
+- In an instance recipe a destroyed objective with a tracked slice counts the spawns of the stages above it and the creature members of
+  the earlier stages of the manager that no KillSpawnsAction or DestroySliceAction removes before it (the tool and the runner:
+  `count_destroyed`, `resolve`); the parent makes its spawns at its start, before its child stages [data: the tracked slice is spawned
+  only there; agent: the member waits]. A start object of a parent that a child stage tracks is made (no `skip`).
+- Code review of stage QG9a, finding QG9AR-R4: a destroyed stage of an instance recipe that starts counts the tracked members that died
+  before its start (`count_earlier_deaths`: the boss of the background setup killed during the intro) [review]. Case QG9AR4.
+- The detector of an encounter slice with no ParticipantTracker and no detection volume (Caer Dun, the four seraphs, the mammoth, Apophis,
+  Varlaam) is the set of the detection volumes of the players of its mode root (the areas of the mode script: `AreaBoss`,
+  `AreaBossStart`, `AreaBossTeamwipe`, `AreaBossFightStart`, `AreaBossAffiliations_Players`; a filter with "player" in it): a character in
+  one of them is a participant (detector member `fromMode`). A volume with no query shape has the shape component of the engine of its
+  shape entity (`m_shapeEntityID`, else its own entity) with the scale of that entity (the Mammoth and Apophis areas: spheres of 100, 60,
+  35, 30, and 10 m) [data; agent: the mode script that reads the areas is not in the client; the rule of two volumes of stage QG5c3]. Such
+  a recipe has the grace of its manager (`m_gracePeriod`) [agent]. `encounter_recipes.mode_area`.
+- An EntityActiveStateChangedObjective of an instance recipe with no trigger: with a time limit and succeedOnTimeout it ends at its time
+  (end rule `time`: `Intro 0 - Wait` of Caer Dun and of the werewolf lord, 1 s) [data]; else it ends after the last spawn of its timeline
+  and then the end of its child stages, also optional ones (end rule `after`: `_Wave 0 - Wait` of the werewolf lord ends after its boss at
+  5 s; the Isabella intro waits for its trigger child) [agent: the client completes such a wait only at a change of its target entity
+  with one of the two flags, 0x271A210 and 0x271A230 (static read F, F4); the mode script that changes `Timeline_Phase_0_Wait` is not in
+  the client].
+- A stage with no objective (`m_objectives` empty: the cleanups of Apophis, the Empress, Morgaine; `Setup 2 - Boss Music` of Medusa) ends
+  after the last spawn of its timeline and its child stages that are not optional, at once when it has none (end rule `start`) [client
+  0x26EDAA0, 0x26F71E0: the counts of its objectives are equal (static read F, F5)]. A destroyed stage of an instance recipe with nothing to
+  count (no spawn below it, no tracked slice, no creature member in its recipe: `Wave 1 - Audio Start` of the Isabella intro) ends the same
+  way [agent].
+- The boss phases (the BossPhaseComponent of the boss slice: `m_bossPhaseData`, member `phases` of a creature member): the phases in the
+  order of the list, one at a time; a WaveEnded phase ends at the success of the user wave `m_waveNumber` of its encounter, a
+  HealthThreshold phase at `100 * health / max <= m_healthPercent` (a dead boss is at 0); the next phase starts [client 0x25DB940: the wave
+  number and the success; 0x25D8F80: the compare; 0x25D7290: one entry at a time; static read F, F1]. The wave number is the index of a
+  user-wave stage in the walk of the stages of the manager and their child stages (a stage before its children) [client 0x26F0190]. Each
+  scan (500 ms) looks at the health phases of the members of the running instances (MP-8: the members of the instances) [agent].
+- A BossPhaseObjective (m_trackedPhase T) is met when the phase number T of the phases of the key Boss_Phase of its boss ended [client
+  0x26CA1B0: the objective completes at an incoming phase value of T or more; agent: the value is the count of the ended phases of the key
+  Boss_Phase, from 1 (the data: Sir Gawain "Fight to 90" tracks 1, the phase of the health 90; "Fight to 55" tracks 3, the health 55; the
+  Empress tracks 1 (health 66) and 3 (health 0.001); the werewolf lord tracks 3 (health 25) before the cutscene of Morgaine); the sender of
+  the value is not in the client (static read F, F2)]. Its boss is the creature member of its tracked slice with phases, else the one such
+  member of the recipe [client 0x26CA1B0: no slice filter accepts any phase notification of its encounter]. A tracked phase that the boss
+  does not have refuses the recipe (Morgaine `Phase_3` tracks 3 and has two Boss_Phase phases). With a description the objective has a task
+  of the client [client 0x2714D40] (Sir Gawain).
+- Background activation 2 of an objective starts its count at the start of the manager; the actions and the spawn timeline of its stage
+  run at the entry of the stage [client 0x26F0400, 0x26F6294 (static read F, F3)]. The runner keeps the rule of stage QG9a for a cutscene
+  stage; a destroyed objective with background activation 2 (the `BeforeIntro` of the Empress) stays a cause.
+- The recipes of a mode with more than one recipe that is not a daily alternative (QuestSeraphim: one for each seraph, at one place;
+  QuestYonas: the hallway, the Isabella intro, the boss) start only for a character in their detector with an active task with the
+  GameModeID of the mode that names the recipe: its success event (`e:`) or a kill category of a creature member that its destroyed
+  objectives track (`k:`; `EncounterPlacement::gated`, `taskKeys`, `Quests::mode_task_active`) [agent from the quest data: each seraph has
+  its own quest (Quest_28002 to Quest_28005) and kill task; the tasks of 99E_MSQ_10_ToCaerDun name the hallway, the intro, and Yonas in
+  that order; the mode script that chooses and orders them is not in the client]. The content of such an instance succeeded when one of
+  its recipes succeeded and none runs [agent].
+- The daily alternative of a mode (DailyTrial) never runs: an instance runs the normal recipe of its mode [agent: the selection rule of
+  the mode script is not in the client; the daily recipe has no extra content in the backend].
+- An EncounterEventObjective keeps the rule of stage QG9a (met at the start of its stage) [agent: the sender of the client,
+  `Behavior::EncounterEventDecorator`, has an empty send (static read F, F6); the boss trees are not in the client]: the channel and fight
+  phases of the werewolf lord (Phase1_Fight, Phase2_Channel, Phase2_Fight), the burrow phases of Apophis, Spawn_Caster of the mammoth,
+  Magic1, Magic2, Time_Bomb, and DeathsDoor of Yonas pass at once, and the boss fight is a fight of its kill.
+- QuestVarlaam is refused: it defends the device of its mode root (Varlaam_Device, the vitals row DefendAlly_VarlaamDevice; Varlaam_Destroy
+  is its fail), and its defense stage waits for the events of the boss tree (`Enc_Complete`; with the event rule the defense would end at
+  its start) [data; agent: no target policy for a target that is not a player, the rule of the defenses of stage QG5c4].
+- The area triggers and the triggers of an instance recipe are found in the space of the instance (`look_proximity`, `look_triggers`)
+  [agent; case SY3]. Before stage QG9b the look was in the main world: the 20 m trigger of a seraph and the area trigger of the setup of
+  Medusa were never found.
+- The runner takes 67 of the 88 quest recipes (56 at the start of the stage): each recipe of the modes of the table of
+  [Instances](instances.md) but the daily alternatives, QuestEmpressZhou, QuestVarlaam, QuestGawain, QuestMorgaine, and QuestMedusa (off
+  by its setting `encounter_rules::kQuestMedusaRuns`, the reason "the client stops at the kill of Medusa by a hit (access violation at
+  0x4871DB6; open)"; 68 with the setting on) (the list: `tools/world encounter recipes`). No recipe of the main world changes between taken
+  and refused.
+- Live (stage QG9b): QuestMedusa (the area trigger of the setup in the instance, the intro IGC, the music stage with no objective, the
+  wave phases of Medusa, the boss fight, the cleanup of 6 s with the DestroySliceAction of the adds, the success), QuestMammoth (the stages
+  `Phase_01` to `Phase_04`, the root caster), and QuestApophis (the intro wait, the burrow phases with their Myrmidons, the cleanup with no
+  objective) [live; videos of the evidence folder of stage QG9b].
 
 ## Commands
 

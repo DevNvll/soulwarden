@@ -247,6 +247,13 @@ The source of each rule is in brackets: game data, client code, live check (the 
 - Code review of stage QG5c5 (corrected in stage QG7; case QGR5C5E) [review QG5C5R-R5]: the first completed gather of an encounter object
   with an ordinary row claims the object (`Gathering::m_claimedObjects`); a second gather of the same object is contested (no second
   reward). The claim ends when the object goes (`World::remove_object` calls `Gathering::object_removed`).
+- Stage QG9b ([Instances](instances.md)): an encounter start object can have a direct row of the Azoth Staff with no loot (GatheringType
+  AzothStaff, the loot table Empty or none: the final seal of Caer Dun `99B_MSQ_10_FinalSeal`, ToolRequired, 10 s; the flame of the
+  Heartforge pillars; the core switch of the Yonas cave; the safe zone of the werewolf lord; the rescues of the ritual) [data;
+  `gathering.py` `encounter_capital`]. The gather has the rules of its row (the Azoth Staff, the rank, the time, its event). A row whose game
+  event no event table has is a quest row (`quest`: `Werewolf_Lord_Safe_Zone_interact`, an event of the quests, no trade skill experience)
+  [agent: the rule of the quest rows of stage 1.8c]. A start object whose row the tool cannot take (BaseGatherTime 0: `Medea_Crystal`) is
+  left out with a message; the recipe that needs it is refused [agent].
 
 ## Commands
 

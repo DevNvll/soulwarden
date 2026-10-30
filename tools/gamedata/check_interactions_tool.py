@@ -45,7 +45,8 @@ compares the status and the output file of each case:
   - stage QG9a (format 6): the entrance of a game mode (a bound with OpenDungeonMenu and an Enter option, a DungeonEntranceComponent
     with m_gameMode and m_isSinglePlayerDungeon, an entity ExitPoint) is an object of the kind dungeonEntrance with its member entrance:
     the mode (trimmed), the solo flag, the slot and the facet target of the component (the XOR rule), and the place of the exit point.
-    The made-up game copy has the two game mode tables that the recipe reader of the encounters needs.
+    The made-up game copy has the two game mode tables that the recipe reader of the encounters needs. Stage QG9b: a requirement of an
+    entrance that is one NPA id is the conditional of its bound (entrance_npas); a name with no row stays unresolved.
 The test program of the backend runs it (cases IT10, IR5, RY6 to RY8, NC1).
 
 Usage: check_interactions_tool.py [WORK_FOLDER] [--review | --review-stations | --persons]
@@ -240,7 +241,18 @@ def check_entrance(document: dict) -> bool:
     names = [document["options"][index]["name"] for index, _ in entrance["bounds"][0]["options"]]
     return (member.get("mode") == "Test_Story" and member.get("solo") is True and member.get("slot") == 3 and member.get("target") == f"{target:016x}"
             and all(abs(a - b) < 1e-3 for a, b in zip(exit_place, (1050.0, 2004.0, 50.0))) and names == ["OpenDungeonMenu", "EnterQuestTest"]
-            and document["counts"].get("entrances") == 1 and all("entrance" not in entry for entry in document["objects"] if entry is not entrance))
+            and document["counts"].get("entrances") == 1 and all("entrance" not in entry for entry in document["objects"] if entry is not entrance)
+            and check_entrance_npas())
+
+
+def check_entrance_npas() -> bool:
+    """Stage QG9b: @return True when entrance_npas makes a requirement of one NPA id the conditional of its bound, and keeps a name with no
+    row and a list of two names unresolved."""
+    bounds = [{"requires": {"unresolved": ["*Test_TrialUnlock"]}}, {"requires": {"unresolved": ["Test_NoRow"]}},
+              {"requires": {"unresolved": ["*Test_TrialUnlock", "lore Test_Lore"]}}]
+    moved = tool.entrance_npas(bounds, {"*test_trialunlock"})
+    return (moved == 1 and bounds[0]["requires"] == {"conditional": "*Test_TrialUnlock"} and bounds[1]["requires"] == {"unresolved": ["Test_NoRow"]}
+            and "unresolved" in bounds[2]["requires"])
 
 
 def board_slice(community: bool) -> list[Element]:

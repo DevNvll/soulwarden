@@ -1116,6 +1116,7 @@ SpaceMoveError World::move_to_space(const std::string& characterId, SpaceId spac
     // What the character does in the old space ends there (the rules of a travel, and the effects that are entities of the old space).
     m_combat.end_sequence(entity->characterId, SequenceEnd::travel);
     m_abilities.cancel_aim(entity->characterId);
+    m_abilities.space_left(*entity); // Code review of stage QG9a, finding QG9AR-R5.
     m_stamina.interrupted(entity->characterId, "a change of the space");
     m_interactions.traveled(*entity);
     m_persons.traveled(*entity);

@@ -231,7 +231,7 @@ void sequence_file(const Options&) {
     json timedMore = tower_recipe("e4c00000-0000-4000-8000-000000000052/17", {700.0F, 205.0F, 30.0F});
     timedMore["stages"][1]["objective"]["more"] = json::array({timed(5)});
     json other = tower_recipe("e4c00000-0000-4000-8000-000000000053/17", {1000.0F, 205.0F, 30.0F});
-    other["stages"][1]["objective"]["type"] = "BossPhaseObjective";
+    other["stages"][1]["objective"]["type"] = "TestUnknownObjective"; // Stage QG9b: BossPhaseObjective is a class of the runner now.
     json hiddenOnly = tower_recipe("e4c00000-0000-4000-8000-000000000054/17", {1300.0F, 205.0F, 30.0F});
     hiddenOnly["stages"][1]["objective"] = destroyed(1, kHiddenSlice);
     hiddenOnly["stages"][1]["spawns"] = json::array({spawn_json(kHiddenSlice, 0, 1, {1300.0F, 206.0F, 70.0F})});
@@ -248,7 +248,7 @@ void sequence_file(const Options&) {
           "an entity-state stage with no trigger is refused (" + first(0) + ")");
     check(first(1).find("the objective 2 of the stage Wave_01 - Objective: Kill Boss is not a destroyed or a spawned objective") != std::string::npos,
           "a second objective with a time limit is refused (" + first(1) + ")");
-    check(first(2).find("the objective BossPhaseObjective of the stage Wave_01 - Objective: Kill Boss: the runner does not run it")
+    check(first(2).find("the objective TestUnknownObjective of the stage Wave_01 - Objective: Kill Boss: the runner does not run it")
               != std::string::npos,
           "an objective of an other class is refused by the runner too (" + first(2) + ")");
     check(first(3) == "the creature member worldevent_ai_hidden.dynamicslice: the client does not show its slice",

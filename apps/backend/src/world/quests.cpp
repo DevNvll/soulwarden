@@ -262,7 +262,8 @@ bool flow_passes(const gamedata::QuestData& data, const std::vector<gamedata::Qu
  * one id (no value: the id is malformed, an NPA with a malformed expression). One reader for the quest plans and for the persons (stage
  * 2.5c). Code review of stage 2.5c, finding PR5C-R7: an expression that the reader cannot read to its end (a missing operand, a missing
  * closing parenthesis, text after the end) has no value, also under a negation: the caller takes it as false (a malformed requirement does
- * not pass).
+ * not pass). Stage QG9b [data; live: the client opens the window of that entrance]: a line end is a blank too (the conditional of the entrance of
+ * QuestApophis ends with CR LF).
  */
 template <class IdValue>
 std::optional<bool> evaluate_conditional(const std::string& text, IdValue&& value) {
@@ -272,8 +273,11 @@ std::optional<bool> evaluate_conditional(const std::string& text, IdValue&& valu
         IdValue& value;
         bool error{false};
 
+        [[nodiscard]] static bool is_blank(char c) {
+            return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+        }
         void blank() {
-            while (position < text.size() && (text[position] == ' ' || text[position] == '\t')) {
+            while (position < text.size() && is_blank(text[position])) {
                 ++position;
             }
         }
@@ -315,8 +319,8 @@ std::optional<bool> evaluate_conditional(const std::string& text, IdValue&& valu
             }
             blank();
             const std::size_t start = position;
-            while (position < text.size() && text[position] != ' ' && text[position] != '\t' && text[position] != '&'
-                   && text[position] != '|' && text[position] != '(' && text[position] != ')' && text[position] != '!') {
+            while (position < text.size() && !is_blank(text[position]) && text[position] != '&' && text[position] != '|'
+                   && text[position] != '(' && text[position] != ')' && text[position] != '!') {
                 ++position;
             }
             if (position == start) {
@@ -688,6 +692,18 @@ struct Quests::Plan {
      */
     std::optional<std::uint32_t> predicate(const QuestTask& task, const gamedata::QuestNode& node, const QuestObjective* objective,
                                            std::uint32_t before = 0) const {
+        // Code review of stage QG9a, finding QG9AR-R3: the mode gate of the base task (0x3AD5CC0) for each predicate task with a GameModeID
+        // (a possession, a level, an equip, ...): outside its mode its value does not rise (the rule of the location gate above: the value
+        // before stays). TaskGameMode has its own rule (predicate_of). The index has these tasks under "mode" too.
+        const std::optional<std::uint32_t> value = predicate_of(task, node, objective, before);
+        if (value && !task.gameMode.empty() && task.type != task_type::kGameMode
+            && (task.modeMutated || !owner.m_world.instances().in_mode(entity, task.gameMode))) {
+            return std::min(*value, before);
+        }
+        return value;
+    }
+    std::optional<std::uint32_t> predicate_of(const QuestTask& task, const gamedata::QuestNode& node, const QuestObjective* objective,
+                                              std::uint32_t before) const {
         // EnforceLocationRequirement (0x825DAD0, 0x825E860): a possession or an equip task counts only in its place (code review of stage
         // 1.8c, finding QR8C-R6; the index has these tasks under "place" too). Stage QG6b [data]: the rule gates the gain only: outside its
         // place the value of the task does not rise, and it falls only with the items (the minimum of the count and the progress before).
@@ -750,9 +766,13 @@ struct Quests::Plan {
             // volumes: live check T1). Enter and Stay Inside: inside one volume of the tag; Leave: outside each one. No trigger data, no
             // volume of the tag, or a camera estimate: no knowledge of the place, the task waits (the rule of QR8C-R7).
             const gamedata::TriggerData* triggers = owner.triggers();
-            // Stage DG1: the volumes are volumes of the main world: in an instance the task waits.
-            if (triggers == nullptr || task.targetTag.empty() || entity.positionEstimated || entity.space != kMainSpace
-                || !triggers->knows(task.targetTag)) {
+            // Stage DG1: the volumes are volumes of the main world: in an instance the task waits. Stage QG9b [agent; data: the GameModeID of
+            // the task and a volume of the main world level]: a task with the GameModeID of a story instance of the main world level tests
+            // the volumes in the space of an instance of that mode (the entry volume TriggerVol_09A_M12_3 of 09A_M12_EnterArena of QuestMedusa).
+            const bool level = entity.space == kMainSpace
+                               || (!task.gameMode.empty() && owner.m_world.main_level(entity.space)
+                                   && owner.m_world.instances().in_mode(entity, task.gameMode));
+            if (triggers == nullptr || task.targetTag.empty() || entity.positionEstimated || !level || !triggers->knows(task.targetTag)) {
                 return 0U;
             }
             const bool inside = triggers->inside(task.targetTag, entity.position.x, entity.position.y, entity.position.z, &counts.triggerVisits);
@@ -1505,7 +1525,8 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
                 subscriptions.add("prog", entry);
             }
             // Stage QG9a: TaskGameMode looks again at a change of the membership of the character (the entry, the leave, a new session).
-            if (task.type == task_type::kGameMode) {
+            // Code review of stage QG9a, finding QG9AR-R3: each other task with a GameModeID too (its predicate has the mode gate).
+            if (task.type == task_type::kGameMode || !task.gameMode.empty()) {
                 subscriptions.add("mode", entry);
             }
             if (!open) {
@@ -2059,7 +2080,9 @@ void Quests::entered(Entity& entity) {
     run_pending(entity);
     // The items, the place, and the bits can have changed while the character was away (a template, the DLC, a command). Stage QG7: and
     // the categorical progressions and the faction (a command).
-    refresh(entity, true, true, true, true, "entry", true);
+    // Code review of stage QG9a, finding QG9AR-R2: and the membership tasks (a restored character is in the main world: a saved TaskGameMode
+    // with StayActive is false again before the first owner record).
+    refresh(entity, true, true, true, true, "entry", true, true);
     // Stage QG7: the next rank-up row of the faction (the validation lists of the base attributes; docs/systems/factions.md), and a self
     // completing row whose root is done (a ready row of an earlier run).
     if (entity.faction.faction != 0) {
@@ -3008,6 +3031,29 @@ bool Quests::quest_object_open(const Entity& entity, const std::string& interact
     }
     const auto found = m_subscriptions.find(entity.id);
     return found != m_subscriptions.end() && found->second && found->second->find("t:" + lower_text(interactTag)) != nullptr;
+}
+
+bool Quests::mode_task_active(const Entity& entity, std::string_view mode, const std::vector<std::string>& keys) {
+    const auto found = m_subscriptions.find(entity.id);
+    if (data() == nullptr || mode.empty() || found == m_subscriptions.end() || !found->second) {
+        return false;
+    }
+    const std::string wanted = lower_text(std::string(mode));
+    for (const std::string& key : keys) {
+        const std::vector<Subscriber>* list = found->second->find(key);
+        for (std::size_t position = 0; list != nullptr && position < list->size(); ++position) {
+            const Subscriber entry = (*list)[position];
+            const QuestInstance* quest = instance_of(entity, entry.instance);
+            const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc, quest->mission) : nullptr;
+            if (objective == nullptr || entry.index >= quest->tasks.size() || quest->tasks[entry.index].state != quest_state::kActive) {
+                continue;
+            }
+            if (lower_text(m_data->task(objective->nodes[entry.index].task).gameMode) == wanted) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 void Quests::items_touched(const Entity& entity) {

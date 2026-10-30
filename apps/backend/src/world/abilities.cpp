@@ -1697,6 +1697,27 @@ void Abilities::throw_spell(Cast& cast, const state::WorldPosition& origin, cons
     }
 }
 
+void Abilities::space_left(const Entity& character) {
+    // A space id that no space has (the allocator of the instances gives 1, 2, ... in one process): each check of Cast::space fails.
+    constexpr SpaceId kNoSpace = 0xFFFFFFFFU;
+    std::size_t ended = 0;
+    for (auto& [number, cast] : m_casts) {
+        if (cast.caster == character.id && cast.space != kNoSpace) {
+            cast.space = kNoSpace;
+            m_dashes.erase(number);
+            ++ended;
+        }
+    }
+    if (const auto state = m_characters.find(character.characterId); state != m_characters.end()) {
+        state->second.cast.reset();
+    }
+    m_motionMarks.erase(character.characterId);
+    if (ended > 0) {
+        log::write("world: ability: %zu cast(s) of character %s end their delayed work (a move to an other space)", ended,
+                   character.characterId.c_str());
+    }
+}
+
 void Abilities::cancel_aim(const std::string& characterId) {
     end_aim(characterId, "a change of its bar, its nodes, or its place");
 }

@@ -58,8 +58,40 @@ enum class EncounterObjectiveKind : std::uint8_t {
      * the runner meets it at the start of its stage (a rule of this project).
      */
     event,
+    /**
+     * Stage QG9b: BossPhaseObjective of an instance recipe (m_trackedPhase): the stage ends when the boss ends that phase of the phases of its
+     * BossPhaseComponent (EncounterMember::phases; EncounterObjective::phaseOf and phaseIndex).
+     */
+    bossPhase,
+    /** Stage QG9b: a stage of an instance recipe with no objective (m_objectives empty: the cleanups): it ends at its start. */
+    none,
     /** A class that the runner does not run (the recipe is refused by the tool). */
     other,
+};
+
+/**
+ * Stage QG9b (the tool member "end" of an objective of an instance recipe): the end of a stage that the data does not end. normal: the rule of
+ * its kind. time: the end of its time limit (an entity-state wait with m_timeLimit and m_succeedOnTimeout). after: the end of its last spawn
+ * and of its child stages (an entity-state wait with no sender of the data: the mode script). start: its start (a stage with no objective; a
+ * destroyed stage with nothing to count).
+ */
+enum class StageEnd : std::uint8_t {
+    normal,
+    time,
+    after,
+    start,
+};
+
+/** Stage QG9b: one phase of the BossPhaseComponent of a boss (m_bossPhaseData of its slice, in its order). */
+struct BossPhase {
+    enum class Kind : std::uint8_t { wave, health, other };
+    Kind kind{Kind::other};
+    /** WaveEndedBossPhaseConfig: m_waveNumber, the user wave of the encounter whose end ends the phase. */
+    std::uint32_t wave{0};
+    /** HealthThresholdBossPhaseConfig: m_healthPercent (0 to 100): the phase ends at this part of the health or below. */
+    float health{0.0F};
+    /** m_blackboardPhaseKey: Intro_Phase or Boss_Phase. */
+    std::string key;
 };
 
 enum class EncounterMemberKind : std::uint8_t {
@@ -148,6 +180,15 @@ struct EncounterObjective {
     std::uint32_t cutsceneCrc{0};
     /** Stage QG9a: the event of an event objective (m_eventId). */
     std::string eventId;
+    /** Stage QG9b: the end rule of a stage of an instance recipe that the data does not end (the tool member "end"). */
+    StageEnd end{StageEnd::normal};
+    /**
+     * Stage QG9b: a boss phase objective: m_trackedPhase, the member slice of the boss whose phases it reads (lower case), and the index of
+     * the phase in its phase list that the stage waits for (-1: none).
+     */
+    std::uint32_t trackedPhase{0};
+    std::string phaseOf;
+    std::int32_t phaseIndex{-1};
     /** Stage QG5c4: the triggers of an entity-state objective (a character in one of their shapes ends the stage). */
     std::vector<EncounterTrigger> triggers;
     /**
@@ -167,7 +208,10 @@ struct EncounterStage {
     /** The slot of its EncounterComponent: the stage state 2133. */
     std::uint32_t slot{0};
     bool userWave{false};
-    /** The collection index of a user-wave stage (client 0x26F1FD0: 0, 1, ... in the stage order), -1 for a stage with no user wave. */
+    /**
+     * The collection index of a user-wave stage (client 0x26F1FD0: 0, 1, ... in the walk of the stages of the manager and their child
+     * stages; stage QG9b: also the child stages, the m_waveNumber of a boss phase), -1 for a stage with no user wave.
+     */
     std::int32_t userIndex{-1};
     EncounterObjective objective;
     /**
@@ -239,6 +283,11 @@ struct EncounterRecipe {
      */
     std::vector<EncounterShape> detectorShapes;
     float detectorReach{0.0F};
+    /**
+     * Stage QG9b: the detector is the areas of the mode root (an encounter slice with no ParticipantTracker and no detection volume; detector
+     * member "fromMode" of the tool).
+     */
+    bool detectorFromMode{false};
     /** m_universalSuccessGameEventId (empty: none) and the quest events of the recipe (lower case). */
     std::string successEvent;
     std::vector<std::string> questEvents;
@@ -327,6 +376,8 @@ struct EncounterMember {
     bool stationary{false};
     /** Stage QG5c5: the parts of a group member (empty: one creature, the member itself). */
     std::vector<EncounterPart> parts;
+    /** Stage QG9b: the boss phases of the body of a creature member (its BossPhaseComponent; empty: none). */
+    std::vector<BossPhase> phases;
 };
 
 class EncounterData {
@@ -339,6 +390,8 @@ public:
     /** Stage QG5c5: the largest number of the parts of a group member and of the waypoints of the path of a part. */
     static constexpr std::size_t kMaxParts = 32;
     static constexpr std::size_t kMaxWaypoints = 64;
+    /** Stage QG9b: the largest number of the boss phases of a member. */
+    static constexpr std::size_t kMaxPhases = 32;
     static constexpr float kMaxSeconds = 3600.0F;
 
     /** Reads encounter-data.json. A file that is not complete is not used, as a whole. @return False with `error()`. */

@@ -631,6 +631,12 @@ public:
      */
     void cancel_aim(const std::string& characterId);
     /**
+     * Code review of stage QG9a, finding QG9AR-R5: the character moves to an other space (World::move_to_space): each cast of it ends its
+     * delayed work (no space has its space now: a return to the space of the cast does not wake it), its motion (the actions at their times,
+     * the movement allowance, a dash of the server) ends, and it has no current cast. The paid costs and the cooldowns keep their rules.
+     */
+    void space_left(const Entity& character);
+    /**
      * A character died (Health::apply, the one path of a death; code review of stage B1, finding B1-R3): its aim ends (a shot item after a
      * revival confirmed the old aim of Penetrating Shot), and the shots of the volley of its cast that did not fly end.
      */

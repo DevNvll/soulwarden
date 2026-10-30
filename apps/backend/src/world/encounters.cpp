@@ -110,6 +110,59 @@ void Encounters::load() {
         }
         m_placements.push_back(std::move(placement));
     }
+    // Stage QG9b [a rule of this project from the quest data]: the instance recipes of a mode with more than one recipe that is not a daily
+    // alternative (QuestSeraphim: one recipe for each seraph; QuestYonas: the hallway, the Isabella intro, the boss) start only for a character
+    // with an active task of the mode that names the recipe: its success event, or a kill category of a creature member that a destroyed
+    // objective of it tracks. The mode script that chooses and orders them is not in the client.
+    std::map<std::string, std::vector<std::uint32_t>> byMode;
+    for (std::uint32_t index = 0; index < m_placements.size(); ++index) {
+        const gamedata::EncounterRecipe& recipe = *m_placements[index].recipe;
+        if (!recipe.mode.empty() && !recipe.daily) {
+            byMode[gamedata::lower_text(recipe.mode)].push_back(index);
+        }
+    }
+    const gamedata::LootTables* tables = m_world.rewards().tables();
+    for (const auto& [mode, list] : byMode) {
+        if (list.size() < 2) {
+            continue;
+        }
+        for (const std::uint32_t index : list) {
+            EncounterPlacement& placement = m_placements[index];
+            const gamedata::EncounterRecipe& recipe = *placement.recipe;
+            placement.gated = true;
+            const auto add = [&](std::string key) {
+                if (std::find(placement.taskKeys.begin(), placement.taskKeys.end(), key) == placement.taskKeys.end()) {
+                    placement.taskKeys.push_back(std::move(key));
+                }
+            };
+            if (!recipe.successEvent.empty()) {
+                add("e:" + gamedata::lower_text(recipe.successEvent));
+            }
+            for (const gamedata::EncounterStage& stage : recipe.stages) {
+                for (std::size_t number = 0; number <= stage.more.size(); ++number) {
+                    const gamedata::EncounterObjective& objective = objective_of(stage, number);
+                    if (objective.kind != gamedata::EncounterObjectiveKind::destroyed || objective.tracked.empty()) {
+                        continue;
+                    }
+                    for (const gamedata::EncounterStage& owner : recipe.stages) {
+                        for (const gamedata::EncounterSpawn& spawn : owner.spawns) {
+                            const gamedata::CreatureKind* kind = spawn.memberIndex < placement.kinds.size() ? placement.kinds[spawn.memberIndex] : nullptr;
+                            if (kind == nullptr || !counts_toward(objective, spawn)) {
+                                continue;
+                            }
+                            const gamedata::LootVitals* vitals = tables != nullptr ? tables->vitals_of(kind->vitals) : nullptr;
+                            const std::vector<std::string> categories = tables != nullptr
+                                                                            ? tables->kill_categories(vitals, kind->vitals, kind->category, true)
+                                                                            : std::vector<std::string>{gamedata::lower_text(kind->vitals)};
+                            for (const std::string& category : categories) {
+                                add("k:" + category);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     log::write("world: encounters: %llu quest encounter recipes, %llu taken by the runner, %zu refused (docs/systems/encounters.md)",
                static_cast<unsigned long long>(m_counts.placements), static_cast<unsigned long long>(m_counts.taken),
                static_cast<std::size_t>(m_counts.placements - m_counts.taken));
@@ -144,10 +197,22 @@ void Encounters::resolve(EncounterPlacement& placement) {
     for (const gamedata::EncounterStage& stage : recipe.stages) {
         for (std::size_t index = 0; index <= stage.more.size(); ++index) {
             const gamedata::EncounterObjective& objective = objective_of(stage, index);
+            // Stage QG9b: the end rules of an instance recipe (gamedata::StageEnd): a wait with a time limit or after its spawns and its
+            // child stages, a stage with no objective at its start, and a boss phase of the BossPhaseComponent of its boss.
+            const bool instance = !recipe.mode.empty();
+            const gamedata::EncounterMember* boss = objective.kind == gamedata::EncounterObjectiveKind::bossPhase ? m_data->member(objective.phaseOf)
+                                                                                                                   : nullptr;
             if (objective.kind == gamedata::EncounterObjectiveKind::other) {
                 refuse("the objective " + objective.type + " of the stage " + stage.name + ": the runner does not run it");
-            } else if (objective.kind == gamedata::EncounterObjectiveKind::entityState && objective.triggers.empty()) {
+            } else if (objective.kind == gamedata::EncounterObjectiveKind::entityState && objective.triggers.empty()
+                       && !(instance && (objective.end == gamedata::StageEnd::time || objective.end == gamedata::StageEnd::after))) {
                 refuse("the stage " + stage.name + " waits for a change of an entity that no trigger of the data sends");
+            } else if (objective.kind == gamedata::EncounterObjectiveKind::none && !(instance && objective.end == gamedata::StageEnd::start)) {
+                refuse("the stage " + stage.name + " has no objective");
+            } else if (objective.kind == gamedata::EncounterObjectiveKind::bossPhase
+                       && (!instance || boss == nullptr || objective.phaseIndex < 0
+                           || static_cast<std::size_t>(objective.phaseIndex) >= boss->phases.size())) {
+                refuse("the boss phase stage " + stage.name + " names no phase of a boss member of the data");
             } else if (index > 0 && ((objective.kind != gamedata::EncounterObjectiveKind::destroyed
                                       && objective.kind != gamedata::EncounterObjectiveKind::spawned)
                                      || objective.timeLimit > 0.0F)) {
@@ -155,6 +220,11 @@ void Encounters::resolve(EncounterPlacement& placement) {
                        + " is not a destroyed or a spawned objective with no time limit");
             }
         }
+    }
+    // Stage QG9b, the setting of the mode QuestMedusa (encounter_rules::kQuestMedusaRuns; a pick of the orchestrator): off, its recipes are
+    // refused with one cause.
+    if (const std::string_view off = encounter_rules::mode_off(recipe.mode, m_world.options().questMedusaRuns); !off.empty()) {
+        refuse(std::string(off));
     }
     // Stage QG5c5, the season rule (encounter_rules::kDarknessAtAllTimes; a project rule of the orchestrator): no season schedule.
     if (recipe.season == "darkness" && !encounter_rules::kDarknessAtAllTimes) {
@@ -521,16 +591,29 @@ void Encounters::resolve(EncounterPlacement& placement) {
                     }
                     const gamedata::EncounterMemberKind kind = members[spawn->memberIndex].kind;
                     // Stage QG9a: in an instance recipe a creature member of a manager stage that still runs (a WaitForParentObjective
-                    // stage of the manager) counts too.
-                    const bool background = !recipe.mode.empty() && kind == gamedata::EncounterMemberKind::creature
-                                            && recipe.stages[top_of(owner)].objective.kind == gamedata::EncounterObjectiveKind::waitParent;
+                    // stage of the manager) counts too. Stage QG9b: each creature member of an earlier stage of the manager that no action
+                    // removes before the stage (the werewolf lord of _Wave 0 - Wait, the guardian of the setup of the Heartforge) [data: the
+                    // stage tracks a slice that only the earlier stage spawns; a rule of this project: the member waits].
+                    const bool background = !recipe.mode.empty() && kind == gamedata::EncounterMemberKind::creature;
                     if ((kind == gamedata::EncounterMemberKind::object || background) && comes(owner, *spawn) && survives(owner, *spawn, index)) {
                         possible += spawn->count * tally(objective, *spawn).first;
+                    }
+                }
+                // Stage QG9b: in an instance recipe the spawns of the stages above it count too (the parent makes them at its start, before
+                // its child stages: the seraph and the 20 m trigger of Boss_Encounter, the mammoth of Phase_01_Boss).
+                for (std::int32_t up = recipe.mode.empty() ? -1 : stage.parent; up >= 0; up = recipe.stages[static_cast<std::size_t>(up)].parent) {
+                    for (const gamedata::EncounterSpawn& spawn : recipe.stages[static_cast<std::size_t>(up)].spawns) {
+                        if (!spawn.skip && spawn.memberIndex < members.size() && comes(static_cast<std::uint32_t>(up), spawn)) {
+                            possible += spawn.count * tally(objective, spawn).first;
+                        }
                     }
                 }
             }
             const bool timedEnd = stage.objective.timeLimit > 0.0F && stage.objective.succeedOnTimeout;
             const std::string label = at == 0 ? stage.name : stage.name + " (its objective " + std::to_string(at + 1) + ")";
+            if (objective.end == gamedata::StageEnd::start && !recipe.mode.empty()) {
+                continue; // Stage QG9b: a destroyed stage of an instance recipe with nothing to count ends at its start (the tool rule).
+            }
             if (at == 0 && objective.kind == gamedata::EncounterObjectiveKind::destroyed && spawns.empty() && objective.tracked.empty()) {
                 placement.anyMember[index] = true;
                 if (!timedEnd) {
@@ -706,6 +789,7 @@ void Encounters::scan() {
     // entity-state stages.
     look_proximity();
     look_triggers();
+    look_phases();
     // A fight with no participant: the encounter fails (a reset; a rule of this project, docs/systems/encounters.md).
     std::vector<EntityId> failed;
     for (const auto& [root, instance] : m_instances) {
@@ -760,7 +844,8 @@ void Encounters::look_proximity() {
         for (const auto& [characterId, ledger] : object.failures) {
             finders.push_back(characterId);
         }
-        m_world.for_each_near(kMainSpace, object.place, radius, [&](Entity& entity) {
+        // Stage QG9b: the space of the instance (an area trigger of an instance recipe: the setup of Medusa, the 20 m trigger of a seraph).
+        m_world.for_each_near(instance->space, object.place, radius, [&](Entity& entity) {
             ++m_counts.entitiesLooked;
             if (entity.kind != EntityKind::player || entity.life.dead || entity.positionEstimated || entity.quests.cutsceneStarted
                 || entity.quests.pendingCinematic != 0 || distance3(entity.position, object.place) > radius
@@ -902,7 +987,10 @@ void Encounters::update_participants(EncounterInstance& instance) {
             continue;
         }
         if (!participant->second.graceUntil) {
-            participant->second.graceUntil = now + std::chrono::seconds(recipe.participantGrace);
+            // Stage QG9b: an encounter slice with no ParticipantTracker (the detector of the areas of its mode root) has the grace of its
+            // manager (m_gracePeriod) [a rule of this project].
+            const std::uint32_t grace = recipe.trackerComponent == 0 && recipe.detectorFromMode ? recipe.managerGrace : recipe.participantGrace;
+            participant->second.graceUntil = now + std::chrono::seconds(grace);
         }
         if (now >= *participant->second.graceUntil) {
             if (Entity* character = m_world.find_character(participant->first)) {
@@ -981,7 +1069,7 @@ void Encounters::look_triggers() {
         std::string finder;
         for (const gamedata::EncounterTrigger& trigger : stage.objective.triggers) {
             ++m_counts.triggerLooks;
-            m_world.for_each_near(kMainSpace, trigger.position, trigger.reach + kBodyReach, [&](Entity& entity) {
+            m_world.for_each_near(instance->space, trigger.position, trigger.reach + kBodyReach, [&](Entity& entity) {
                 ++m_counts.entitiesLooked;
                 if (!finder.empty() || entity.kind != EntityKind::player || entity.positionEstimated || (entity.life.dead && !trigger.deadTargets)) {
                     return;
@@ -1141,7 +1229,7 @@ void Encounters::start_stage(EncounterInstance& instance, std::uint32_t index) {
     stage_status(instance, index, encounter_rules::kStageStarted);
     log::write("world: encounters: the encounter %s (generation %llu) starts the stage %s", recipe.key.c_str(),
                static_cast<unsigned long long>(instance.generation), stage.name.c_str());
-    if (stage.objective.kind == gamedata::EncounterObjectiveKind::entityState) {
+    if (stage.objective.kind == gamedata::EncounterObjectiveKind::entityState && !stage.objective.triggers.empty()) {
         // Stage QG5c4: the stage waits for a character in a shape of its trigger (look_triggers, at each scan).
         m_armed.push_back(Armed{instance.placement, instance.generation, index});
     }
@@ -1199,6 +1287,28 @@ void Encounters::start_stage(EncounterInstance& instance, std::uint32_t index) {
     // of the client sends the event; the IGC stage before it is the intro] (a due entry: the end does not run inside this start).
     if (stage.objective.kind == gamedata::EncounterObjectiveKind::event) {
         schedule(now, Due{DueKind::eventMet, instance.placement, instance.generation, index, 0, 0});
+    }
+    // Stage QG9b: the end rules of an instance recipe after the last spawn of the timeline of the stage (then the child stages:
+    // objective_met). A stage with no objective [client 0x26EDAA0, 0x26F71E0: its counters are equal; static read F of stage QG9b, F5]; an
+    // entity-state wait with no sender and a destroyed stage with nothing to count [agent: the mode script that ends them is not in the client;
+    // the client completes such a wait only at a change of its target, 0x271A210, F4].
+    if (!recipe.mode.empty() && (stage.objective.end == gamedata::StageEnd::start || stage.objective.end == gamedata::StageEnd::after)) {
+        std::chrono::milliseconds last{0};
+        for (const gamedata::EncounterSpawn& entry : stage.spawns) {
+            last = std::max(last, entry.delay);
+        }
+        schedule(now + last, Due{DueKind::endRule, instance.placement, instance.generation, index, 0, 0});
+    }
+    // Code review of stage QG9a, finding QG9AR-R4: a destroyed stage that starts counts the tracked members that died before (a boss of the
+    // background setup killed during the intro). Stage QG9b: a boss phase stage looks at the phases of its boss now (a phase can end before).
+    if (!recipe.mode.empty()) {
+        count_earlier_deaths(instance, index);
+        if (instance_of(placementIndex, generation) == nullptr || instance.stages[index].ended) {
+            return;
+        }
+        if (stage.objective.kind == gamedata::EncounterObjectiveKind::bossPhase) {
+            schedule(now, Due{DueKind::phases, instance.placement, instance.generation, index, 0, 0});
+        }
     }
     // Stage QG5c3: the child stages run one after the other in the order of m_stages of the stage (a rule of this project from the data:
     // each subwave of an ambush has a time limit just above its last spawn delay; docs/systems/encounters.md). The first starts now.
@@ -1378,6 +1488,12 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
         }
         instance.members[entity->id] =
             EncounterMemberRun{index, entry, member.kind == gamedata::EncounterMemberKind::object, false, member.proximity, false};
+        if (member.kind == gamedata::EncounterMemberKind::creature && !member.phases.empty() && !recipe.mode.empty()) {
+            // Stage QG9b: a boss with the phases of its BossPhaseComponent starts in its first phase (a wave that ended already ends it at the
+            // next look).
+            instance.members[entity->id].phase = 0;
+            schedule(m_world.clock().now(), Due{DueKind::phases, instance.placement, instance.generation, index, 0, 0});
+        }
         m_memberOf[entity->id] = {instance.placement, instance.generation};
         ++run.spawned;
         ++made;
@@ -1516,6 +1632,7 @@ void Encounters::count_destroyed(EncounterInstance& instance, EntityId member) {
         return;
     }
     found->second.done = true;
+    found->second.destroyed = true;
     if (instance.phase != EncounterPhase::running) {
         return;
     }
@@ -1542,12 +1659,10 @@ void Encounters::count_destroyed(EncounterInstance& instance, EntityId member) {
     // slice that only the earlier stage spawns; agent: the rule, only for a start object].
     // Stage QG9a: in an instance recipe a creature member of a manager stage that still runs in the background (a WaitForParentObjective
     // stage of the manager: the caster of the setup of Medea) counts for each running stage that tracks it too.
-    std::int32_t top = static_cast<std::int32_t>(found->second.stage);
-    while (recipe.stages[static_cast<std::size_t>(top)].parent >= 0) {
-        top = recipe.stages[static_cast<std::size_t>(top)].parent;
-    }
-    const bool background = !recipe.mode.empty() && !found->second.object
-                            && recipe.stages[static_cast<std::size_t>(top)].objective.kind == gamedata::EncounterObjectiveKind::waitParent;
+    // Stage QG9b: in an instance recipe each member counts for each running stage that tracks it (the stages below its stage and the later
+    // stages: the seraph of Boss_Encounter for Wave 2 - Defeat Seraph, the werewolf lord of _Wave 0 - Wait for _Wave 2 - Fight; it covers the
+    // background setup of stage QG9a).
+    const bool background = !recipe.mode.empty();
     for (std::uint32_t index = 0; ((found->second.object && instance.stages[found->second.stage].ended) || background) && index < recipe.stages.size();
          ++index) {
         const EncounterStageRun& run = instance.stages[index];
@@ -1563,6 +1678,9 @@ void Encounters::count_destroyed(EncounterInstance& instance, EntityId member) {
                 counting.push_back(entry);
             }
         }
+    }
+    if (death && found->second.phase >= 0) {
+        schedule(m_world.clock().now(), Due{DueKind::phases, instance.placement, instance.generation, found->second.stage, 0, 0});
     }
     for (std::uint32_t index = 0; death && index < placement.anyMember.size(); ++index) {
         const std::pair<std::uint32_t, std::size_t> first{index, 0};
@@ -1623,7 +1741,10 @@ void Encounters::objective_met(EncounterInstance& instance, std::uint32_t index)
         return;
     }
     run.objectiveMet = true;
-    if (!stage.children.empty() && !stage.childrenOptional && !run.childrenDone && !children_done(instance, index)) {
+    // Stage QG9b: an entity-state wait of the rule "after" waits for its child stages also when they are optional (the trigger of the
+    // Isabella intro: its parent waits for the change that the dialogue after it sends) [agent].
+    const bool waits = !stage.childrenOptional || stage.objective.end == gamedata::StageEnd::after;
+    if (!stage.children.empty() && waits && !run.childrenDone && !children_done(instance, index)) {
         // m_childStagesOptional 0 [data: the name; agent: the rule]: the stage ends when its count came and its last child stage ended.
         // Stage QG5c5: a child stage with a WaitForParentObjective ends with its parent; the parent does not wait for it.
         log::write("world: encounters: the encounter %s (stage %s) has its count and waits for its child stages", recipe.key.c_str(),
@@ -1690,8 +1811,147 @@ void Encounters::take_due() {
                 end_stage(*instance, entry.stage, true);
             }
             break;
+        case DueKind::endRule:
+            if (instance->phase == EncounterPhase::running && instance->stages[entry.stage].started && !instance->stages[entry.stage].ended) {
+                const gamedata::EncounterStage& stage = m_placements[entry.placement].recipe->stages[entry.stage];
+                log::write("world: encounters: the encounter %s: the stage %s ends by the end rule %s (no sender of the data)",
+                           m_placements[entry.placement].recipe->key.c_str(), stage.name.c_str(),
+                           stage.objective.end == gamedata::StageEnd::after ? "after its spawns and its child stages"
+                                                                            : "after its spawns (a stage with nothing to wait for)");
+                EncounterStageRun& run = instance->stages[entry.stage];
+                if (!run.met.empty()) {
+                    run.met.assign(run.met.size(), true);
+                }
+                publish_objectives(*instance);
+                objective_met(*instance, entry.stage);
+            }
+            break;
+        case DueKind::phases:
+            advance_phases(*instance);
+            break;
         case DueKind::payout:
             break;
+        }
+    }
+}
+
+void Encounters::count_earlier_deaths(EncounterInstance& instance, std::uint32_t index) {
+    const gamedata::EncounterRecipe& recipe = *m_placements[instance.placement].recipe;
+    const gamedata::EncounterStage& stage = recipe.stages[index];
+    std::vector<std::pair<std::size_t, std::uint32_t>> found;
+    for (std::size_t number = 0; number <= stage.more.size(); ++number) {
+        const gamedata::EncounterObjective& objective = objective_of(stage, number);
+        if (objective.kind != gamedata::EncounterObjectiveKind::destroyed || objective.tracked.empty()) {
+            continue;
+        }
+        std::uint32_t dead = 0;
+        for (const auto& [id, member] : instance.members) {
+            if (member.destroyed && member.stage < recipe.stages.size() && member.spawn < recipe.stages[member.stage].spawns.size()
+                && counts_toward(objective, recipe.stages[member.stage].spawns[member.spawn], member.part)) {
+                ++dead;
+            }
+        }
+        if (dead > 0) {
+            found.emplace_back(number, dead);
+        }
+    }
+    const std::uint32_t placement = instance.placement;
+    const std::uint64_t generation = instance.generation;
+    for (const auto& [number, dead] : found) {
+        EncounterInstance* current = instance_of(placement, generation);
+        if (current == nullptr || current->phase != EncounterPhase::running || current->stages[index].ended) {
+            return;
+        }
+        log::write("world: encounters: the encounter %s (stage %s) counts %u tracked member(s) that died before its start", recipe.key.c_str(),
+                   stage.name.c_str(), dead);
+        count_objective(*current, index, number, dead);
+    }
+}
+
+void Encounters::advance_phases(EncounterInstance& instance) {
+    // Stage QG9b (docs/systems/encounters.md, the boss phases): the phases of the BossPhaseComponent of a boss in the order of its list; the
+    // current phase ends at the end of the user wave m_waveNumber of its encounter (WaveEndedBossPhaseConfig) or at its health percent and
+    // below (HealthThresholdBossPhaseConfig; a dead boss is at 0), and the next phase starts [data: the configs and their fields]. A phase of
+    // an other config never ends. A running BossPhaseObjective stage is met when the phase that it tracks ended.
+    const gamedata::EncounterRecipe& recipe = *m_placements[instance.placement].recipe;
+    for (auto& [id, member] : instance.members) {
+        if (member.phase < 0 || member.noEntity || member.stage >= recipe.stages.size()
+            || member.spawn >= recipe.stages[member.stage].spawns.size()) {
+            continue;
+        }
+        const gamedata::EncounterSpawn& spawn = recipe.stages[member.stage].spawns[member.spawn];
+        if (spawn.memberIndex >= m_data->members().size()) {
+            continue;
+        }
+        const std::vector<gamedata::BossPhase>& phases = m_data->members()[spawn.memberIndex].phases;
+        const Entity* creature = m_world.find(id);
+        while (static_cast<std::size_t>(member.phase) < phases.size()) {
+            const gamedata::BossPhase& phase = phases[static_cast<std::size_t>(member.phase)];
+            bool ends = false;
+            if (phase.kind == gamedata::BossPhase::Kind::wave) {
+                ends = instance.wavesEnded.count(static_cast<std::int32_t>(phase.wave)) != 0;
+            } else if (phase.kind == gamedata::BossPhase::Kind::health) {
+                const bool dead = member.destroyed || (creature != nullptr && creature->kind == EntityKind::creature && creature->creature.dead);
+                ends = dead || (creature != nullptr && creature->vitals.healthMax > 0.0F
+                                && creature->vitals.health * 100.0F <= phase.health * creature->vitals.healthMax);
+            }
+            if (!ends) {
+                break;
+            }
+            log::write("world: encounters: the encounter %s: the boss %016llx ends its phase %d (%s, %s)", recipe.key.c_str(),
+                       static_cast<unsigned long long>(id), member.phase,
+                       phase.kind == gamedata::BossPhase::Kind::wave ? ("the end of the wave " + std::to_string(phase.wave)).c_str()
+                                                                     : ("the health " + std::to_string(phase.health) + "%").c_str(),
+                       phase.key.c_str());
+            ++member.phase;
+        }
+    }
+    std::vector<std::uint32_t> met;
+    for (std::uint32_t index = 0; index < recipe.stages.size(); ++index) {
+        const gamedata::EncounterObjective& objective = recipe.stages[index].objective;
+        const EncounterStageRun& run = instance.stages[index];
+        if (objective.kind != gamedata::EncounterObjectiveKind::bossPhase || !run.started || run.ended || run.met.empty() || run.met[0]) {
+            continue;
+        }
+        for (const auto& [id, member] : instance.members) {
+            if (member.phase > objective.phaseIndex && member.stage < recipe.stages.size()
+                && member.spawn < recipe.stages[member.stage].spawns.size()
+                && recipe.stages[member.stage].spawns[member.spawn].member == objective.phaseOf) {
+                met.push_back(index);
+                break;
+            }
+        }
+    }
+    const std::uint32_t placement = instance.placement;
+    const std::uint64_t generation = instance.generation;
+    for (const std::uint32_t index : met) {
+        EncounterInstance* current = instance_of(placement, generation);
+        if (current == nullptr || current->phase != EncounterPhase::running || current->stages[index].ended) {
+            return;
+        }
+        log::write("world: encounters: the encounter %s: the boss ended the phase %d that the stage %s tracks", recipe.key.c_str(),
+                   recipe.stages[index].objective.phaseIndex, recipe.stages[index].name.c_str());
+        EncounterStageRun& run = current->stages[index];
+        run.met[0] = true;
+        publish_objectives(*current);
+        if (std::all_of(run.met.begin(), run.met.end(), [](bool value) { return value; })) {
+            objective_met(*current, index);
+        }
+    }
+}
+
+void Encounters::look_phases() {
+    // Stage QG9b: the health phases (the cost: the members of the running instances with a boss phase; MP-8).
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> looked;
+    for (const auto& [root, instance] : m_instances) {
+        if (instance.phase == EncounterPhase::running
+            && std::any_of(instance.members.begin(), instance.members.end(), [](const auto& entry) { return entry.second.phase >= 0; })) {
+            looked.emplace_back(instance.placement, instance.generation);
+        }
+    }
+    for (const auto& [placement, generation] : looked) {
+        if (EncounterInstance* instance = instance_of(placement, generation)) {
+            advance_phases(*instance);
         }
     }
 }
@@ -1701,6 +1961,12 @@ void Encounters::end_stage(EncounterInstance& instance, std::uint32_t index, boo
     const gamedata::EncounterStage& stage = recipe.stages[index];
     instance.stages[index].ended = true;
     stage_status(instance, index, success ? encounter_rules::kStageSucceeded : encounter_rules::kStageFailed);
+    if (stage.userIndex >= 0 && !recipe.mode.empty() && success) {
+        // Stage QG9b: the success of a user wave ends the WaveEnded boss phase of that wave (a look in the next tick) [client 0x25DB940: the
+        // wave number and the success; 0x26ED922: a user-wave stage sends it; static read F of stage QG9b, F1].
+        instance.wavesEnded.insert(stage.userIndex);
+        schedule(m_world.clock().now(), Due{DueKind::phases, instance.placement, instance.generation, index, 0, 0});
+    }
     log::write("world: encounters: the encounter %s (generation %llu): the stage %s %s", recipe.key.c_str(),
                static_cast<unsigned long long>(instance.generation), stage.name.c_str(), success ? "succeeded" : "failed");
     // Stage QG5c3: the child stages that run end with their parent (the status of the parent) [agent].
@@ -1712,6 +1978,9 @@ void Encounters::end_stage(EncounterInstance& instance, std::uint32_t index, boo
         if (run.started && !run.ended) {
             run.ended = true;
             stage_status(instance, child, success ? encounter_rules::kStageSucceeded : encounter_rules::kStageFailed);
+            if (recipe.stages[child].userIndex >= 0 && !recipe.mode.empty() && success) {
+                instance.wavesEnded.insert(recipe.stages[child].userIndex); // Stage QG9b: the wave of a boss phase.
+            }
             // Code review of stage QG5c5, finding QG5C5R-R4: the end actions of the child run one time when its parent ends it (the client
             // runs them at the end status too). No start of a sibling: the parent ends.
             if (recipe.stages[child].killSpawnsAtEnd) {
@@ -2260,9 +2529,18 @@ void Encounters::end_space(SpaceId space) {
 
 bool Encounters::space_done(SpaceId space) const {
     const auto found = m_spaces.find(space);
-    return found != m_spaces.end() && !found->second.empty()
-           && std::all_of(found->second.begin(), found->second.end(),
-                          [&](std::uint32_t index) { return m_spaceDone.contains({index, space}); });
+    if (found == m_spaces.end() || found->second.empty()) {
+        return false;
+    }
+    // Stage QG9b [agent]: the recipes of a mode with more than one recipe start only for an active task (EncounterPlacement::gated): the
+    // content succeeded when one of them succeeded and none runs (the seraph of the quest of the character; a later entry is a new run, and
+    // its recipes start by the quest state of that time).
+    if (m_placements[found->second.front()].gated) {
+        return std::any_of(found->second.begin(), found->second.end(), [&](std::uint32_t index) { return m_spaceDone.contains({index, space}); })
+               && std::none_of(found->second.begin(), found->second.end(),
+                               [&](std::uint32_t index) { return m_spaceLive.contains({index, space}); });
+    }
+    return std::all_of(found->second.begin(), found->second.end(), [&](std::uint32_t index) { return m_spaceDone.contains({index, space}); });
 }
 
 void Encounters::scan_spaces() {
@@ -2278,13 +2556,16 @@ void Encounters::scan_spaces() {
             if (m_spaceLive.contains({index, space}) || m_spaceDone.contains({index, space})) {
                 continue;
             }
-            const gamedata::EncounterRecipe& recipe = *m_placements[index].recipe;
+            const EncounterPlacement& placement = m_placements[index];
+            const gamedata::EncounterRecipe& recipe = *placement.recipe;
             bool inside = false;
             m_world.for_each_near(space, recipe.position, recipe.detectorReach + kBodyReach, [&](Entity& entity) {
                 ++m_counts.entitiesLooked;
                 inside = inside
                          || (entity.kind == EntityKind::player && !entity.life.dead && !entity.positionEstimated
-                             && in_detector(recipe, recipe.position, capsule_of(entity, player)));
+                             && in_detector(recipe, recipe.position, capsule_of(entity, player))
+                             // Stage QG9b: a recipe of a mode with more than one recipe needs an active task of the character that names it.
+                             && (!placement.gated || m_world.quests().mode_task_active(entity, recipe.mode, placement.taskKeys)));
             });
             if (inside) {
                 wanted.emplace_back(index, space);

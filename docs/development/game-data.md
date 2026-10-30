@@ -687,6 +687,28 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   member `townExcluded` (the enabled town rows whose objective has no row: none in this build); the backend of stage QG8 refuses a file
   whose town buckets miss another enabled town row of the goals Gather, Kill, Explore (finding QG6BR-R1). The file of stage QG6b has every
   town row in a bucket and loads as it is. `tools/release.sh` takes the two changed files.
+- Stage QG9b ([Instances](../systems/instances.md), [Encounters](../systems/encounters.md)) changes three files. Write them from one game
+  copy (`tools/gamedata/encounters.sh`, `interactions.sh`, `gathering.sh`, in this order: the gathering tool reads the start objects of
+  the recipes).
+  - `encounter-data.json` format 3: an objective can be `BossPhaseObjective` (`trackedPhase`; `phaseOf` and `phaseIndex`: the member of
+    the boss and the index of the phase in its list) or `none` (a stage with no objective), and it can have `end` (`time`, `after`,
+    `start`: the end rules of the waits and of the stages with nothing to wait for); a creature member can have `phases` (each one with
+    `kind` wave or health, `wave`, `health`, and `key`: the BossPhaseComponent of its slice); the detector of a recipe with no shape of
+    its own can have `fromMode` (the names of the areas of its mode root) and shapes with `area`. The build: 88 recipes, 73 with no cause
+    of the tool (61 before), 24 instance recipes, 14 of them with no cause (2 before), 27 members with boss phases, 9 detectors of the
+    mode areas. A backend of before refuses the file (format 3).
+  - `interaction-data.json` (still format 6): a bound of an entrance whose requirement is one name that is a non-persisted achievement
+    (a row of NPAData) has that id as its member `conditional`, and no `unresolved` (`entrance_npas`, count `entranceNpas`: 4 entrances,
+    the trials of QuestWolf, QuestVarlaam, QuestMorgaine, and the Dracula trial). The backend evaluates the NPA (its conditional and its
+    ObjectiveFlow) instead of a refusal of the use.
+  - `gathering-data.json` (still format 1): the start objects of the instance recipes with a direct row of the Azoth Staff and no loot
+    (the final seal of Caer Dun, the flame of the Heartforge pillars, the core switch of the Yonas cave, the safe zone of the werewolf
+    lord, the three rescues of the ritual; `encounterAzoth`): 54 start objects (47 before), 1,259 rows (1,254 before). A row whose game
+    event no event table has is a quest row (`quest`: the safe zone of the werewolf lord). A start object whose row the tool cannot take
+    is left out with a message (Medea_Crystal: BaseGatherTime 0). The region files are the same (the set `00f271950dd5a4f6`).
+  `creatures.json` does not change. `tools/release.sh` takes the three files with the game data folder. The checks of the tools:
+  `check_encounters_tool.py` (cases `mode-wait`, `mode-none`, `mode-earlier`, `mode-phase`, `mode-areas`) and
+  `check_interactions_tool.py` (`check_entrance_npas`).
 - Stage QG9a ([Instances](../systems/instances.md), [Encounters](../systems/encounters.md)) changes three files. Write the three again from
   one game copy (`tools/gamedata/creatures.sh`, `interactions.sh`, `encounters.sh`): the recipe reader `encounter_recipes.py` needs the
   game mode tables (`javelindata_gamemodes`, `javelindata_gamemodemaps`) and stops with no file without them.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <map>
@@ -115,6 +117,23 @@ inline constexpr std::uint32_t kFindAttempts = 20;
  * itself across the world. False: the runner refuses each Darkness recipe (one cause), and no Darkness event runs.
  */
 inline constexpr bool kDarknessAtAllTimes = true;
+/**
+ * Stage QG9b, the setting of the mode QuestMedusa (a pick of the orchestrator after the live checks of stage QG9b; the user can change it):
+ * the client of this build stops at the kill of Medusa by a hit of a player (docs/systems/instances.md, open problem). False: the runner
+ * refuses each recipe of QuestMedusa with kQuestMedusaOff (one cause), so its entrance refuses the entry (result 10) and the support
+ * manifest counts the rows of the mode as not supported with that reason. True: the mode runs with the rules of stage QG9b. The world
+ * option WorldOptions::questMedusaRuns has this value (a test sets it; no start option).
+ */
+inline constexpr bool kQuestMedusaRuns = false;
+inline constexpr std::string_view kQuestMedusaMode = "QuestMedusa";
+inline constexpr std::string_view kQuestMedusaOff = "the client stops at the kill of Medusa by a hit (access violation at 0x4871DB6; open)";
+/** @return The reason of the setting for a mode that the setting turns off (`medusaRuns`: the world option), or an empty text. */
+[[nodiscard]] inline std::string_view mode_off(std::string_view mode, bool medusaRuns) {
+    const bool medusa = mode.size() == kQuestMedusaMode.size() && std::equal(mode.begin(), mode.end(), kQuestMedusaMode.begin(), [](char a, char b) {
+                            return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+                        });
+    return medusa && !medusaRuns ? kQuestMedusaOff : std::string_view{};
+}
 /** The bounds of one instance (load bounds: the data has at most 32 for each spawn entry). */
 inline constexpr std::size_t kMaxMembers = 256;
 inline constexpr std::size_t kMaxParticipants = 64;
@@ -156,6 +175,13 @@ struct EncounterMemberRun {
     bool noEntity{false};
     /** Stage QG5c5: the part of a group member (EncounterMember::parts); -1: not a part. */
     std::int32_t part{-1};
+    /**
+     * Stage QG9b: the member died or was gathered or found (a count of its stage), not removed by an action, a command, or the end of the
+     * instance (code review of stage QG9a, finding QG9AR-R4: a stage that starts later counts the death of a tracked boss of an earlier stage).
+     */
+    bool destroyed{false};
+    /** Stage QG9b: the phase of a boss (its index in EncounterMember::phases); -1: a member with no boss phases. */
+    std::int32_t phase{-1};
 };
 
 /** The run of one stage of an instance. */
@@ -200,6 +226,8 @@ struct EncounterInstance {
     std::map<EntityId, EncounterMemberRun> members;
     std::map<std::string, EncounterParticipant> participants;
     WorldClock::time_point made{};
+    /** Stage QG9b: the user waves (EncounterStage::userIndex) that ended: the end of a WaveEnded boss phase. */
+    std::set<std::int32_t> wavesEnded;
 };
 
 /** One placement of a recipe, taken or refused. */
@@ -231,6 +259,14 @@ struct EncounterPlacement {
      * show (no kind: the swarmers of the Yonas retreat) when an other objective of the stage counts members that the runner makes.
      */
     std::vector<std::vector<bool>> voided;
+    /**
+     * Stage QG9b: an instance recipe of a mode with more than one recipe that is not a daily alternative (QuestSeraphim: the four seraphs;
+     * QuestYonas: the hallway, the Isabella intro, the boss) starts only for a character with an active task of the mode that names it
+     * (Quests::mode_task_active): its success event ("e:") and the kill keys of the creature members that its destroyed objectives track
+     * ("k:") [a rule of this project from the quest data: the mode script that chooses and orders them is not in the client].
+     */
+    bool gated{false};
+    std::vector<std::string> taskKeys;
     /** The instance that runs (0: none), the last generation, the respawn of a new instance (no value: at once). */
     bool live{false};
     std::uint64_t generation{0};
@@ -422,6 +458,13 @@ private:
         memberEnd,
         /** Stage QG9a: an EncounterEventObjective of an instance recipe is met (the stage in `stage`). */
         eventMet,
+        /**
+         * Stage QG9b: the end rule of a stage of an instance recipe (gamedata::StageEnd): a stage with no objective or a destroyed stage with
+         * nothing to count at its start, an entity-state wait after its last spawn (and then its child stages).
+         */
+        endRule,
+        /** Stage QG9b: a look at the boss phases of an instance (after the end of a user wave, a death, or the start of a phase stage). */
+        phases,
     };
     /**
      * Code review of stage QG5c4, finding QG5C4R-R3: a finder whose quest write the store refused: its attempts, and the tasks that each event
@@ -483,6 +526,18 @@ private:
     /** Stage QG5c3: the count of one stage reached its required count (or a spawned objective its spawns): it ends, or it waits for its child
      *  stages that are not optional. */
     void objective_met(EncounterInstance& instance, std::uint32_t stage);
+    /**
+     * Stage QG9b: the boss phases of the members of an instance: a current phase ends at the end of its user wave (WaveEnded) or at its health
+     * percent (HealthThreshold), and the next one starts; a running BossPhaseObjective stage whose phase ended is met.
+     */
+    void advance_phases(EncounterInstance& instance);
+    /** Stage QG9b: the health phases of the bosses of the running instances (each scan). */
+    void look_phases();
+    /**
+     * Code review of stage QG9a, finding QG9AR-R4: a destroyed stage of an instance recipe that starts counts the tracked members of the other
+     * stages that died before its start (a boss of the background setup killed during the intro).
+     */
+    void count_earlier_deaths(EncounterInstance& instance, std::uint32_t stage);
     /** Stage QG5c3: the characters in the spheres of the proximity objects find them (an accepted position; InteractOnlyOnQuest). */
     void look_proximity();
     /** Stage QG5c4: a character in a shape of the trigger of a running entity-state stage ends that stage. */

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check of the encounter recipe tool (encounters.py) with made-up recipes and members (no file of the game). Stages QG5c2 to QG9a.
+"""Check of the encounter recipe tool (encounters.py) with made-up recipes and members (no file of the game). Stages QG5c2 to QG9b.
 
 The tool reads the recipes of the game copy (encounter_recipes.py) and gives each recipe the causes that the runner of the backend does not
 run (refusals: the rules of the docstring of encounters.py). This check gives the rule functions made-up recipes and compares each result.
@@ -54,6 +54,19 @@ The test program of the backend runs it (case QG5C2I; QG5C2A and QG5C3A have the
                      open world recipe are causes; a cutscene stage with no timed success is a cause; a daily recipe is a cause
   skip               stage QG9a: in an instance recipe a start object that no objective tracks gets "skip" (no cause); in an open world
                      recipe it is a cause
+  mode-wait          stage QG9b: in an instance recipe an entity-state wait with no trigger has the end rule "after" (no flag), or "time"
+                     (a time limit with succeedOnTimeout); in an open world recipe it is a cause
+  mode-none          stage QG9b: a stage with no objective has the end rule "start" in an instance recipe; in an open world recipe a cause;
+                     a destroyed stage with nothing to count in an instance recipe with no creature member has the end rule "start"
+  mode-earlier       stage QG9b: in an instance recipe a later stage counts a creature member of an earlier stage of the manager (no
+                     cause), not when a KillSpawnsAction between removes it; a child stage counts a spawn of its parent (also an object:
+                     it gets no "skip"); in an open world recipe both are causes
+  mode-phase         stage QG9b: phase_index takes the phase number N of the phases of the key Boss_Phase; a BossPhaseObjective of an
+                     instance recipe with a boss of such a phase is taken (phaseOf, phaseIndex); a phase that the boss does not have, or no
+                     boss with phases, is a cause
+  mode-areas         stage QG9b (encounter_recipes.mode_area): a detection volume of the players of a mode root with a query sphere, and
+                     one with no query shape and the sphere shape component of a scaled entity (its radius times the scale), are areas; a
+                     volume of an other filter (AICast) is none
 
 Usage: python3 -B check_encounters_tool.py [WORK_FOLDER] [CASE...]    (status 0: each case passed; the folder is not used)
 """
@@ -637,13 +650,113 @@ def case_skip() -> bool:
             and has(tool.refusals(world, members()), "is in a stage that does not track it"))
 
 
+def open_world(value: dict) -> dict:
+    """@return The recipe with no mode (an encounter of a placement of the main world)."""
+    for key in ("mode", "map", "daily"):
+        value.pop(key, None)
+    return value
+
+
+def case_mode_wait() -> bool:
+    def made(time_limit: float) -> dict:
+        value = instance_recipe()
+        value["stages"][0] = stage("_Wave 0 - Wait", tool.STATE, [spawn(MEMBER)],
+                                   objective={"completeOn": "", "triggers": [], "timeLimit": time_limit, "succeedOnTimeout": time_limit > 0})
+        return value
+    after = made(0.0)
+    timed_wait = made(1.0)
+    return (tool.refusals(after, members()) == [] and after["stages"][0]["objective"].get("end") == "after"
+            and tool.refusals(timed_wait, members()) == [] and timed_wait["stages"][0]["objective"].get("end") == "time"
+            and has(tool.refusals(open_world(made(0.0)), members()), "waits for no change of its entity"))
+
+
+def case_mode_none() -> bool:
+    value = instance_recipe()
+    value["stages"][3] = stage("Wave 2 - Clean Up", tool.TIMED, [])
+    value["stages"][3]["objective"] = {"type": tool.NONE}
+    empty = instance_recipe()
+    empty["stages"] = [stage("Wave 0 - Isabella Intro", tool.TIMED, []),
+                       stage("Wave 1 - Audio Start", tool.DESTROYED, [], objective={"requiredCount": 1})]
+    empty["stageOrder"] = [0, 1]
+    world = open_world(instance_recipe())
+    world["stages"][3]["objective"] = {"type": tool.NONE}
+    return (tool.refusals(value, members()) == [] and value["stages"][3]["objective"].get("end") == "start"
+            and tool.refusals(empty, members()) == [] and empty["stages"][1]["objective"].get("end") == "start"
+            and has(tool.refusals(world, members()), "the objective none of the stage Phase 03 - Cleanup"))
+
+
+def case_mode_earlier() -> bool:
+    def made(kill: bool, mode: bool) -> dict:
+        value = instance_recipe()
+        value["stages"][0] = stage("_Wave 0 - Wait", tool.TIMED, [spawn(MEMBER)], objective={"timeLimit": 5.0},
+                                   endActions=[{"type": "KillSpawnsAction"}] if kill else [])
+        return value if mode else open_world(value)
+
+    def parent(mode: bool) -> dict:
+        value = instance_recipe()
+        value["stages"][0] = stage("Phase 00 - Setup", tool.TIMED, [], objective={"timeLimit": 1.0})
+        value["stages"][2]["spawns"] = [spawn(MEMBER)]
+        value["stages"][2]["children"] = [4]
+        value["stages"][4] = stage("Wave 2 - Defeat", tool.DESTROYED, [], objective={"requiredCount": 1, "trackedSlice": MEMBER})
+        return value if mode else open_world(value)
+    trigger = parent(True)
+    trigger["stages"][2]["spawns"].append(spawn(PROXIMITY))
+    trigger["stages"][2]["children"] = [4, 3]
+    trigger["stageOrder"] = [0, 1, 2]
+    trigger["stages"][3] = stage("Wave 0 - Wait", tool.DESTROYED, [], objective={"requiredCount": 1, "trackedSlice": PROXIMITY})
+    trigger_taken = tool.refusals(trigger, members()) == [] and "skip" not in trigger["stages"][2]["spawns"][1]
+    return (trigger_taken and tool.refusals(made(False, True), members()) == []
+            and has(tool.refusals(made(True, True), members()), "do not spawn")
+            and has(tool.refusals(made(False, False), members()), "do not spawn") and tool.refusals(parent(True), members()) == []
+            and has(tool.refusals(parent(False), members()), "do not spawn"))
+
+
+def case_mode_phase() -> bool:
+    phases = [{"kind": "wave", "wave": 0, "key": "Intro_Phase"}, {"kind": "health", "health": 90.0, "key": "Boss_Phase"},
+              {"kind": "wave", "wave": 4, "key": "Boss_Phase"}, {"kind": "health", "health": 55.0, "key": "Boss_Phase"}]
+    boss = members()
+    boss[MEMBER]["phases"] = phases
+
+    def made(tracked: int) -> dict:
+        value = instance_recipe()
+        value["stages"][4] = stage("Phase1 - Fight to 90", tool.BOSS_PHASE, [], objective={"trackedPhase": tracked, "trackedSlice": MEMBER})
+        return value
+    taken = made(3)
+    return (tool.phase_index(phases, 1) == 1 and tool.phase_index(phases, 3) == 3 and tool.phase_index(phases, 4) is None
+            and tool.refusals(taken, boss) == [] and taken["stages"][4]["objective"].get("phaseOf") == MEMBER
+            and taken["stages"][4]["objective"].get("phaseIndex") == 3
+            and has(tool.refusals(made(4), boss), "which has no such phase of the fight")
+            and has(tool.refusals(made(1), members()), "has no creature member with boss phases"))
+
+
+def case_mode_areas() -> bool:
+    def volume(filter_text: str, shape: list) -> dict:
+        component = Node(None, None, [Node("m_shape", None, shape), Node("m_strFilter", filter_text.encode()),
+                                      Node("m_shapeEntityID", None, [Node(None, (0xFFFFFFFF).to_bytes(8, "big"))])],
+                         reader.DETECTOR_CLASS)
+        return {"name": "AreaBoss", "matrix": reader.IDENTITY, "components": [component]}
+    sphere_node = Node(None, None, [Node("m_Radius", struct.pack(">f", 30.0))], reader.SPHERE_CLASS)
+    query = reader.mode_area({}, volume("OnlyPlayerTarget", [sphere_node]), reader.IDENTITY)
+    other = reader.mode_area({}, volume("AICast", [sphere_node]), reader.IDENTITY)
+    scaled = volume("OnlyPlayerTarget", [])
+    scaled["matrix"] = (2.0, 0.0, 0.0, 10.0, 0.0, 2.0, 0.0, 20.0, 0.0, 0.0, 2.0, 0.0)
+    engine = Node(None, None, [Node(None, None, [Node("Radius", struct.pack(">f", 10.0))])], next(iter(
+        key for key, kind in reader.ENGINE_SHAPE_CLASSES.items() if kind == "sphere")))
+    scaled["components"].append(engine)
+    from_component = reader.mode_area({}, scaled, reader.IDENTITY)
+    return (query is not None and query["shape"] == "sphere" and query["radius"] == 30.0 and other is None
+            and from_component is not None and from_component["shape"] == "sphere" and from_component["radius"] == 20.0
+            and from_component["position"] == [10.0, 20.0, 0.0])
+
+
 CASES = {"taken": case_taken, "manager": case_manager, "parent": case_parent, "objectives": case_objectives,
          "cardinality": case_cardinality, "children": case_children, "members": case_members, "visual": case_visual,
          "lifetime": case_lifetime, "shapes": case_shapes, "alias": case_alias, "later": case_later, "counts": case_counts,
          "complete": case_complete, "state": case_state, "senders": case_senders, "several": case_several, "nested": case_nested,
          "group": case_group, "shape": case_shape, "wait": case_wait, "destroy": case_destroy, "season": case_season,
          "earlier": case_earlier, "ancestor": case_ancestor, "removed-earlier": case_removed_earlier,
-         "removed-by-child": case_removed_by_child, "instance": case_instance, "skip": case_skip}
+         "removed-by-child": case_removed_by_child, "instance": case_instance, "skip": case_skip, "mode-wait": case_mode_wait,
+         "mode-none": case_mode_none, "mode-earlier": case_mode_earlier, "mode-phase": case_mode_phase, "mode-areas": case_mode_areas}
 
 
 def main() -> int:

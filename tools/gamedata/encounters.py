@@ -78,7 +78,10 @@ from encounter_recipes import read_recipes  # noqa: E402
 OUTPUT_NAME = "encounter-data.json"
 # Stage QG9a: format 2: the instance recipes (members "mode", "map", "daily") and "instanceObjects". A backend of before refuses the file:
 # it would run an instance recipe as a placement of the main world.
-FORMAT = 2
+# Stage QG9b: format 3: the end rules of the stages of an instance recipe (objective member "end"), the boss phases (member "phases" of a
+# creature member; objective members "trackedPhase", "phaseOf", "phaseIndex"), and the detector of the areas of a mode root (detector
+# member "fromMode"). A backend of before refuses the file: it would refuse these recipes with a wrong cause, or run a wait as a trigger.
+FORMAT = 3
 AMBUSH = "an ambush"
 SUMMONED = "a summoned opponent"
 SEQUENCE = "an interaction sequence"
@@ -129,6 +132,13 @@ SEASON_FOLDERS = {
 # The recipes of the patterns of a later stage and their stage (refused).
 LATER = {
     "slices/worldevents/dunwood/enc_worldevent_carmilla_mindthief.dynamicslice": ("a summoned opponent with phases", "a later stage (BT3)"),
+    # Stage QG9b: the story instance QuestVarlaam defends the device of its mode root (Varlaam_Device: defend_varlaam.dynamicslice, the
+    # vitals row DefendAlly_VarlaamDevice; Varlaam_Destroy: the explosion of its fail). The werewolves attack the device, and its stages
+    # wait for the events of the boss tree (Boss_Jump, Next_Wave, Boss_Outro, Enc_Complete). The runner has no target policy for a target
+    # that is not a player (the rule of the defenses of stage QG5c4).
+    "slices/dungeon/questvarlaam/enc_quest_varlaam_trial.dynamicslice": (
+        "a defense of an object of the mode root (the device of Varlaam, DefendAlly_VarlaamDevice)",
+        "a later stage (a target policy for a target that is not a player, and the events of the boss tree)"),
 }
 LATER_FOLDERS = {
     "slices/worldevents/seasons/": ("a seasonal event", "a later stage (the scheduled and seasonal events)"),
@@ -146,6 +156,12 @@ WAIT_PARENT = "WaitForParentObjective"
 # table of the client sends it; the runner meets it at the start of its stage, a rule of this project).
 CUTSCENE = "CutsceneFinishedObjective"
 EVENT = "EncounterEventObjective"
+# Stage QG9b: the phase of a boss (its BossPhaseComponent: encounter_recipes.boss_phases) and a stage with no objective (the cleanups of
+# Apophis, the Empress, and Morgaine; the boss music of Medusa).
+BOSS_PHASE = "BossPhaseObjective"
+NONE = "none"
+# Stage QG9b: the key of the phases of the fight of a boss (m_blackboardPhaseKey; the phases of the intro have the key Intro_Phase).
+BOSS_PHASE_KEY = "boss_phase"
 # Stage QG5c5: the actions that the runner runs (EntityEventAction is a part of the client, the handler of the stage status).
 ACTIONS = ("EntityEventAction", "KillSpawnsAction", "DestroySliceAction")
 # The detector shapes that the runner tests (encounter_recipes.detector_shape) and the size that each one needs.
@@ -366,6 +382,39 @@ def background_stages(recipe: dict, index: int) -> list[dict]:
             for at in descendants(recipe, start)]
 
 
+def phase_index(phases: list[dict], tracked: int) -> int | None:
+    """Stage QG9b: @return The index in the phase list of a boss of the phase that a BossPhaseObjective with m_trackedPhase `tracked` waits
+    for: the phase number `tracked` (from 1) of the phases of the key Boss_Phase (a rule of this project from the data: Sir Gawain "Fight to
+    90" tracks 1, the first Boss_Phase phase, health 90; "Fight to 55" tracks 3, health 55; the Empress tracks 1 (health 66) and 3 (health
+    0.001); the werewolf lord tracks 3 (health 25) before the cutscene of Morgaine). No value: the boss has no such phase."""
+    fight = [index for index, phase in enumerate(phases) if phase.get("key", "").lower() == BOSS_PHASE_KEY]
+    return fight[tracked - 1] if 1 <= tracked <= len(fight) else None
+
+
+def phase_boss(recipe: dict, objective: dict, members: dict[str, dict]) -> str | None:
+    """Stage QG9b: @return The creature member whose phases a BossPhaseObjective reads: the member of its tracked slice with boss phases,
+    else (no tracked slice: the Empress, Morgaine) the one creature member of the recipe with boss phases. No value: none, or more than one."""
+    tracked = tracked_of(objective)
+    found = set()
+    for stage in recipe["stages"]:
+        for spawn in stage["spawns"]:
+            member = members.get(spawn["member"], {})
+            if member.get("kind") == "creature" and member.get("phases") and (not tracked or tracks(objective, spawn, members)):
+                found.add(spawn["member"])
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def unique_spawns(reach: list[tuple[dict, dict]]) -> list[tuple[dict, dict]]:
+    """@return The pairs of a stage and a spawn, each spawn one time (stage QG9b: a spawn can reach an objective on two paths)."""
+    seen: set[int] = set()
+    out = []
+    for part, spawn in reach:
+        if id(spawn) not in seen:
+            seen.add(id(spawn))
+            out.append((part, spawn))
+    return out
+
+
 def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracked: str | None, below: list[dict], members: dict[str, dict],
                      earlier: list[dict] | None = None, consumer: int | None = None) -> list[str]:
     """@return The causes of one objective of the stage `name` (the rules of the docstring); `below` is the stage and its child stages, and
@@ -373,7 +422,14 @@ def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracke
     QG5C5R-R3: only one that survives to the stage `consumer`)."""
     earlier = earlier or []
     causes: list[str] = []
-    if kind == STATE:
+    if kind == STATE and recipe.get("mode") and not objective.get("triggers"):
+        # Stage QG9b: an entity-state stage of an instance recipe with no trigger (the waits of the mode script: _Wave 0 - Wait of Caer Dun,
+        # of the werewolf lord, and of Varlaam; Setup 0 - Wait of Medusa; the Isabella intro). With a time limit and succeedOnTimeout it ends
+        # at its time [data: m_timeLimit, m_succeedOnTimeout: Intro 0 - Wait of Caer Dun 1 s]. Else it ends after the last spawn of its
+        # timeline and the end of its child stages [a rule of this project: the mode script that changes the entity is not in the client;
+        # the spawns of the stage (the werewolf lord at 5 s) and its child stages (the trigger of the Isabella intro) still come].
+        objective["end"] = "time" if objective["timeLimit"] > 0 and objective["succeedOnTimeout"] else "after"
+    elif kind == STATE:
         # Stage QG5c4: the stage ends at the change of the active state of its target entity (m_completeOnDeactivated or
         # m_completeOnActivated) that a detection volume of the slice sends when a player enters it (encounter_recipes.state_senders).
         triggers = objective.get("triggers") or []
@@ -409,6 +465,15 @@ def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracke
             if consumer is not None:
                 reach += [(part, spawn) for part in background_stages(recipe, consumer) for spawn in part["spawns"]
                           if members.get(spawn["member"], {}).get("kind") == "creature"]
+            # Stage QG9b: in an instance recipe, the members of the stages above it (the parent makes its spawns at its start, before its
+            # child stages: the seraph and the 20 m trigger of Boss_Encounter) and the creature members of the earlier stages of the manager
+            # that no action removes before it (the werewolf lord of _Wave 0 - Wait, the guardian of the setup of the Heartforge, Yonas of
+            # Wave 1) count too [data: the slice that the stage tracks is spawned only there; a rule of this project: they wait].
+            if consumer is not None and recipe.get("mode"):
+                reach += [(recipe["stages"][at], spawn) for at in ancestors(recipe, consumer)[1:] for spawn in recipe["stages"][at]["spawns"]]
+                reach += [(part, spawn) for part in earlier for spawn in part["spawns"]
+                          if members.get(spawn["member"], {}).get("kind") == "creature" and survives(recipe, owners[id(part)], spawn, consumer)]
+            reach = unique_spawns(reach)
         if tracked and not any(tracks(objective, spawn, members) for _, spawn in reach):
             causes.append(f"the stage {name} tracks a slice that it, its child stages, and the stages before it do not spawn")
         # Code review of stage QG5c2, finding QG5C2R-R3: the spawns that can count for the objective (its own and those of its child
@@ -421,7 +486,13 @@ def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracke
         # Stage QG5c5: a group member gives one count for each part that the objective counts (units).
         possible = sum(spawn["count"] * units(objective, spawn, members) for part, spawn in reach
                        if makes(members.get(spawn["member"])) and comes(recipe, part, spawn))
-        if not timed_end and objective["requiredCount"] > possible:
+        creatures = any(members.get(spawn["member"], {}).get("kind") == "creature" for stage in recipe["stages"] for spawn in stage["spawns"])
+        if recipe.get("mode") and kind == DESTROYED and not tracked and not reach and not creatures and not timed_end:
+            # Stage QG9b: a destroyed stage of an instance recipe with nothing to count (no spawn below it, no tracked slice, and no creature
+            # member in its recipe: Wave 1 - Audio Start of the Isabella intro) ends at its start [a rule of this project: the mode script
+            # that ends it is not in the client].
+            objective["end"] = "start"
+        elif not timed_end and objective["requiredCount"] > possible:
             causes.append(f"the stage {name} needs {objective['requiredCount']} {'destroyed' if kind == DESTROYED else 'spawned'} "
                           f"slices, and its spawns can give only {possible}")
     elif kind == WAIT_PARENT:
@@ -432,6 +503,24 @@ def objective_causes(recipe: dict, name: str, objective: dict, kind: str, tracke
             causes.append(f"the cutscene stage {name} has no timed success")
     elif kind == EVENT and recipe.get("mode"):
         pass  # Stage QG9a: the event of a stage of an instance recipe is met at the start of its stage (a rule of this project).
+    elif kind == NONE and recipe.get("mode"):
+        # Stage QG9b: a stage of an instance recipe with no objective (m_objectives empty: the cleanups of Apophis, the Empress, Morgaine)
+        # ends at its start [a rule of this project: it waits for nothing; its start and end actions run].
+        objective["end"] = "start"
+    elif kind == BOSS_PHASE and recipe.get("mode"):
+        # Stage QG9b: the phase of a boss (the BossPhaseComponent of its slice: its phases end at the end of a wave of the encounter or at
+        # a health percent; docs/systems/encounters.md).
+        boss = phase_boss(recipe, objective, members)
+        phases = members.get(boss, {}).get("phases", []) if boss else []
+        index = phase_index(phases, objective.get("trackedPhase", 0)) if boss else None
+        if boss is None:
+            causes.append(f"the boss phase stage {name} has no creature member with boss phases (or more than one) that it tracks")
+        elif index is None:
+            causes.append(f"the boss phase stage {name} tracks the phase {objective.get('trackedPhase', 0)} of "
+                          f"{boss.rsplit('/', 1)[-1]}, which has no such phase of the fight (Boss_Phase)")
+        else:
+            objective["phaseOf"] = boss
+            objective["phaseIndex"] = index
     else:
         causes.append(f"the objective {kind} of the stage {name}: a later stage")
     return causes
@@ -449,8 +538,10 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
     if not good_detector(recipe.get("detector")):
         causes.append("the detector of the participants is not a sphere, a cylinder, or an axis box with a size")
     if recipe.get("daily"):
-        causes.append("the daily alternative of the encounter of the mode (its selection rule is in the mode script, which the client does "
-                      "not have)")
+        # Stage QG9b (a rule of this project; the selection rule of the mode script is not in the client): an instance of the mode runs the
+        # normal recipe, never the daily alternative.
+        causes.append("the daily alternative of the encounter of the mode (the backend runs the normal recipe of the mode; the selection "
+                      "rule of the mode script is not in the client)")
     parent = recipe.get("parent") or {}
     if recipe.get("mode"):
         pass  # Stage QG9a: the instance system starts the encounter of its mode at the start of an instance (the mode script is absent).
@@ -491,7 +582,13 @@ def refusals(recipe: dict, members: dict[str, dict]) -> list[str]:
                 # Stage QG5c5: a later stage of the manager order whose destroyed objective tracks the object counts it too (the spyglass
                 # of Scallywag Shore: the timed setup spawns it, and "Look through Spyglass" tracks it).
                 later = later_stages(recipe, index)
+                # Stage QG9b: in an instance recipe a child stage that tracks the object counts it too (the 20 m trigger of the parent
+                # Boss_Encounter of a seraph, tracked by its child Wave 0 - Wait).
+                below_tracks = bool(recipe.get("mode")) and any(
+                    part["type"] == DESTROYED and tracked_of(part) and tracks(part, spawn, members) for other in below[1:]
+                    for part in objectives_of(other))
                 if not any(part["type"] == DESTROYED and tracks(part, spawn, members) for part in objectives_of(stage)) \
+                        and not below_tracks \
                         and not any(part["type"] == DESTROYED and tracked_of(part) and tracks(part, spawn, members)
                                     for other in later for part in objectives_of(other)):
                     if recipe.get("mode"):

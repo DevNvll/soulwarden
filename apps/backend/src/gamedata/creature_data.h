@@ -461,6 +461,9 @@ inline constexpr const char* kBasicCastAction = "Cast_One_Projectile";
  * kBasicCastAction: the one projectile action of the slice that the creature tool reads (a ranged attack of the file) is its basic cast,
  * with the band of a caster. The boss trees of the story instances are not in the client (research story-instances.md section 3); the
  * other actions of the list (Spawn_Crystal, Exhausted, Summon_Minion, Spell_Ice_Storm, Spell_Ice_Spikes of Medea) wait for a later stage.
+ * Stage QG9b: the bosses (and one minion) of the other story instances whose slice has no melee attack and no basic cast: the ranged
+ * action with the fewest releases (the first of the list for the same number) [data: the ranged attacks of the slice; agent: the choice].
+ * The other actions of their trees are known limits (docs/systems/creatures.md).
  */
 struct DeclaredCast {
     const char* slice;
@@ -468,6 +471,13 @@ struct DeclaredCast {
 };
 inline constexpr DeclaredCast kDeclaredCasts[] = {
     {"slices/encounters/msq/ai_ww_medea_caster_console.dynamicslice", "Spell_Frostbolt"},
+    {"slices/characters/namedcharacters/ai_fl_medusa.dynamicslice", "Attack_Poison_Spit_Single"},
+    {"slices/characters/sand_elemental_questboss.dynamicslice", "Attack_Projectile_Shot"},
+    {"slices/characters/sand_elemental_shaman_questbossminion.dynamicslice", "Attack_Shard_Spike"},
+    {"slices/characters/trials/seraphim/trial_quest_seraphim_boss_blind_seraph.dynamicslice", "Attack_WingSweep_L"},
+    {"slices/characters/trials/seraphim/trial_quest_seraphim_boss_heartless_seraph.dynamicslice", "Attack_WingSweep_L"},
+    {"slices/characters/trials/seraphim/trial_quest_seraphim_boss_mute_seraph.dynamicslice", "Attack_WingSweep_L"},
+    {"slices/characters/yonas_msq2_combat.dynamicslice", "Combat_Ritual"},
 };
 
 /** One slice of a creature. */

@@ -737,8 +737,9 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
         if key not in tables.rows:
             raise Failure(f"{what} names the gatherable row {identifier!r}, and no GatherableData table has it")
         table, cells = tables.rows[key]
+        entry = row_entry(cells.get("GatherableID", identifier).strip(), table, cells)  # Stage QG9b: no index of a row that stopped.
         row_index[key] = len(rows)
-        rows.append(row_entry(cells.get("GatherableID", identifier).strip(), table, cells))
+        rows.append(entry)
         return row_index[key]
 
     def variant_row(template: int, variant: str, what: str, proximity: bool = False) -> int:
@@ -871,6 +872,17 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
         if table or not identifier or identifier.lower() not in tables.rows:
             return None
         cells = tables.rows[identifier.lower()][1]
+        if cells.get("GatheringType", "") == "AzothStaff" and cells.get("FinalLootTable", "") in ("", "Empty"):
+            # Stage QG9b: a direct row of a gather of the Azoth Staff with no loot (the final seal of Caer Dun, 99B_MSQ_10_FinalSeal:
+            # ToolRequired, 10 s, its game event 99B_MSQ_10_FinalSeal_interact): an ordinary row with its rules (the Azoth Staff, the rank,
+            # the event to the gatherer), as the Darkness rows of stage QG5c5 [data: the row].
+            counts["encounterAzoth"] = counts.get("encounterAzoth", 0) + 1
+            row = row_of(identifier, f"{what}: the direct gatherable row")
+            if rows[row]["event"] and rows[row]["event"].lower() not in tables.events:
+                # Its event is a game event of the quests (Werewolf_Lord_Safe_Zone_interact: no event table has it): a quest row, as the
+                # quest objects of stage 1.8c (no trade skill experience; the quest drops of the tasks) [agent: the rule of the quest rows].
+                rows[row]["quest"] = True
+            return [template, row, extra["tag"], extra["onlyOnQuest"]]
         if cells.get("GatheringType", "None") not in ("", "None") or cells.get("FinalLootTable", "") not in ("", "Empty") \
                 or cells.get("GameEventID", ""):
             return None
@@ -960,10 +972,16 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
         reader, recipes, _ = encounter_recipes.read_recipes(sources, catalog)
         for member in reader.start_objects(recipes):
             template = slices.template_of(member["slice"], False)
-            entry = quest_capital(template, member["variant"], f"the start object {member['slice']}", bool(member.get("proximity"))) \
-                if template is not None else None
-            if entry is None and template is not None and not member.get("proximity"):
-                entry = encounter_capital(template, member["variant"], f"the start object {member['slice']}")
+            try:
+                entry = quest_capital(template, member["variant"], f"the start object {member['slice']}", bool(member.get("proximity"))) \
+                    if template is not None else None
+                if entry is None and template is not None and not member.get("proximity"):
+                    entry = encounter_capital(template, member["variant"], f"the start object {member['slice']}")
+            except Failure as error:
+                # Stage QG9b: a start object whose row the gathering cannot take (the crystal of Medea: BaseGatherTime 0; the runner does not
+                # make it, "skip" of encounters.py) is left out; its recipe is refused when a stage needs it.
+                print(f"gathering: the start object {member['slice']} is left out: {error}", file=sys.stderr)
+                entry = None
             if entry is None:
                 counts["encounterObjectsLeftOut"] = counts.get("encounterObjectsLeftOut", 0) + 1
                 continue

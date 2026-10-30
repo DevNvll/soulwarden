@@ -450,6 +450,11 @@ struct WorldOptions {
      */
     std::uint64_t randomSeed{0x5357'4F55'4C57'4152ULL};
     /**
+     * Stage QG9b: the setting of the mode QuestMedusa (encounter_rules::kQuestMedusaRuns has the one value; docs/systems/instances.md). A
+     * test sets it with World::set_quest_medusa; the backend has no start option for it.
+     */
+    bool questMedusaRuns{encounter_rules::kQuestMedusaRuns};
+    /**
      * A folder of behavior tree files (stage BT1, world/behavior_tree.h): its `*.jsonc` files replace the trees of the program with the
      * same name, and the development route of a reload reads it again. A development run only (SOULWARDEN_BEHAVIOR_DIR with
      * --dev-commands). Empty: the trees of the program.
@@ -491,6 +496,13 @@ public:
     void set_shelter(std::chrono::milliseconds time, std::chrono::milliseconds longest) {
         m_options.shelterTime = time;
         m_options.shelterLongest = longest;
+    }
+    /**
+     * Turns the mode QuestMedusa on or off (WorldOptions::questMedusaRuns): a test, before the first use of the encounter data (the runner
+     * resolves its recipes at its load). World thread only.
+     */
+    void set_quest_medusa(bool on) {
+        m_options.questMedusaRuns = on;
     }
     /** Sets the start value of the random numbers (WorldOptions::randomSeed): a test. World thread only. */
     void set_random_seed(std::uint64_t seed) {

@@ -374,6 +374,8 @@ struct QuestSupport::Index {
      */
     std::unordered_set<std::string> modes;
     std::unordered_map<std::string, std::unordered_set<std::string>> modeKillCategories;
+    /** Stage QG9b: the reason of the setting of each mode of an entrance that the setting turns off (encounter_rules::mode_off). */
+    std::unordered_map<std::string, std::string> modesOff;
     /** Stage QG2a: the categories of the quest drops of a kill (the rule of the kill with no id of the base row). */
     std::unordered_set<std::string> dropCategories;
     /** Stage QG6b: the drop categories of the placed creatures whose body can be skinned (a gather drop of a body matches them). */
@@ -583,6 +585,11 @@ void QuestSupport::build() {
         for (const gamedata::InteractionObject& object : interactions->objects()) {
             if (object.entrance && m_world.encounters().runs_mode(object.entrance->mode)) {
                 index.modes.insert(lower_text(object.entrance->mode));
+            }
+            if (object.entrance) {
+                if (const std::string_view off = encounter_rules::mode_off(object.entrance->mode, options.questMedusaRuns); !off.empty()) {
+                    index.modesOff[lower_text(object.entrance->mode)] = std::string(off);
+                }
             }
         }
     }
@@ -1861,6 +1868,8 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
             // the content of the encounter system); GameModeMustBeMutated needs a mutation context, which the backend has not.
             if (task.modeMutated) {
                 block("TaskGameMode with GameModeMustBeMutated: the backend has no mutation context of a game mode");
+            } else if (const auto off = index.modesOff.find(lower_text(task.gameMode)); off != index.modesOff.end()) {
+                block("TaskGameMode of the mode " + task.gameMode + ", which the setting of the mode turns off: " + off->second);
             } else if (index.modes.count(lower_text(task.gameMode)) == 0) {
                 block("TaskGameMode of the mode " + task.gameMode + ", which the backend does not run (no entrance or no content of the mode; "
                       "docs/systems/instances.md)");
@@ -1884,6 +1893,11 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at, const BoardMission* m
         // gives it no fact.
         if (fact.supported && !task.gameMode.empty() && task.type != task_type::kGameMode && index.modes.count(lower_text(task.gameMode)) == 0) {
             block("the task counts only in the game mode " + task.gameMode + ", which the backend does not run (docs/systems/instances.md)");
+        }
+        // Stage QG9b: a task of a mode that the setting of the mode turns off has the reason of the setting (before each other reason).
+        if (const auto off = index.modesOff.find(lower_text(task.gameMode));
+            !task.gameMode.empty() && task.type != task_type::kGameMode && off != index.modesOff.end()) {
+            block("the task counts only in the game mode " + task.gameMode + ", which the setting of the mode turns off: " + off->second);
         }
         // Stage QG2a: the location rule of a task (EnforceLocationRequirement with a POITag: the counters, the drops, the possession and the
         // equip tasks progress only in a point of interest of a tag; Quests::matched_tasks, plan_drops, Plan::location_ok). With no shape of

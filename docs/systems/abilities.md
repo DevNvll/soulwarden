@@ -433,6 +433,9 @@ The three bow abilities of the build of the user: Penetrating Shot (`Ability_Bow
 - Stage QG9a (finding DG1R-R2 of the review of stage DG1, [Instances](instances.md)): a cast keeps the space of its press
   (`Cast::space`). A timed step of the cast whose caster is in a different space now (a shot of a volley, a throw and its return, a
   summon, a heal, an area, a counter) does nothing, also after the end of the instance (case DG1R2) [review].
+- Stage QG9b (code review of stage QG9a, finding QG9AR-R5): a move of a character to a different space ends the delayed work of its casts
+  (`Abilities::space_left`: the space of each cast of the caster is no space, its current cast ends), its dashes, and its motion marks.
+  A step that comes after a return to the first space does nothing too (cases QG9AR5, QG9AR5B) [review].
 
 ## Commands
 

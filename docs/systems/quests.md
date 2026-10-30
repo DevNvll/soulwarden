@@ -80,7 +80,8 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
   when the character has its bit; a non-persisted achievement (NPAData) is its own conditional; an NPA with a status requirement is false
   (no status rule in 1.8a) [agent: the status of a quest is a later part]; an id that the data does not know is false [research U7]. An
   expression that the reader cannot read to its end (a missing operand, a missing closing parenthesis, text after the end) is false, also
-  under a negation and in an NPA [code review of stage 2.5c, finding PR5C-R7; case QRP7].
+  under a negation and in an NPA [code review of stage 2.5c, finding PR5C-R7; case QRP7]. A line end (CR, LF) is a blank like a space
+  [stage QG9b; data: the conditional of the entrance of QuestApophis ends with CR LF; live: the client opens its window; case SY4].
 - One change of the quests of a character is one plan: a copy of its quests and of its bits, the rules to a fixed point (an action can
   complete a TaskAchievement of the same character), then one transaction (the quests, the tasks, the pins, the achievement rows, the
   undo rows, the grant rows), and only then the entity, the bits (`Ownership::quest_achievements`), the marks, and the timers. A plan that
@@ -1188,6 +1189,20 @@ The story instance QuestMedea of quest 06A_MSQ_21 is in [Instances](instances.md
 - After the leave of the instance the last task of 06A_MSQ_21 is a topic of Leovix (TaskConversationTopic), and the hand-in is at the
   person Medea (`NpcDestinationId` 06_Medea03, the person of the swap after the trial) [data; live: 4,000 experience, 7,050 coin units,
   QuestReward_WW_Shield, 500 standing]. The topic of Leovix needs the achievement of 06A_MSQ_18 (the quest before) [data; live].
+- Stage QG9b (code review of stage QG9a, finding QG9AR-R3): a task of a predicate with GameModeID (TaskHaveLevel, a place, an item count)
+  does not grow outside its mode: `predicate` keeps the value of before for it [client 0x3AD5CC0: the base predicate gates each task with
+  a mode]. Case QG9AR3. Finding QG9AR-R2: the world entry looks again at the mode tasks of each quest of the character (a restored
+  StayActive TaskGameMode is false outside its mode). Case QG9AR2.
+- Stage QG9b: a TaskTriggerArea with GameModeID counts in an instance of the main world level of its mode (the trigger volumes of the
+  main level are the same volumes there) [data; live: `09A_M11_TalkToMammothAmbush`, `09A_M12_EnterArena`]. Case SY3 has the trigger of a
+  parent stage in the space of an instance.
+- Stage QG9b: the recipes of a mode with more than one recipe start only for a character with an active task with the GameModeID of the
+  mode that names the recipe (`Quests::mode_task_active`: the success event of the recipe or a kill category of its tracked creatures)
+  ([Encounters](encounters.md)) [agent]. Case SY3.
+- Stage QG9b: the support manifest has 652 supported rows (647 before the stage): 09A_M11_FightMahantaram, 1624_0801_agodawakens,
+  99A_MSQ_15_Ritual, Quest_18018, and Quest_28003 are new. 09A_M12_FightMedusa is supported only with the setting of QuestMedusa on (653
+  rows); off, each task with the GameModeID QuestMedusa has the reason of the setting ([Instances](instances.md); case SY5). The second
+  computation of the evidence folder of stage QG9b gives the same counts before and after (0 row and 0 fact differences).
 
 ### The corrections of the code review of stage QG8 (in stage DG1)
 

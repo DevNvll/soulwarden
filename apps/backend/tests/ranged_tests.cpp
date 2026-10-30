@@ -106,6 +106,21 @@ void ranged_data(const Options& options) {
           "the player slice has its radius and its segment");
     check(archer.attacks.empty() && archer.fights() && data.fighting_slices() == 1,
           "a slice with a basic shot and no melee attack fights");
+    // Stage QG9b: a boss slice of kDeclaredCasts (Medusa: no FireBow, no Cast_One_Projectile) gets its declared action as its basic
+    // cast; the same actions in a slice of a different path give no shot.
+    {
+        json boss = document;
+        boss["slices"][0]["path"] = "slices/characters/namedcharacters/ai_fl_medusa.dynamicslice";
+        boss["slices"][0]["actions"][2][0] = "Attack_Poison_Spit_Single";
+        boss["slices"][0]["actions"][3][0] = "Attack_Poison_Spit";
+        gamedata::CreatureData declared;
+        json other = boss;
+        other["slices"][0]["path"] = "slices/characters/namedcharacters/test_boss.dynamicslice";
+        gamedata::CreatureData undeclared;
+        check(load(boss, declared) && declared.slices()[0].basicShot == 1U && declared.slices()[0].caster && declared.slices()[0].fights()
+                  && load(other, undeclared) && !undeclared.slices()[0].basicShot && !undeclared.slices()[0].fights(),
+              "a declared boss slice (Medusa) casts its declared action as a caster; the same actions of an other slice give no shot");
+    }
     const auto refused = [&](const std::function<void(json&)>& change, const char* what) {
         json bad = document;
         change(bad);

@@ -720,6 +720,42 @@ def read_variation_tables(sources: Sources) -> dict[str, dict[str, dict]]:
     return tables
 
 
+def read_npas(sources: Sources) -> set[str]:
+    """Stage QG9b: @return The ids (lower case) of each non-persisted achievement of NPAData (with or without an ObjectiveFlow): a required
+    achievement of an entrance that is such an id (`*17_MSQ_Quest_18018_Asena2TrialUnlock` of QuestWolf) is a conditional of the backend."""
+    ids: set[str] = set()
+    for path in sources.paths(TABLES_FOLDER, ".datasheet"):
+        if "achievement" not in path.rsplit("/", 1)[-1]:
+            continue
+        data = sources.read(path)
+        if data is None or sheet_type(data) != NPA_TABLE_TYPE:
+            continue
+        try:
+            sheet = Sheet(data)
+            if "NPAId" not in sheet.columns:
+                raise Failure(f"{path}: the NPA table has no column NPAId")
+            ids.update(str(sheet.cell(row, "NPAId")).strip().lower() for row in range(sheet.row_count) if str(sheet.cell(row, "NPAId")).strip())
+        except (struct.error, ValueError, IndexError, TypeError) as error:
+            raise Failure(f"{path}: the table did not parse: {error}") from error
+    return ids
+
+
+def entrance_npas(bounds: list[dict], npas: set[str]) -> int:
+    """Stage QG9b: the requirement of a bound of an entrance that is one non-persisted achievement (a row of NPAData) becomes its conditional
+    ("requires": {"conditional": ID}): the backend evaluates the NPA (its conditional and its ObjectiveFlow, Quests::conditional of stage
+    QG5b; client 0x318A4F0) instead of refusing the use (the trials of Nighthaven: *17_MSQ_Quest_18018_Asena2TrialUnlock, its conditional
+    `debug_30 || *17_MSQ_Quest_18018_Asena2TrialUnlock_ObjFlow`). @return The number of the bounds that changed."""
+    changed = 0
+    for bound in bounds:
+        requires = bound["requires"]
+        names = requires.get("unresolved", [])
+        if len(names) == 1 and names[0].lower() in npas and "conditional" not in requires:
+            requires["conditional"] = names[0]
+            del requires["unresolved"]
+            changed += 1
+    return changed
+
+
 def read_flow_npas(sources: Sources) -> set[str]:
     """@return The ids (lower case) of the non-persisted achievements (NPAData) with an ObjectiveFlow (code review of stage QG4, finding
     QG4R-R2): the rule of the quest state of the NPA (`u:Quest_18018,l:Quest_18018/Quest_18018_Task_5:c`; client: loader 0x43B57F3, parser
@@ -1409,6 +1445,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     station_keys = read_station_keys(sources)
     variation_tables = read_variation_tables(sources)
     flow_npas = read_flow_npas(sources)
+    all_npas = read_npas(sources)
     quest_rows = read_quest_form_rows(sources)
     counts.update({"variationBounds": 0, "variationTags": 0, "variationRequired": 0, "variationOnlyOnQuest": 0, "variationNoRow": 0,
                    "variationBlankTagKept": 0, "variationOtherColumn": 0, "variationNoBound": 0})
@@ -1981,6 +2018,9 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                         local = template.matrices[exit_entity]
                         entry["entrance"]["exit"] = [round(value, 3) for value in apply(matrix, (local[3], local[7], local[11]))]
                     counts["entrances"] = counts.get("entrances", 0) + 1
+                    moved = entrance_npas(bounds, all_npas)
+                    counts["entranceNpas"] = counts.get("entranceNpas", 0) + moved
+                    counts["unresolvedBounds"] -= moved
                 if template.is_person():
                     # A direct person (stage 2.5c): its NPC component names it.
                     entry["person"] = person_binding(slice_path, template, None)

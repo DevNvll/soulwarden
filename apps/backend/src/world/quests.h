@@ -620,6 +620,12 @@ public:
      *         the task: client 0x8261FC0). An empty tag: false.
      */
     [[nodiscard]] bool quest_object_open(const Entity& entity, const std::string& interactTag) const;
+    /**
+     * Stage QG9b: @return True when the character has an active task with the GameModeID `mode` whose event key is one of `keys` ("e:" a
+     *         game event, "k:" a kill category, lower case): the gate of a recipe of a mode with more than one recipe (the four seraphs, the
+     *         three encounters of Yonas; docs/systems/encounters.md).
+     */
+    [[nodiscard]] bool mode_task_active(const Entity& entity, std::string_view mode, const std::vector<std::string>& keys);
     /** The items (bag or paperdoll) of a character changed (World::touch): its possession and equip tasks look again at the next tick. */
     void items_touched(const Entity& entity);
     /** The accepted position of a character changed (World::place): its tasks of a place look again at the next tick. */

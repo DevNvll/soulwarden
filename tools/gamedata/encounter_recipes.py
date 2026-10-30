@@ -133,6 +133,7 @@ F = {name: field_id(name) for name in (
     "m_gatheringEndEvent", "m_shapeEntityID",
     "m_patrolPathEntity", "m_waypointIds", "m_pathTravesalPolicy", "m_taskName", "m_minDuration", "m_maxDuration", "m_matchAlignment",
     "m_cutsceneName",
+    "m_bossPhaseData", "m_waveNumber", "m_healthPercent", "m_blackboardPhaseKey", "m_trackedPhase", "Radius", "Height", "Dimensions",
     "Tags", "Tag", "Slices", "Slice", "Schedule")}
 # Stage QG5c5: the patrol path of a creature spawner of a group member (the boat landings, the portal waves: creature_data.py PATROL_TYPE,
 # WAYPOINT_TYPE) and the number of the policies of the client (creature_data.py POLICIES).
@@ -146,6 +147,15 @@ TASK_TYPE = "ObjectiveTasks"
 MODES_TABLE = TABLES_FOLDER + "javelindata_gamemodes.datasheet"
 MAPS_TABLE = TABLES_FOLDER + "javelindata_gamemodemaps.datasheet"
 MAIN_TERRAIN = "coatlicue/newworld_vitaeeterna"
+# Stage QG9b (docs/systems/instances.md): the shape components of the engine (the shape of a detection volume with no query shape; the class
+# ids of triggers.py ENGINE_SHAPES and nav_slices.py): a box (Dimensions: the full size), a sphere (Radius), a cylinder (Radius, Height),
+# a capsule (Radius, Height).
+ENGINE_SHAPE_CLASSES = {
+    uuid.UUID("5edf4b9e-0d3d-40b8-8c91-5142bcfc30a6"): "box",
+    uuid.UUID("e24cbff0-2531-4f8d-a8ab-47af4d54bcd2"): "sphere",
+    uuid.UUID("b0c6aa97-e754-4e33-8d32-33e267db622f"): "cylinder",
+    uuid.UUID("967ec13d-364d-4696-ab5c-c00cc05a2305"): "capsule",
+}
 # Stage QG9a: the text of the slice path of the daily alternative of an encounter of a story instance (ai_ww_medea_encounter_console_daily).
 DAILY_TEXT = "_daily"
 GATHERABLE_TYPE = "GatherableData"
@@ -255,6 +265,75 @@ def detector_shape(component) -> dict:
     return shape
 
 
+def axis_scales(matrix: tuple[float, ...]) -> list[float]:
+    """@return The scale of each axis of a 3 x 4 matrix (the length of each column of its rotation)."""
+    return [math.sqrt(matrix[axis] ** 2 + matrix[4 + axis] ** 2 + matrix[8 + axis] ** 2) for axis in range(3)]
+
+
+def mode_area(entities: dict[int, dict], info: dict, world: tuple[float, ...]) -> dict | None:
+    """Stage QG9b: @return The detection volume of the players of an entity of a mode root slice (the areas AreaBoss, AreaBossStart,
+    AreaBossTeamwipe of the mode script) in the world, or no value (no detection volume, or a filter that is not of the players):
+    {"name", "position": [X, Y, Z] (the place of its shape entity), "shape", the sizes, "center", "filter"}; "shape" is "none" with
+    "cause" for a shape that the runner does not test. A volume with no query shape has the shape component of the engine of its shape
+    entity (m_shapeEntityID, else its own entity: the rule of triggers.py; the areas of the Mammoth and the Apophis roots), with the scale
+    of that entity; the sizes of a query shape have the scale in them (the rule of triggers.py)."""
+    component = next((part for part in info["components"] if part.type_id == DETECTOR_CLASS), None)
+    if component is None:
+        return None
+    flt = text(field(component, "m_strFilter"))
+    if "player" not in flt.lower():
+        return None
+    shape = detector_shape(component)
+    holder = entities.get(shape.pop("_shapeEntity", None) or -1, info)
+    matrix = multiply(world, holder["matrix"])
+    area = {"name": info["name"], "position": place_of(matrix)["position"], "filter": flt, **shape}
+    if shape["shape"] != "none":
+        return area
+    engine = next((part for part in holder["components"] if part.type_id in ENGINE_SHAPE_CLASSES), None)
+    if engine is None:
+        area["cause"] = "no query shape and no shape component"
+        return area
+    kind = ENGINE_SHAPE_CLASSES[engine.type_id]
+    scale = axis_scales(matrix)
+    if kind == "sphere":
+        area.update(shape="sphere", radius=round(real(field(engine, "Radius")) * max(scale), 3))
+    elif kind == "cylinder":
+        area.update(shape="cylinder", radius=round(real(field(engine, "Radius")) * max(scale[0], scale[1]), 3),
+                    height=round(real(field(engine, "Height")) * scale[2], 3))
+    elif kind == "box" and all(abs(matrix[row * 4 + column]) < 1e-3 * max(scale) for row in range(3) for column in range(3) if row != column):
+        # An axis box only: a box with no turn (a box with a turn would be an oriented box, which the runner does not test).
+        size = vector(field(engine, "Dimensions")) or [0.0, 0.0, 0.0]
+        area.update(shape="aabb", extents=[round(size[axis] * scale[axis] * 0.5, 4) for axis in range(3)])
+    else:
+        area["cause"] = f"a {kind} shape component with a turn or a capsule (no shape that the runner tests)"
+    return area
+
+
+def boss_phases(entities: dict[int, dict]) -> list[dict]:
+    """Stage QG9b: @return The phases of the BossPhaseComponent of a creature slice (m_bossPhaseData, in the order of the list; the boss of a
+    story instance: docs/systems/encounters.md): {"kind": "wave", "wave": m_waveNumber} (WaveEndedBossPhaseConfig) or {"kind": "health",
+    "health": m_healthPercent} (HealthThresholdBossPhaseConfig), each with "key" (m_blackboardPhaseKey: Intro_Phase, Boss_Phase); an other
+    config is {"kind": "other"}. Empty: no such component."""
+    for info in entities.values():
+        for component in info["components"]:
+            holder = field(component, "m_bossPhaseData")
+            if holder is None:
+                continue
+            phases = []
+            for entry in holder.children:
+                wave = field(entry, "m_waveNumber")
+                health = field(entry, "m_healthPercent")
+                key = text(field(entry, "m_blackboardPhaseKey"))
+                if wave is not None:
+                    phases.append({"kind": "wave", "wave": number(wave), "key": key})
+                elif health is not None:
+                    phases.append({"kind": "health", "health": round(real(health), 4), "key": key})
+                else:
+                    phases.append({"kind": "other", "key": key})
+            return phases
+    return []
+
+
 def event_target(element) -> tuple[int | None, int]:
     """@return The target entity (no value: none) and the type of an event of m_eventData or of m_events."""
     target = refs(field(element, "m_entityRef")) if element is not None else []
@@ -348,11 +427,14 @@ def objective_of(node) -> dict:
                  "countDown": number(field(node, "m_countDownProgress")) != 0,
                  "background": number(field(node, "m_backgroundActivation")),
                  "title": text(field(node, "m_title")), "description": text(field(node, "m_description"))}
-    if kind in ("SliceDestroyedObjective", "SliceSpawnedObjective"):
+    if kind in ("SliceDestroyedObjective", "SliceSpawnedObjective", "BossPhaseObjective"):
         objective["requiredCount"] = number(field(node, "m_requiredCount"))
         objective["trackedSlice"] = None
         objective["trackedAlias"] = None
         objective["_tracked"] = (field(node, "m_trackedSlice"), field(node, "m_trackedAlias"))
+    if kind == "BossPhaseObjective":
+        # Stage QG9b: the phase of the boss that the stage waits for (m_trackedPhase; its tracked slice: the boss, or none).
+        objective["trackedPhase"] = number(field(node, "m_trackedPhase"))
     if kind == "EncounterEventObjective":
         objective["eventId"] = text(field(node, "m_eventId"))
     if kind == "CutsceneFinishedObjective":
@@ -537,6 +619,8 @@ class Reader:
         # Stage QG9a: the objects of the mode root slices (a spawner of the root whose slice is not an encounter: the exit portal, the fog
         # wall, the checkpoint), each with its mode, its map, and its world place.
         self.mode_objects: list[dict] = []
+        # Stage QG9b: the detection volumes of the players of the mode root slices (lower-case mode to its areas in the world).
+        self.mode_areas: dict[str, list[dict]] = {}
 
     def targets(self) -> dict[str, str]:
         """@return The slices of the stationary targets with a live check (creature_data.read_target_list; stage QG5c5)."""
@@ -716,6 +800,12 @@ class Reader:
                 result = {"slice": path, "kind": "creature", "vitals": vitals, "category": category, "level": level,
                           "bodyField": "alias" if body[0] == "m_aliasAsset" else "slice", "body": body_path,
                           "bodySlices": sorted(path for path in bodies if path), "_asset": body[1]}
+                if body[0] == "m_sliceAsset":
+                    # Stage QG9b: the boss phases of the body slice (its BossPhaseComponent; the boss of a story instance).
+                    body_roots = self.stream(body_path)
+                    phases = boss_phases(read_entities(body_roots)) if body_roots is not None else []
+                    if phases:
+                        result["phases"] = phases
                 if providers > 1:
                     # Stage QG5c4: a member slice with more than one creature spawner (the boat landings of the boat reinforcements:
                     # an officer and a navigator, each on a path of three waypoints). The fields above are of the first one.
@@ -729,6 +819,9 @@ class Reader:
                 # or the skinning of its body is a part of the creature).
                 result = {"slice": path, "kind": "creature", "vitals": own_vitals, "category": "", "level": 0, "bodyField": "slice",
                           "body": path, "bodySlices": [path], "direct": True, "_asset": self.own_asset(path)}
+                phases = boss_phases(entities)  # Stage QG9b: the boss phases of the creature slice (its BossPhaseComponent).
+                if phases:
+                    result["phases"] = phases
             elif not vitals and not character and own_vitals and place and not controller and path in self.targets() \
                     and self.own_asset(path) is not None:
                 # Stage QG5c5: a direct stationary member: a slice of the list targets of creature_slices.json (the project rule of
@@ -1002,7 +1095,15 @@ class Reader:
                 self.counts["parentsRead"] += 1
                 self.counts["modeRoots"] += 1 if mode_root is not None else 0
                 world = placement_matrix(placement.get("rotation") or {}, placement.get("worldPosition") or {"x": 0, "y": 0, "z": 0})
-                for spawner_entity, info in read_entities(roots).items():
+                root_entities = read_entities(roots)
+                if mode_root is not None:
+                    # Stage QG9b: the areas of the mode script (AreaBoss, AreaBossStart, AreaBossTeamwipe: the detection volumes of the
+                    # players of the mode root), the detector of an instance recipe whose encounter slice has none.
+                    for info in root_entities.values():
+                        area = mode_area(root_entities, info, world)
+                        if area is not None:
+                            self.mode_areas.setdefault(mode_root["mode"].lower(), []).append(area)
+                for spawner_entity, info in root_entities.items():
                     for component in info["components"]:
                         # Stage QG5c4: the SliceComponent of the root entity of the slice repeats the entities of the slice in its list
                         # "Entities"; a look into it found the fields of a spawner of an other entity (the twin spawners of stage QG5c3:
@@ -1048,6 +1149,26 @@ class Reader:
                                 if spawn["member"]:
                                     self.member(spawn["member"])
                         recipes[key] = recipe
+        # Stage QG9b: an instance recipe whose encounter slice has no detector of the participants (no ParticipantTracker and no detection
+        # volume: Caer Dun, the four seraphs, the mammoth, Apophis, Varlaam) has the areas of its mode root as its detector (a rule of this
+        # project: the mode script, which reads them, is not in the client; a character in one of them is a participant, the rule of two
+        # volumes of stage QG5c3). "fromMode" names the areas; the offsets are from the root of the encounter, in world axes.
+        for recipe in recipes.values():
+            if not recipe.get("mode") or (recipe.get("detector") or {}).get("shapes"):
+                continue
+            areas = [area for area in self.mode_areas.get(recipe["mode"].lower(), []) if area["shape"] != "none"]
+            if not areas:
+                continue
+            shapes = []
+            for area in areas:
+                shape = {key: value for key, value in area.items() if key not in ("name", "position", "filter", "cause")}
+                shape["center"] = [round(area["position"][axis] - recipe["position"][axis] + area["center"][axis], 4) for axis in range(3)]
+                shape["area"] = area["name"]
+                shapes.append(shape)
+            radii = [shape.get("radius", 0.0) for shape in shapes if shape["shape"] in ("sphere", "cylinder")]
+            recipe["detector"] = {"radius": max(radii, default=0.0), "filter": areas[0]["filter"],
+                                  "sphere": all(shape["shape"] == "sphere" for shape in shapes), "shapes": shapes,
+                                  "fromMode": sorted({area["name"] for area in areas})}
         # The game event of each start object: its variation row (the table and the variant of its slice) and its gatherable row (the row
         # of the variant, else m_gatherableEntryId of the slice).
         variations, gatherables = self.object_rows()
