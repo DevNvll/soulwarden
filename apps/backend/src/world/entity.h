@@ -1151,6 +1151,18 @@ struct Creature {
      */
     std::optional<WorldClock::time_point> hitStunUntil;
     /**
+     * Stage QG9c: a character hit the creature (Creatures::hurt). Its client predicted a reaction of the creature (a pending reaction record
+     * of the ReactionTrackingComponent of the client: old count below the new count); the death rule of Creatures::set_health.
+     */
+    bool hitByCharacter{false};
+    /**
+     * Stage QG9c: the renewals of the client entity of the creature. It goes up at the death of a creature whose slice has no action that
+     * acknowledges a pending reaction (gamedata::CreatureSlice::clearsReaction) after a hit of a character: each session that observes it
+     * stops its interest and sends a new first record later (RepSession::update_interest), and that record has the death action from its
+     * start (states/movement_state.cpp, creature_scope).
+     */
+    std::uint32_t renewal{0};
+    /**
      * The chained reactions of the creature (Chained_Reaction_Count of the action Reaction, a value of the damage context of the creature:
      * client code 0x2B56630 calls +0x120 of that object; stage U3, a decision of the orchestrator with the reading of the data): each full
      * reaction since the last reset counts, also the one that starts. The resets (game data, ResetReactionCount of

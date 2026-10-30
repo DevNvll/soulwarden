@@ -205,7 +205,7 @@ Stage QG9b runs the solo modes of the main world level after QuestMedea. The enc
 | --- | --- | --- | --- |
 | QuestWolf (the Sorrowthorn trial) | Yes | the werewolf lord (part 2, melee attacks of the data) and its minions | the channel phase and the summons of the tree |
 | QuestCaerDun | Yes | Brother Umberto (melee attacks of the data) | the drain locations; the heartgems of the mode script |
-| QuestMedusa | Off (the setting below; on: yes) | Medusa (declared cast `Attack_Poison_Spit_Single`), the boar, reindeer, and corvid minions | Gorgons Gaze, the maze, the tail attacks, the summons; the boar and the reindeer minions have no attack in the data |
+| QuestMedusa | Yes (stage QG9c: the setting below is on) | Medusa (declared cast `Attack_Poison_Spit_Single`), the boar, reindeer, and corvid minions | Gorgons Gaze, the maze, the tail attacks, the summons; the boar and the reindeer minions have no attack in the data |
 | QuestSeraphim (4 recipes) | Yes | the blind, mute, and heartless seraphs (declared cast `Attack_WingSweep_L`), the breathless seraph | the braziers; the breathless seraph has no attack in the data |
 | QuestHeartforge | Yes | the Heartforge Guardian (melee attacks, the cast Cast_One_Projectile, and the area attack of the data) | the flames of the pillars are gathers of the Azoth Staff |
 | QuestMammoth | Yes | Mahantaram (melee attacks of the data) and the root caster | the root spells of the caster |
@@ -216,11 +216,11 @@ Stage QG9b runs the solo modes of the main world level after QuestMedea. The enc
 | QuestGawain, QuestMorgaine | No (stage BT3) | | the corrupted idol and the altar of Gawain; the pedestals and the third phase of Morgaine |
 
 - The setting of the mode QuestMedusa (`encounter_rules::kQuestMedusaRuns` in `world/encounters.h`, the one place of its value; the
-  world option `questMedusaRuns` has it, and a test sets it with `World::set_quest_medusa`): off in this build, because the client stops
-  at the kill of Medusa by a hit (the trap below). Off: the runner refuses the recipe of QuestMedusa with the reason "the client stops at
-  the kill of Medusa by a hit (access violation at 0x4871DB6; open)", the entrance refuses the entry (3094 with 10, no move, no row), and
-  the support manifest counts the rows of the mode as not supported with that reason. On: the rules of this section. The code of the mode
-  stays [orchestrator; case SY5].
+  world option `questMedusaRuns` has it, and a test sets it with `World::set_quest_medusa`): on from stage QG9c (the cause of the stop of
+  the client at the kill of Medusa by a hit is corrected: [Creatures](creatures.md), "The death of a slice with no reaction action"). Off:
+  the runner refuses the recipe of QuestMedusa with the reason "the mode QuestMedusa is off by its setting
+  (encounter_rules::kQuestMedusaRuns)", the entrance refuses the entry (3094 with 10, no move, no row), and the support manifest counts the
+  rows of the mode as not supported with that reason. On: the rules of this section [orchestrator; case SY5].
 - The bosses with no melee attack and no basic cast of the data get a declared cast (`gamedata::kDeclaredCasts`;
   [Creatures](creatures.md)) [agent].
 - The entry: the checks of stage QG9a; the 3094 with 0 goes after the commit of the rows of the entry, before the move. A store that refuses
@@ -241,6 +241,30 @@ Stage QG9b runs the solo modes of the main world level after QuestMedea. The enc
 - Live (stage QG9b, QuestMedusa with the mode on, before its setting): QuestMedusa, QuestMammoth, and QuestApophis from the entrance to
   the kill of the boss and the exit portal, with the
   quest task after the success (`09A_M12_DefeatMedusa`, `09A_M11_DefeatMammoth`, `1624_0801_d_02_02_Kill_1_Apophis`) [live].
+
+### The live checks of stage QG9c
+
+The evidence: `~/Games/soulwarden/work/evidence/quests/qg9c/implement/` (the videos, the pictures, the backend logs). The quest chains were
+made short with `tools/world quest grant` and the development aid `tools/world quest advance` (stage QG9c).
+
+| Mode | Entry | Boss killed by hits | Success of the content | Quest task after the success | Exit |
+| --- | --- | --- | --- | --- | --- |
+| QuestMedusa | yes | yes, three times (in an attack, in a chain of hits, idle) | yes | `09A_M12_DefeatMedusa` done ("Unpetrify Taurus") | `instance return` |
+| QuestWolf | yes | yes (Lady Asena; with the floor rule of [Encounters](encounters.md)) | yes (`17_MSQ_AsenaFight2_GlobalSuccess`) | `Quest_18018_Task_18` done ("Talk to Cecilia") | the exit portal |
+| QuestCaerDun | yes | yes (Umberto) | yes (the final seal: `tools/world encounter use`) | stays at `99B_MSQ_10_..._Interact_PlaceHeartgem` (the heartgems of the mode script) | the exit portal |
+| QuestSeraphim | yes | yes (the mute seraph) | yes | each task of `Quest_28003` done | `instance return` (the open problem of the portal below) |
+| QuestHeartforge | yes | yes (the guardian, after the four flames with the Azoth Staff) | yes | `99A_MSQ_15_01D_KillNamed` and the cutscene tasks done | `instance return` (a white screen after the cutscene until the exit) |
+| QuestYonas | yes | no (the open problem below) | the hallway and the Isabella intro yes; the boss no | `ApproachFogwall` (the pressure plate, finding QG9BR-R4) done; `Kill_1_CorruptedYonas` active | `instance return` |
+
+- Open (stage QG9c): Yonas stands at his spawn place 43 m from the center of the detector sphere of his recipe (`enc_quest_yonasboss01`:
+  the offset (-15, -13, 0) in world axes, 30 m), and he does not come to the character (the boss tree is not in the client). A character
+  near him is out of the detector, and the encounter fails after its grace of 10 s. With the offset in the local axes of the root (yaw
+  -115), the center is 9.6 m from him. The axes of a detector offset are a rule of the tool and of the runner for 50 shapes [agent rule of
+  stage QG5c3]; a later stage decides it with live checks of the shapes with an offset.
+- Open (stage QG9c): in the seraph instance the client sends ExitDungeon to an exit portal of its level data (actor 67c3245614c36008...)
+  that `interaction-data.json` does not have, not to the server child portal of the instance: the request is refused.
+- Open (stage QG9c): the Caer Dun seal shows "No equipped Azoth Staff Tier 1" with `Omega_AzothStaff_T5` in the paperdoll slot 38; the
+  flames of Heartforge take that staff.
 
 ### The paths across two spaces (the code review of stage DG1)
 
@@ -301,14 +325,10 @@ world level whose content the backend runs (QuestMedea; stage QG9b: the modes of
 - Stage QG9a: the handlers of the entrances and of the exit portals are handlers of the kind (`Interactions::register_kind_handler`): the
   Enter options of the data have many names (EnterQuestCaerDun, EnterDungeonAmrine, ...). A new handler of one option of these kinds
   comes before the kind handler.
-- Stage QG9b: QuestMedusa is off (the setting `encounter_rules::kQuestMedusaRuns`). For a live test of the mode, build a test backend
-  with the setting true (not into dist), and give it to the run with `SOULWARDEN_BACKEND_EXE`.
-- Stage QG9b: the client of this build stops (an access violation at 0x4871DB6, a null result of the history insertion 0x4873330 of the
-  action list of an entity, `ActionListComponentClientFacet`) at the hit of a player that kills Medusa. The kill of Medusa by the
-  development command does not stop it, and the kills of Mahantaram and Apophis by hits do not stop it. The minions, the cast of Medusa, and
-  the quest bundles are not the cause (live runs 2 to 5 of stage QG9b). The quest progress is in the store before the stop: after a new
-  start the kill task is done. The trigger in the client is not known (static read CRASH of stage QG9b; open problem). For a live test of
-  the exit of QuestMedusa, kill Medusa with `tools/world creature kill`.
+- Stage QG9b, corrected in stage QG9c: the client stopped (an access violation at 0x4871DB6 or 0x4871FDA in the repair 0x4871B60 of the
+  action history of the remote entity Medusa) at the death of Medusa after a hit of the player, also by the kill command after a hit. The
+  cause and the rule are in [Creatures](creatures.md), "The death of a slice with no reaction action". The body of Medusa leaves with the
+  despawn effect at her death (the limit of that rule).
 - Stage QG9b: the arena of Medusa is full of statues with collision. The start of the map and the place of the intro are between them,
   and a walk to Medusa stops at a statue. Use `tools/world travel` to open ground near her (8621.5 1421.3 203.7).
 - Stage QG9b: the level objects of the main world are not in an instance (the rule above; stage DG2). The task `09A_M12_SaveTaurus` (the

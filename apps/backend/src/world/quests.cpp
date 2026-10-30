@@ -1986,6 +1986,66 @@ QuestResult Quests::grant(Entity& entity, const std::string& objectiveId, const 
     return result;
 }
 
+QuestResult Quests::advance(Entity& entity, const std::string& objectiveId, const std::string& taskId) {
+    QuestResult result;
+    if (data() == nullptr) {
+        result.error = QuestError::noData;
+        return result;
+    }
+    const QuestObjective* objective = m_data->objective(objectiveId);
+    const QuestInstance* seen = nullptr;
+    for (const QuestInstance& quest : entity.quests.active) {
+        if (objective != nullptr && quest.objectiveCrc == objective->crc) {
+            seen = &quest;
+        }
+    }
+    std::optional<std::uint8_t> target;
+    for (std::size_t index = 0; objective != nullptr && index < objective->nodes.size(); ++index) {
+        const std::uint32_t task = objective->nodes[index].task;
+        if (task != gamedata::kNoTask && lower_text(m_data->task(task).id) == lower_text(taskId)) {
+            target = static_cast<std::uint8_t>(index);
+        }
+    }
+    if (seen == nullptr || !target) {
+        result.error = QuestError::unknownObjective;
+        return result;
+    }
+    const std::uint64_t instance = seen->instance;
+    Plan plan(*this, entity, now_ns());
+    for (int round = 0; round < 64; ++round) {
+        QuestInstance* quest = plan.edit(instance);
+        if (quest == nullptr || quest->tasks[*target].state == quest_state::kActive) {
+            break;
+        }
+        std::vector<std::uint8_t> leaves;
+        for (std::size_t index = 0; index < quest->tasks.size() && index < objective->nodes.size(); ++index) {
+            if (index != *target && quest->tasks[index].state == quest_state::kActive && objective->nodes[index].children.empty()) {
+                leaves.push_back(static_cast<std::uint8_t>(index));
+            }
+        }
+        if (leaves.empty()) {
+            break;
+        }
+        for (const std::uint8_t leaf : leaves) {
+            if (QuestInstance* edited = plan.edit(instance); edited != nullptr && edited->tasks[leaf].state == quest_state::kActive) {
+                plan.complete(*edited, leaf);
+            }
+        }
+    }
+    const QuestInstance* after = plan.peek(instance);
+    if (after == nullptr || after->tasks[*target].state != quest_state::kActive) {
+        result.error = QuestError::notReady;
+        return result;
+    }
+    const auto found = m_subscriptions.find(entity.id);
+    plan.settle(found != m_subscriptions.end() ? found->second.get() : nullptr);
+    result.error = commit(entity, plan, {});
+    result.instance = instance;
+    log::write("quests: DEVELOPMENT AID: the objective %s of character %s (instance %016llx) is at its task %s: %s", objective->id.c_str(),
+               entity.characterId.c_str(), static_cast<unsigned long long>(instance), taskId.c_str(), quest_error_text(result.error));
+    return result;
+}
+
 void Quests::entered(Entity& entity) {
     if (data() == nullptr) {
         return; // No quest data: no quest, and no change of the states (rule A5a).

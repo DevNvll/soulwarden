@@ -231,6 +231,10 @@ public:
     [[nodiscard]] bool time_requested() const {
         return m_timeRequested;
     }
+    /** @return Stage QG9c: the number of creatures that this session made again on its client (Creature::renewal). */
+    [[nodiscard]] std::uint64_t creature_renewals() const {
+        return m_creatureRenewals;
+    }
     /** @return The number of creatures whose first record this session sent. */
     [[nodiscard]] std::uint64_t creature_records() const {
         return m_creatureRecords;
@@ -615,6 +619,15 @@ private:
     world::Revision m_interestSpell{0};
     /** The world revision of the last new projectile entity for which this session compared its interest distances (stage 3.4f-A). */
     world::Revision m_interestProjectile{0};
+    /** Stage QG9c: the last renewal of a creature that the session looked at, and the renewed creatures that wait for their new record. */
+    world::Revision m_interestRenewal{0};
+    struct RenewalWait {
+        carrier::Clock::time_point due;
+        /** The interest number of the last record: the new record has a different number. */
+        std::uint32_t interest{0};
+    };
+    std::map<world::EntityId, RenewalWait> m_renewalWaits;
+    std::uint64_t m_creatureRenewals{0};
     /** The number of spell entities whose first record this session sent, and the largest number in its interest table. */
     std::uint64_t m_spellRecords{0};
     /**

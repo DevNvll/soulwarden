@@ -12,8 +12,11 @@
 //   SY3  the gate of a mode with more than one recipe: a recipe starts only for a character with an active task of the mode that names it
 //        (a kill category or the success event); a child stage counts the area trigger of its parent in the space of the instance; the
 //        content succeeds with one of the recipes (MP-10: A and B in two instances of the mode, each with its own recipe)
+//   SY6  stage QG9c: a creature member of an instance recipe more than 2 m above the floor stands on the floor (the boss of A and the boss
+//        of B in two instances); 1 m above the floor it stands at its spawn location (control)
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <optional>
 #include <string>
@@ -352,19 +355,20 @@ json with_mode(json value, const std::string& mode) {
 }
 
 /**
- * SY5: the setting of the mode QuestMedusa (encounter_rules::kQuestMedusaRuns). Off (the build): the runner refuses its recipe with the
- * reason of the setting, the entrance refuses the entry of A and of B (10), and nothing changes. On (a test sets the world option): the
- * entry and the instance of stage QG9b.
+ * SY5: the setting of the mode QuestMedusa (encounter_rules::kQuestMedusaRuns). Stage QG9c: on in the build (the cause of the stop of the
+ * client is corrected, docs/systems/creatures.md). Off (a test sets the world option): the runner refuses its recipe with the reason of the
+ * setting, the entrance refuses the entry of A and of B (10), and nothing changes. On: the entry and the instance of stage QG9b.
  */
 void mode_setting(const Options&) {
     const std::string mode(world::encounter_rules::kQuestMedusaMode);
     const std::string reason(world::encounter_rules::kQuestMedusaOff);
     const json document = with_mode(story_document(), mode);
     const json quests = with_mode(story_quests(), mode);
-    check(!world::encounter_rules::kQuestMedusaRuns && !world::WorldOptions{}.questMedusaRuns,
-          "the setting of the build: QuestMedusa is off, and the world option has the value of the setting");
+    check(world::encounter_rules::kQuestMedusaRuns && world::WorldOptions{}.questMedusaRuns,
+          "the setting of the build: QuestMedusa is on, and the world option has the value of the setting");
     {
         StoryShop shop(":memory:", document, quests, mode.c_str());
+        shop.host.world.set_quest_medusa(false);
         shop.enter();
         const std::vector<world::EncounterPlacement>& placements = shop.encounters().loaded_placements();
         check(placements.size() == 1 && placements[0].refused == std::vector<std::string>{reason} && !shop.encounters().runs_mode(mode),
@@ -390,11 +394,10 @@ void mode_setting(const Options&) {
     }
     {
         StoryShop shop(":memory:", document, quests, mode.c_str());
-        shop.host.world.set_quest_medusa(true);
         shop.enter();
         check(shop.encounters().loaded_placements().size() == 1 && shop.encounters().loaded_placements()[0].refused.empty()
                   && shop.encounters().runs_mode(mode),
-              "on (a test): the runner takes the recipe of QuestMedusa");
+              "on (the build): the runner takes the recipe of QuestMedusa");
         const std::size_t from = shop.clientA.got.size();
         shop.enter_story(kCharacterA);
         const auto results = dungeon_results(shop.clientA, from);
@@ -409,6 +412,45 @@ void mode_setting(const Options&) {
     }
 }
 
+/**
+ * SY6 (stage QG9c, docs/systems/encounters.md, "The instance recipes (stage QG9b)"): the floor of a creature member of an instance recipe
+ * (encounter_rules::kAboveFloor). The terrain of the case is the floor. 8 m below the spawn location of the boss: the boss of A and the boss
+ * of B (two instances) stand on the floor. 1 m below: the boss stands at its spawn location (control).
+ */
+void member_floor(const Options&) {
+    for (const float below : {8.0F, 1.0F}) {
+        const float floor = kBossAt.z - below;
+        const bool lowered = below > world::encounter_rules::kAboveFloor;
+        StoryShop shop;
+        shop.host.terrain.source = [floor](float, float) { return std::optional<float>(floor); };
+        shop.host.world.set_creature_behavior(false);
+        shop.enter();
+        const std::vector<const char*> characters = lowered ? std::vector<const char*>{kCharacterA, kCharacterB}
+                                                            : std::vector<const char*>{kCharacterA};
+        std::vector<world::Entity*> bosses;
+        for (const char* character : characters) {
+            shop.enter_story(character);
+            shop.wait(1.0F);
+            const world::Entity* who = shop.entity(character);
+            world::Entity* boss = boss_of(shop, run_of(shop, kStoryKey, who->space));
+            check(who->space != world::kMainSpace && boss != nullptr && boss->space == who->space,
+                  std::string("setup: the boss of the instance of ") + character + " is in its space");
+            if (boss == nullptr) {
+                return;
+            }
+            bosses.push_back(boss);
+            const float expected = lowered ? floor : kBossAt.z;
+            note("SY6 " + std::string(character) + " floor=" + std::to_string(floor) + " boss z=" + std::to_string(boss->position.z));
+            check(std::fabs(boss->position.z - expected) < 0.01F && world::horizontal_distance(boss->position, kBossAt) < 0.01F,
+                  std::string(lowered ? "8 m above the floor: the boss of " : "1 m above the floor (control): the boss of ") + character
+                      + (lowered ? " stands on the floor below its spawn location" : " stands at its spawn location"));
+        }
+        check(shop.encounters().counts().membersLowered == (lowered ? 2U : 0U)
+                  && (bosses.size() < 2 || bosses[0] != bosses[1]),
+              lowered ? "two bosses in two instances, each put on the floor (the count membersLowered)" : "control: no member is lowered");
+    }
+}
+
 } // namespace
 
 std::vector<Case> story_mode_cases() {
@@ -418,8 +460,10 @@ std::vector<Case> story_mode_cases() {
             {"SY3", "story instances QG9b: the gate of a mode with two recipes, the trigger of a parent in the instance, two instances",
              mode_gate},
             {"SY4", "story instances QG9b: an achievement conditional with a line end (the entrance of QuestApophis)", mode_line_end},
-            {"SY5", "story instances QG9b: the setting of the mode QuestMedusa, off (the build) and on (a test), two characters",
-             mode_setting}};
+            {"SY5", "story instances QG9b: the setting of the mode QuestMedusa, on (the build) and off (a test), two characters",
+             mode_setting},
+            {"SY6", "story instances QG9c: a creature member of an instance recipe above the floor stands on the floor, two instances",
+             member_floor}};
 }
 
 } // namespace soulwarden::backend::tests

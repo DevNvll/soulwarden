@@ -196,6 +196,9 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 // set_achievement (development only): `id` (an achievement id) and `on` (1: unlock, 0: lock): the change event of the quest system.
 [[nodiscard]] WorldCommand apply_backstory(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand grant_objective(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+// Stage QG9c: advance_objective (development only): `objective` (an active ObjectiveID of the character) and `task` (a TaskID of its tree):
+// the tasks before the task complete until it is Active (Quests::advance; a development aid, not a rule of the data).
+[[nodiscard]] WorldCommand advance_objective(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand set_achievement(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 // Stage 1.8e: quest_cinematic (development only): `id` (a cinematic id, TempestRising) and `phase` (start or end): the notice of the client
 // messages 6606 and 6542 to the quest system (Quests::cinematic; an end needs the start of the same cinematic). A development run disables the

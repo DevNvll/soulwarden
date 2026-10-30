@@ -847,6 +847,17 @@ public:
      * live test of a heal of a friend. A start of the user has no friend pair: a group of one.
      */
     void set_test_friends(const std::string& characterA, const std::string& characterB);
+    /**
+     * Stage QG9c: a creature is made again on each client that observes it (Creature::renewal; only the creature system calls it). Each
+     * session looks at its interest table in its next update (last_renewal).
+     */
+    void creature_renewed() {
+        m_lastRenewal = ++m_revision;
+    }
+    /** @return The world revision of the last renewal of a creature (creature_renewed). */
+    [[nodiscard]] Revision last_renewal() const {
+        return m_lastRenewal;
+    }
     /** @return The world revision of the last new spell entity: a session compares its interest distances at once. */
     [[nodiscard]] Revision last_spell() const {
         return m_lastSpell;
@@ -1232,6 +1243,7 @@ private:
     /** The loot container items (stage 1.8d). */
     ItemContainers m_itemContainers;
     Revision m_lastSpell{0};
+    Revision m_lastRenewal{0};
     Revision m_lastProjectile{0};
     /** The world time (stage 2.2): one day cycle for the whole world. */
     WorldTime m_worldTime;

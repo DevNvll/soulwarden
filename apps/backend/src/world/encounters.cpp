@@ -146,8 +146,20 @@ void Encounters::load() {
                     }
                     for (const gamedata::EncounterStage& owner : recipe.stages) {
                         for (const gamedata::EncounterSpawn& spawn : owner.spawns) {
+                            if (!counts_toward(objective, spawn)) {
+                                continue;
+                            }
+                            // Code review of stage QG9b, finding QG9BR-R4: the game event of a tracked start object of the recipe (the
+                            // pressure plate of the Isabella intro of QuestYonas: PressurePlate_Ancient_interact) names the recipe too. The
+                            // task of that event comes before the task of the success event of the recipe.
+                            if (spawn.memberIndex < m_data->members().size()) {
+                                const gamedata::EncounterMember& member = m_data->members()[spawn.memberIndex];
+                                if (member.kind == gamedata::EncounterMemberKind::object && !member.event.empty()) {
+                                    add("e:" + gamedata::lower_text(member.event));
+                                }
+                            }
                             const gamedata::CreatureKind* kind = spawn.memberIndex < placement.kinds.size() ? placement.kinds[spawn.memberIndex] : nullptr;
-                            if (kind == nullptr || !counts_toward(objective, spawn)) {
+                            if (kind == nullptr) {
                                 continue;
                             }
                             const gamedata::LootVitals* vitals = tables != nullptr ? tables->vitals_of(kind->vitals) : nullptr;
@@ -1448,7 +1460,21 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
             continue;
         }
         if (member.kind == gamedata::EncounterMemberKind::creature && placement.kinds[spawn.memberIndex] != nullptr) {
-            entity = m_world.creatures().spawn_member(*placement.kinds[spawn.memberIndex], place, yaw, instance.placement, instance.generation,
+            state::WorldPosition stand = place;
+            if (!recipe.mode.empty()) {
+                // Stage QG9c [agent; live: Lady Asena of QuestWolf at 4255.0 6079.0 63.0, 6.7 m above the floor of the cave: the client showed
+                // no body, and no hit reached her]: a creature member of an instance recipe whose spawn location is above the floor of
+                // the data (the start of the intro of a boss tree, which jumps down with Phase_Intro or Pounce: the tree is not in the
+                // client) stands on the floor below that location.
+                if (const std::optional<float> floor = m_world.navigation().ground_height(place);
+                    floor && place.z - *floor > encounter_rules::kAboveFloor) {
+                    stand.z = *floor;
+                    ++m_counts.membersLowered;
+                    log::write("world: encounters: the encounter %s puts the creature %s on the floor below its spawn location (%.2f m lower)",
+                               recipe.key.c_str(), short_slice(member.slice).c_str(), static_cast<double>(place.z - *floor));
+                }
+            }
+            entity = m_world.creatures().spawn_member(*placement.kinds[spawn.memberIndex], stand, yaw, instance.placement, instance.generation,
                                                       nullptr, instance.space);
             if (entity != nullptr) {
                 ++m_counts.membersMade;
@@ -1808,7 +1834,15 @@ void Encounters::take_due() {
                            m_placements[entry.placement].recipe->key.c_str(),
                            m_placements[entry.placement].recipe->stages[entry.stage].objective.eventId.c_str(),
                            m_placements[entry.placement].recipe->stages[entry.stage].name.c_str());
-                end_stage(*instance, entry.stage, true);
+                // Code review of stage QG9b, finding QG9BR-R2: the met event is the count of the stage; the stage ends by the rule of its
+                // required child stages (objective_met), as the end rule does. A direct end cut the timed wait of the QuestWolf intro and
+                // never started its user wave 1.
+                EncounterStageRun& run = instance->stages[entry.stage];
+                if (!run.met.empty()) {
+                    run.met.assign(run.met.size(), true);
+                }
+                publish_objectives(*instance);
+                objective_met(*instance, entry.stage);
             }
             break;
         case DueKind::endRule:
@@ -1838,6 +1872,28 @@ void Encounters::take_due() {
 void Encounters::count_earlier_deaths(EncounterInstance& instance, std::uint32_t index) {
     const gamedata::EncounterRecipe& recipe = *m_placements[instance.placement].recipe;
     const gamedata::EncounterStage& stage = recipe.stages[index];
+    // Code review of stage QG9b, finding QG9BR-R1: a member of the earlier deaths comes from a parent of the stage, or from a stage whose own
+    // objectives do not count it (the setup of the manager, the background setup of a boss). A member of an earlier wave that counted it
+    // (the soldiers of the Phase 1.5 Burrowing of QuestApophis) is not a member of this stage [agent: the data has no owner of a member; the
+    // count of a wave is the deaths of its own spawns].
+    const auto supplies = [&](const EncounterMemberRun& member) {
+        for (std::int32_t parent = stage.parent; parent >= 0; parent = recipe.stages[static_cast<std::uint32_t>(parent)].parent) {
+            if (static_cast<std::uint32_t>(parent) == member.stage) {
+                return true;
+            }
+        }
+        if (member.stage == index) {
+            return true;
+        }
+        const gamedata::EncounterStage& source = recipe.stages[member.stage];
+        for (std::size_t number = 0; number <= source.more.size(); ++number) {
+            const gamedata::EncounterObjective& own = objective_of(source, number);
+            if (own.kind == gamedata::EncounterObjectiveKind::destroyed && counts_toward(own, source.spawns[member.spawn], member.part)) {
+                return false;
+            }
+        }
+        return true;
+    };
     std::vector<std::pair<std::size_t, std::uint32_t>> found;
     for (std::size_t number = 0; number <= stage.more.size(); ++number) {
         const gamedata::EncounterObjective& objective = objective_of(stage, number);
@@ -1847,7 +1903,7 @@ void Encounters::count_earlier_deaths(EncounterInstance& instance, std::uint32_t
         std::uint32_t dead = 0;
         for (const auto& [id, member] : instance.members) {
             if (member.destroyed && member.stage < recipe.stages.size() && member.spawn < recipe.stages[member.stage].spawns.size()
-                && counts_toward(objective, recipe.stages[member.stage].spawns[member.spawn], member.part)) {
+                && supplies(member) && counts_toward(objective, recipe.stages[member.stage].spawns[member.spawn], member.part)) {
                 ++dead;
             }
         }

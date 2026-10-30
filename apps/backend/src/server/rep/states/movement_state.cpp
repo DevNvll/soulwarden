@@ -288,6 +288,9 @@ CreatureScope creature_scope(const world::Creature& creature, bool first) {
         scope.fromStart = true;
     } else if (creature.action) {
         scope.action = &*creature.action;
+        // Stage QG9c: the first record of a body that the world made again (Creature::renewal) has its death action from the start: the
+        // new client entity plays the death of the creature.
+        scope.fromStart = first && creature.dead && creature.renewal > 0;
     } else if (creature.moving) {
         scope.action = &*creature.moving;
     } else if (creature.idle && !creature.dead) {

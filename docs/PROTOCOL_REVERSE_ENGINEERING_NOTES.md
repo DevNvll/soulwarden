@@ -8164,6 +8164,33 @@ not. The server bundles of the kill by a hit and by the command are the same (38
 problem): the slice of Medusa has no Reaction, no Reaction_Additive, and no Death_FB action and no reaction tables (reactions
 `[61, -1, 99, -1, -1]`), a difference from the other bosses [inference].
 
+**Stage QG9c: the cause of the stop at the kill of Medusa, and the renewal of the body** [live: gdb reads of the client, runs A1 to A7 and
+F1 to F4 of stage QG9c; static: static read REACTION of stage QG9c; the renewal is a project rule]. The evidence:
+`~/Games/soulwarden/work/evidence/quests/qg9c/implement/`.
+
+- The facet of the fault is the facet of Medusa: its entity id is the server id of Medusa, and its name is `FirstLight_MSQ_Medusa` [live].
+  The kill by the development command after one hit of the player stops the client too; the kill by the command with no hit does not
+  [live].
+- At a hit of the local player the client puts a pending record into the ReactionTrackingComponent of the target (the counters old N and
+  new N + 1, the source the attacker) [live: the counters at R+0xC0 and R+0xC4; the writer of the prediction is not proved (static read
+  REACTION, Q1)]. Only the activity ClearDamaged closes the record: 0x2AAE7B0 (its name), the activity vtable 0x8108CA0, slot +0x30 =
+  0x2AB4E20, then the virtual +0x108 of the component = 0x67A3BA0 (old = new) [static]. The actions of the creature data with that activity
+  have the fragments Reaction, Reaction_Additive, Deflection, BrokenGuard, ReactionTalisman, or Pushable [data; inference for the list].
+  The apply of the state 1927 (0x683D910) fills only the next record and does not close the current record; its selection 0x693DBD0 needs
+  an exact key match [static]. The server has no field that closes the record.
+- While old < new, 0x4873284 (in 0x48731C0) sets the flag at ActionListComponent+0xCC8, and the repair 0x4871B60 adds entries to the
+  history of the facet (+0x3B0, 15 entries of 0x6B0 bytes, the time at +0x670) in each frame. In the Death fragment of Medusa the history
+  fills, and the walk reads an entry with no data (0x4871DB6, `mov rax,[r14]`; 0x4871FDA in a second form) [live: gdb fault watch; static].
+- The slice of Medusa has no action with the activity ClearDamaged. 18 slices of the creature data have the same form (96 spawn points of
+  the main world, the creature members of 6 slices of the encounters) [data: `no_reaction_slices.py` of the evidence].
+- The server change [project rule; live]: at the death of a creature of such a slice after a hit of a character, each session that
+  observes it stops its interest and, 250 ms later, makes it again with a new interest number; the movement state of the first record has
+  the death action from its start (the time of scope 0 is 0). The new component of the client has no pending record. Live: three kills of
+  Medusa by hits (in an attack, in a chain of hits, idle) with no stop and no history insertion; the quest task of the kill is done.
+- What did not work [live]: the renewal at once (14 ms, the same interest number): the client stopped. The death action with a start 60 s
+  in the past: the client stopped.
+- Limit [live]: after the renewal the client shows the despawn effect of the body, not the body on the ground.
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

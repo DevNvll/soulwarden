@@ -19,6 +19,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 | The stacks of a status on a creature (stage B2): StackMax, the end of the rule of a character, the count at the name plate, the ApplicationCooldown on the target, the removal window, the one-time damage of a row with no duration | `Creatures::give_status`, `apply_effect`, `application_ready`, `stacks_of`, `remove_statuses`, `server/rep/states/status_state.cpp` (`encode_creature_status_state`), protocol notes 4.47, test cases BC1, BC2, BC6, BC7 |
 | The load of the world: the cost of the spawn rule, the time of a tick | `apps/backend/src/world/creatures.h` (`SpawnGrid`), `world/load_meter.h`, `tools/world list` (the line `load:`), test case WS2 |
 | The stationary targets (stage QG5c1: a totem, a nest): the place slot, the record with no movement state, the hit with no reaction, the kill and the respawn; the kept-out causes of the creature data | Protocol notes 4.14, `gamedata/creature_data.h` (`CreatureSlice::placeSlot`, `stationary`, `CreatureData::kept_out`), `server/rep/states/object_states.cpp` (`encode_target_place_state`), `world/creatures.cpp` (`hurt`, `knock`), `world/forced_motion.cpp`, `world/behavior.cpp` (`bind`), `tools/gamedata/creature_data.py` (`is_target`, `read_target_list`, `keep_out`), the list `targets` of `tools/gamedata/creature_slices.json`, test cases QG5C1A to QG5C1C |
+| The death of a slice with no reaction action after a hit (stage QG9c, the stop of the client at the kill of Medusa): the pending reaction that the client predicts, the renewal of the body on each client | `gamedata/creature_data.h` (`CreatureSlice::clearsReaction`), `world/creatures.cpp` (`hurt`, `set_health`), `world/entity.h` (`Creature::hitByCharacter`, `renewal`), `server/rep/rep_session.cpp` (`update_interest`, `kRenewalGap`), `server/rep/states/movement_state.cpp` (`creature_scope`), the section "The death of a slice with no reaction action" below, test case QG9C1 (`tests/reaction_renewal_tests.cpp`) |
 
 ## Rules
 
@@ -458,6 +459,45 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
   the data: they do not fight (a known limit). Case CRG1 (a declared slice casts; the same actions in an other slice give no shot). Live:
   Medusa hits the character with the poison spit (1034.6 Nature damage, four hits kill a character with no armor); Apophis hits with his
   shot (888.6 Strike damage).
+
+### The death of a slice with no reaction action (stage QG9c)
+
+The sources: the live runs A1 to A7, F1 to F4, and M1 of stage QG9c (the register and memory reads of the client, the probes 0x4873284,
+0x4871B83, and 0x4871CD1, the gdb reads at the stop), and the static reads CRASH (stage QG9b) and REACTION (stage QG9c) in the evidence
+folders of these stages.
+
+- The client of a player that hits a creature (a local melee hit) writes a pending reaction record into the ReactionTrackingComponent of the
+  creature: the old count N, the new count N+1, and the attacker as its source [live: the memory of the component after a hit]. The backend
+  sends no ReactionTracking state (type 1927) [live: the apply 0x683D910 is not called].
+- The client ends that record only in an action of the action lists of the slice with the activity ClearDamaged (0x2AB4E20, the virtual
+  0x67A3BA0 sets the old count to the new count): Reaction, Reaction_Additive, Deflection, BrokenGuard, ReactionTalisman (baseai_reaction,
+  damned_reaction, abominable_liang_reaction) and Pushable (baseai_pushable) [client; data: the action lists]. A slice with none of these
+  actions keeps the record pending (`CreatureSlice::clearsReaction` false) [live: Medusa and the Corrupted Ogre keep it for minutes,
+  Mahantaram ends it at once].
+- While the record is pending, the writer 0x4873284 sets the repair flag of the ActionListComponent in each frame, and the repair 0x4871B60
+  of the remote entity (ALCRemoteEntityManagerComponent) runs in each frame. It inserts two action states into the action history when the
+  root scope of a running action has a time shift (fragment length minus fragment time, not 0): the death fragment [client 0x4871B60;
+  static read REACTION, Q5; live: no insertion for the idle and the attacks of Medusa, an insertion in each frame of the death]. The walk of
+  the history then reads an empty entry: the access violation at 0x4871DB6 or at 0x4871FDA [live: the gdb dump of the stop: 6 live entries
+  in the slots 9 to 14 of 15, the call through the empty slot 8]. A kill by the command after a hit stops the client the same way [live].
+- The rule [agent]: at the death of a creature whose slice has a death action and no action of the list above, after a hit of a character
+  (`Creature::hitByCharacter`), the world counts a renewal of the creature (`Creature::renewal`). Each session that observes it stops its
+  interest number at once, and sends its first record again `kRenewalGap` (250 ms) later with a different interest number; that record has
+  the death action from its start (`creature_scope`). The client makes a new entity, which has no pending reaction [live: three kills of
+  Medusa by hits in QuestMedusa (in her attack, in a chain of hits, idle) and a kill in the main world; no repair insertion, no stop]. A
+  record 14 ms after the stop with the same number keeps the entity of the client and its pending record [live: run F1, the client stopped].
+- Not a fix [live]: a ReactionTracking state of the server with the count N+1 fills the next record of the client (old N+1, new N+1), but
+  the client does not make it the current record of a remote creature (its selection 0x693DBD0 needs a key of an action state and a gate,
+  static read REACTION, Q3); a death action with a time past its end gives one insertion in its first frame (the repair runs before the clamp
+  of the fragment time) and the client stops.
+- The limit [live]: the new client entity of the body shows no body (the client shows the despawn effect of the old entity, and the new
+  record of a dead creature shows nothing). A skinning or a loot use of such a body is not possible. 18 slices that a session can see have
+  this form (the list below); the others keep the death action of their body.
+- The slices (the creature data of the stage, `scripts/no_reaction_slices.py` of the evidence folder of stage QG9c): ancient_gargoyle,
+  naga_withered_bride, ancient_amalgam_stone, worldevent_ai_risen_brute_20214, corruptedlegion_cyclops, ancient_amalgam, undead_brute,
+  undead_pirate_brute, brute_yeti, corrupted_ogre, dryad_beast, undead_brute_gold, damned_priest, ai_fl_medusa, ai_fl_medusa_daily,
+  worldevent_ai_lost_pirate_brute_10304_01, worldevent_ai_brute_yeti_10305, swamp_dryad_beast (96 spawn points of the main world, and the
+  creature members of 6 slices of the encounters).
 
 ## Open points
 

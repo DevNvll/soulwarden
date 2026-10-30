@@ -507,6 +507,15 @@ public:
     [[nodiscard]] QuestResult grant(Entity& entity, const std::string& objectiveId, const std::string& source, std::uint16_t territory);
 
     /**
+     * DEVELOPMENT AID (stage QG9c, a live check of a story instance at the end of a long chain): the Active leaf tasks of the active
+     * instance of an objective that are not the task `taskId` complete, again and again, until that task is Active (64 rounds at most); the
+     * activations of the next tasks run their effects. One transaction. Not a rule of the data.
+     * @return unknownObjective for an objective or a task that the data does not have, or no active instance of the objective; notReady when
+     *         the task is not Active after the rounds (its branch did not start).
+     */
+    [[nodiscard]] QuestResult advance(Entity& entity, const std::string& objectiveId, const std::string& taskId);
+
+    /**
      * The achievement bits of a character changed (the ownership system calls it after each change that this system did not make: a lore
      * page, a first craft, a build preset, the DLC). The active TaskAchievement tasks of the character (Active or CompleteActive: the
      * regression of finding QR8A-R3) get the new value.

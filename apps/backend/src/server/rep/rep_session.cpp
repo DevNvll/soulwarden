@@ -45,6 +45,8 @@ constexpr std::uint8_t kEnvelopeExtension = 0x04;
 constexpr std::chrono::milliseconds kAnchorInterval{200};
 /** Interval at which a session compares the entities near its character with its interest table. */
 constexpr std::chrono::milliseconds kInterestInterval{500};
+/** Stage QG9c: the time between the stop of a renewed creature and its new first record (RepSession::update_interest). */
+constexpr std::chrono::milliseconds kRenewalGap{250};
 /**
  * Longest wait of the new creatures after a travel for the client to confirm the new place
  * (RepSession::m_creaturesAfterTravel): a client with no position report and no camera near
@@ -641,10 +643,11 @@ void RepSession::log_message_counts() const {
     }
     if (m_creatureRecords != 0) {
         log::write("rep: creatures of the session: %llu first record(s), %zu in the interest table at one time at most, "
-                   "%llu client message(s) for a component of a creature",
+                   "%llu client message(s) for a component of a creature, %llu creature(s) made again at a death (stage QG9c)",
                    static_cast<unsigned long long>(m_creatureRecords),
                    m_creaturesObserved,
-                   static_cast<unsigned long long>(m_counts.creatureTargets));
+                   static_cast<unsigned long long>(m_counts.creatureTargets),
+                   static_cast<unsigned long long>(m_creatureRenewals));
     }
     log::write("rep: client messages of the session: %llu component calls (%llu with a target of the id rule, %llu "
                "with a target that is not known, %llu with a wrong entity, %llu with no check), %llu for the player "
@@ -1001,6 +1004,38 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
             gone.push_back(id);
         }
     }
+    // Stage QG9c (world/creatures.cpp, the renewal at the death): a creature that the world made again goes out now, and it comes in
+    // again kRenewalGap later with a first record and a different interest number [agent; live: a new record 14 ms after the stop, with the
+    // same number, kept the entity of the client and its pending reaction; a new record 260 ms later with a new number made a new entity].
+    std::vector<world::EntityId> renewed;
+    if (m_world.last_renewal() > m_interestRenewal) {
+        m_interestRenewal = m_world.last_renewal();
+        for (const auto& [id, known] : m_observer.known()) {
+            const world::Entity* entity = m_world.find(id);
+            if (entity != nullptr && entity->kind == world::EntityKind::creature && entity->creature.renewal != known.renewal) {
+                renewed.push_back(id);
+            }
+        }
+    }
+    for (const world::EntityId id : renewed) {
+        const std::uint32_t interest = m_observer.remove(id);
+        if (interest != 0) {
+            m_pendingStops.push_back(interest);
+            m_renewalWaits[id] = RenewalWait{now + kRenewalGap, interest};
+            ++m_creatureRenewals;
+            log::write("rep: creature %016llx goes out of the interest table (interest %u): the world makes it again on the client",
+                       static_cast<unsigned long long>(id), interest);
+        }
+    }
+    bool renewalScan = false;
+    for (auto wait = m_renewalWaits.begin(); wait != m_renewalWaits.end();) {
+        if (m_world.find(wait->first) == nullptr) {
+            wait = m_renewalWaits.erase(wait);
+            continue;
+        }
+        renewalScan = renewalScan || now >= wait->second.due;
+        ++wait;
+    }
     // A session observes the creatures near its character in each start. It observes the
     // characters of other players only with the option.
     // A travel of a character changes the distances at once: the session does not wait for
@@ -1017,7 +1052,7 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     const bool scan = (m_cameraSeen || waitEnded)
                       && (now - m_lastInterestScan >= kInterestInterval || m_world.last_travel() > m_interestTravel
                           || m_world.last_spell() > m_interestSpell || m_world.last_projectile() > m_interestProjectile
-                          || (m_creaturesWaited && !creaturesWait));
+                          || (m_creaturesWaited && !creaturesWait) || renewalScan);
     if (scan) {
         m_lastInterestScan = now;
         m_interestTravel = m_world.last_travel();
@@ -1093,7 +1128,9 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
         }
         const float distance = world::horizontal_distance(own.position, entity.position);
         if (entity.kind == world::EntityKind::creature) {
-            if (!creaturesWait && distance <= m_world.interest_enter(entity)) {
+            // Stage QG9c: a creature that went out for its renewal comes in again after its wait.
+            const auto wait = m_renewalWaits.find(entity.id);
+            if (!creaturesWait && distance <= m_world.interest_enter(entity) && (wait == m_renewalWaits.end() || now >= wait->second.due)) {
                 creatures.emplace_back(distance, &entity);
             }
             return;
@@ -1218,9 +1255,14 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
         creatures.resize(kMaxNewCreaturesInScan);
     }
     for (const auto& [distance, entity] : creatures) {
-        const std::uint32_t interest = m_observer.add(entity->id);
+        const auto wait = m_renewalWaits.find(entity->id);
+        const std::uint32_t interest = m_observer.add(entity->id, wait != m_renewalWaits.end() ? wait->second.interest : 0);
         if (interest == 0) {
             break; // The table has no free number.
+        }
+        m_observer.find(entity->id)->renewal = entity->creature.renewal;
+        if (wait != m_renewalWaits.end()) {
+            m_renewalWaits.erase(wait);
         }
         log::write("rep: creature %016llx (%s, level %u) comes into the interest table (interest %u, %.1f m)",
                    static_cast<unsigned long long>(entity->id),
@@ -1738,6 +1780,14 @@ void RepSession::observe_interaction(const InputStep& step) {
     }
     const bool accepted = verdict == world::InteractionVerdict::accepted;
     send_message(kTypeInteractionResult, interaction_result_body(m_observer.own(), request.object, block.action, accepted));
+    if (verdict == world::InteractionVerdict::unknownObject) {
+        // Stage QG9c: the actor of a reference that the data does not have (the data compares the G, the target, and the actor).
+        char actor[33] = {};
+        for (std::size_t index = 0; index < block.actor.size(); ++index) {
+            std::snprintf(actor + index * 2, 3, "%02x", block.actor[index]);
+        }
+        log::write("rep: the reference of the refused request has the actor %s", actor);
+    }
     log::write("rep: interaction request (input %u): object %016llx target %016llx action %u base %u option %08x: %s, reply %u "
                "(result %u)",
                static_cast<unsigned>(step.sequence), static_cast<unsigned long long>(block.group),

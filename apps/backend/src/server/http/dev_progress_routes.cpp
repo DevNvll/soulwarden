@@ -66,6 +66,9 @@
 //                                                         apply_backstory of the admin interface)
 //   POST /v1/dev/quests/grant?character=ID&objective=ID   a new instance of an objective for a character in the world (development
 //                                                         only: a live check)
+//   POST /v1/dev/quests/advance?character=ID&objective=ID&task=ID
+//                                                         stage QG9c: the tasks of the active objective before the task complete
+//                                                         until it is Active (a development aid for a live check)
 //   POST /v1/dev/quests/achievement?character=ID&id=ID&on=1|0
 //                                                         unlock or lock an achievement of a character in the world (development
 //                                                         only: the change event of the quest system, the empty list fragment)
@@ -171,6 +174,7 @@ void register_dev_progress_routes(Router& router, const Services& services) {
     });
     router.add("POST", "", "/v1/dev/quests/template", "dev.quest_template", command_route(services, commands::apply_backstory));
     router.add("POST", "", "/v1/dev/quests/grant", "dev.quest_grant", command_route(services, commands::grant_objective));
+    router.add("POST", "", "/v1/dev/quests/advance", "dev.quest_advance", command_route(services, commands::advance_objective));
     router.add("POST", "", "/v1/dev/quests/achievement", "dev.quest_achievement", command_route(services, commands::set_achievement));
     router.add("POST", "", "/v1/dev/quests/cinematic", "dev.quest_cinematic", command_route(services, commands::quest_cinematic));
     router.add("POST", "", "/v1/dev/quests/abandon", "dev.quest_abandon", command_route(services, commands::abandon_quest));

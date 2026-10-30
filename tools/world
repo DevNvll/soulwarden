@@ -248,6 +248,10 @@ not, as for the items):
                                                 stage 1.8d: the reward join of a hand-in of the objective (what it pays, or the
                                                 reward that refuses it) and the availability of its offer (no change)
   tools/world quest grant CHARACTER OBJECTIVE   a new instance of an objective (development only)
+  tools/world quest advance CHARACTER OBJECTIVE TASK
+                                                stage QG9c, DEVELOPMENT AID: the tasks of the active objective before
+                                                the task TASK complete until it is Active (a live check at the end of
+                                                a long chain)
   tools/world quest places CHARACTER            stage QG3: the places of the data at the position of the character:
                                                 its territory, each point of interest and area shape that holds it
                                                 (the id, the tags, the shape file), each trigger volume that holds it
@@ -1827,6 +1831,11 @@ def main() -> None:
             fail("the template or the objective must be an id of the quest data")
         name = "template" if arguments[1] == "template" else "objective"
         request(data_dir, "POST", f"/v1/dev/quests/{arguments[1]}?character={character_id(data_dir, arguments[2])}&{name}={arguments[3]}")
+    elif command == "quest" and len(arguments) == 5 and arguments[1] == "advance":
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[3]) or not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[4]):
+            fail("the objective and the task must be ids of the quest data")
+        request(data_dir, "POST", f"/v1/dev/quests/advance?character={character_id(data_dir, arguments[2])}"
+                                  f"&objective={arguments[3]}&task={arguments[4]}")
     elif command == "quest" and len(arguments) in (4, 5) and arguments[1] == "rewards":
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[3]):
             fail("the objective must be an id of the quest data")

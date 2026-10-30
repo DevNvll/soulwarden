@@ -1063,12 +1063,17 @@ button on "Confirm").
   at the start of the instance. An instance with no member waits for the timeout of its mode (600 s) and the same character joins it again
   unless its content succeeded. `tools/world instance list` shows the instances of the entrances too.
 - Story instances (stage QG9b): the modes QuestWolf, QuestCaerDun, QuestSeraphim, QuestHeartforge, QuestMammoth, QuestApophis, and
-  QuestYonas run too (the table of [Instances](systems/instances.md)). QuestMedusa is off by its setting (`encounter_rules::kQuestMedusaRuns`:
-  the game stops at the kill of Medusa by a hit); its entrance refuses the entry (result 10). The detector of a recipe with no shape is the area
+  QuestYonas run too (the table of [Instances](systems/instances.md)). QuestMedusa runs from stage QG9c (its setting
+  `encounter_rules::kQuestMedusaRuns` is on; off, its entrance refuses the entry with result 10). The detector of a recipe with no shape is the area
   of its mode root; the boss phases, the BossPhaseObjective stages, and the waits of the mode scripts follow the rules of
   [Encounters](systems/encounters.md). A boss with no attack of the data has one declared ranged attack ([Creatures](systems/creatures.md)).
   The recipes of a mode with more than one recipe (the seraphs, Yonas) start only for a character with a task of the mode that names the
   recipe. QuestEmpressZhou, QuestVarlaam, QuestGawain, and QuestMorgaine refuse the entry (result 10).
+- Stage QG9c: at the death of a creature whose slice has no reaction action (Medusa, 18 slices of the creature data) after a hit of a
+  character, each session that sees it makes it again 250 ms later (the game stopped before; [Creatures](systems/creatures.md)). A creature
+  member of an instance recipe more than 2 m above the floor stands on the floor ([Encounters](systems/encounters.md)). In a development
+  run, `tools/world quest advance NAME OBJECTIVE TASK` completes the active tasks of an objective before a task until that task is active
+  (a development aid for the live checks of a long quest chain; `POST /v1/dev/quests/advance`).
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is

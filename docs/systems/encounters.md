@@ -421,6 +421,10 @@ mode root slices and of the encounter slices, and the live runs of stage QG9b. E
   only there; agent: the member waits]. A start object of a parent that a child stage tracks is made (no `skip`).
 - Code review of stage QG9a, finding QG9AR-R4: a destroyed stage of an instance recipe that starts counts the tracked members that died
   before its start (`count_earlier_deaths`: the boss of the background setup killed during the intro) [review]. Case QG9AR4.
+- Code review of stage QG9b, finding QG9BR-R1 (stage QG9c): such an earlier death counts only for a member of a parent of the stage, of the
+  stage itself, or of a stage whose own destroyed objectives do not count that member (the setup of the manager). A member that an earlier
+  wave counted (the soldiers of `Phase 1.5 Burrowing` of QuestApophis) does not count for a later wave of the same slice (`Phase 2.5
+  Burrowing`) [agent: the data has no owner of a member; a wave counts the deaths of its own spawns]. Case QG9BR1.
 - The detector of an encounter slice with no ParticipantTracker and no detection volume (Caer Dun, the four seraphs, the mammoth, Apophis,
   Varlaam) is the set of the detection volumes of the players of its mode root (the areas of the mode script: `AreaBoss`,
   `AreaBossStart`, `AreaBossTeamwipe`, `AreaBossFightStart`, `AreaBossAffiliations_Players`; a filter with "player" in it): a character in
@@ -462,13 +466,20 @@ mode root slices and of the encounter slices, and the live runs of stage QG9b. E
   objectives track (`k:`; `EncounterPlacement::gated`, `taskKeys`, `Quests::mode_task_active`) [agent from the quest data: each seraph has
   its own quest (Quest_28002 to Quest_28005) and kill task; the tasks of 99E_MSQ_10_ToCaerDun name the hallway, the intro, and Yonas in
   that order; the mode script that chooses and orders them is not in the client]. The content of such an instance succeeded when one of
-  its recipes succeeded and none runs [agent].
+  its recipes succeeded and none runs [agent]. Code review of stage QG9b, finding QG9BR-R4 (stage QG9c): the game event of a start object
+  that a destroyed objective of the recipe tracks names the recipe too (`e:`; the pressure plate of the Isabella intro of QuestYonas,
+  `PressurePlate_Ancient_interact`, whose task comes before the task of the success event of the intro) [agent from the quest data]. Case
+  QG9BR4.
 - The daily alternative of a mode (DailyTrial) never runs: an instance runs the normal recipe of its mode [agent: the selection rule of
   the mode script is not in the client; the daily recipe has no extra content in the backend].
 - An EncounterEventObjective keeps the rule of stage QG9a (met at the start of its stage) [agent: the sender of the client,
   `Behavior::EncounterEventDecorator`, has an empty send (static read F, F6); the boss trees are not in the client]: the channel and fight
   phases of the werewolf lord (Phase1_Fight, Phase2_Channel, Phase2_Fight), the burrow phases of Apophis, Spawn_Caster of the mammoth,
-  Magic1, Magic2, Time_Bomb, and DeathsDoor of Yonas pass at once, and the boss fight is a fight of its kill.
+  Magic1, Magic2, Time_Bomb, and DeathsDoor of Yonas pass at once, and the boss fight is a fight of its kill. Code review of stage QG9b,
+  finding QG9BR-R2 (stage QG9c): the met event is the count of its stage; the stage then ends by the rule of its child stages
+  (`objective_met`): a stage whose child stages are not optional waits for them (`_Wave 1 - Intro` of QuestWolf waits for its timed wait
+  and its user wave 1 `Intro 0.1 - Play`, so the wave phase of the werewolf lord ends and its health phase at 25 percent can pass)
+  [agent; the rule of the required child stages]. Case QG9BR2.
 - QuestVarlaam is refused: it defends the device of its mode root (Varlaam_Device, the vitals row DefendAlly_VarlaamDevice; Varlaam_Destroy
   is its fail), and its defense stage waits for the events of the boss tree (`Enc_Complete`; with the event rule the defense would end at
   its start) [data; agent: no target policy for a target that is not a player, the rule of the defenses of stage QG5c4].
@@ -477,9 +488,14 @@ mode root slices and of the encounter slices, and the live runs of stage QG9b. E
   Medusa were never found.
 - The runner takes 67 of the 88 quest recipes (56 at the start of the stage): each recipe of the modes of the table of
   [Instances](instances.md) but the daily alternatives, QuestEmpressZhou, QuestVarlaam, QuestGawain, QuestMorgaine, and QuestMedusa (off
-  by its setting `encounter_rules::kQuestMedusaRuns`, the reason "the client stops at the kill of Medusa by a hit (access violation at
-  0x4871DB6; open)"; 68 with the setting on) (the list: `tools/world encounter recipes`). No recipe of the main world changes between taken
-  and refused.
+  by its setting `encounter_rules::kQuestMedusaRuns` in stage QG9b) (the list: `tools/world encounter recipes`). No recipe of the main
+  world changes between taken and refused. Stage QG9c: the setting is on, and the runner takes 68 recipes and refuses 20 (the recipe of
+  QuestMedusa is taken; no other recipe changes) [live: `tools/world encounter recipes` of the backend of stage QG9c].
+- A creature member of an instance recipe whose spawn location is more than 2 m (`encounter_rules::kAboveFloor`) above the floor of the
+  navigation data (else of the terrain) stands on that floor, at the same horizontal place (count `membersLowered` of `tools/world
+  encounter CHARACTER`) [agent, stage QG9c: Lady Asena of QuestWolf has her spawn location 6.7 m above the floor of the cave, at the start of
+  the jump of her intro (Phase_Intro, Pounce); the boss tree is not in the client; at that location the client showed no body and no hit
+  reached her]. A creature member of the main world keeps its spawn location. Case SY6.
 - Live (stage QG9b): QuestMedusa (the area trigger of the setup in the instance, the intro IGC, the music stage with no objective, the
   wave phases of Medusa, the boss fight, the cleanup of 6 s with the DestroySliceAction of the adds, the success), QuestMammoth (the stages
   `Phase_01` to `Phase_04`, the root caster), and QuestApophis (the intro wait, the burrow phases with their Myrmidons, the cleanup with no

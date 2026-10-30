@@ -96,6 +96,28 @@ WorldCommand grant_objective(const std::string& character, const Arguments& argu
     };
 }
 
+WorldCommand advance_objective(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    const auto id = id_argument(arguments, "objective");
+    const auto task = id_argument(arguments, "task");
+    if (!id || !task) {
+        refusal = message(400, "give objective=ID (an active ObjectiveID of the character) and task=ID (a TaskID of its tree)");
+        return {};
+    }
+    return [character, id = *id, task = *task](world::World& target) {
+        world::Entity* entity = target.find_character(character);
+        if (entity == nullptr) {
+            return message(409, "the character is not in the world");
+        }
+        log::write("quests: DEVELOPMENT COMMAND: advance of the objective %s of character %s to its task %s", id.c_str(), character.c_str(),
+                   task.c_str());
+        const world::QuestResult result = target.quests().advance(*entity, id, task);
+        if (!result.ok()) {
+            return json_reply(status_of(result.error), json{{"message", world::quest_error_text(result.error)}}.dump());
+        }
+        return json_reply(200, json{{"message", "done"}, {"objective", id}, {"task", task}, {"instance", hex(result.instance)}}.dump());
+    };
+}
+
 WorldCommand quest_places(const std::string& character, const Arguments& /*arguments*/, service::HttpResponse& /*refusal*/) {
     return [character](world::World& target) {
         world::Entity* entity = target.find_character(character);

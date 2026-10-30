@@ -379,6 +379,21 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         const gamedata::CreatureSlice& body = *entity->creature.body;
         if (body.deathAction) {
             start_action(*entity, *body.deathAction);
+            if (!body.clearsReaction && entity->creature.hitByCharacter) {
+                // Stage QG9c [agent; client 0x4871B60, 0x48731C0, 0x67A3BA0; live: the client stops at the kill of Medusa after a hit,
+                // also by the kill command]: the client of a player that hit the creature keeps the reaction that it predicted pending
+                // (the slice has no action with the ClearDamaged activity), and its repair of the action history inserts two states in
+                // each frame while the time of the death fragment is below its length; the walk of the history then reads an empty entry
+                // (0x4871DB6, 0x4871FDA). A new client entity of the body has no pending reaction (live: the same kill after a new interest
+                // of the creature stops nothing). Each session that observes the creature makes it again (RepSession::update_interest);
+                // its first record has the death action from its start.
+                ++entity->creature.renewal;
+                ++m_counts.renewals;
+                m_world.creature_renewed();
+                log::write("world: creature %016llx (%s) is made again on each client that observes it: its slice has no action that ends "
+                           "the reaction that the client of a hit predicts",
+                           static_cast<unsigned long long>(entity->id), entity->creature.kind->id.c_str());
+            }
         } else if (entity->creature.action || entity->creature.moving) {
             // A slice with no death action: the action that plays (a reaction, an attack, the
             // locomotion of a way) is not the death action of the body. A session that observes
@@ -499,6 +514,12 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, Ent
     }
     // One path with the health command and the kill command: the health 0 is the death.
     const float dealt = std::min(damage, entity->vitals.health);
+    if (attacker != 0) {
+        // Stage QG9c: the client of the character predicts a reaction of the creature at its hit (the death rule of set_health).
+        if (const Entity* source = m_world.find(attacker); source != nullptr && source->kind == EntityKind::player) {
+            entity->creature.hitByCharacter = true;
+        }
+    }
     result = set_health(id, std::max(entity->vitals.health - damage, 0.0F));
     // The credit of the kill: the damage of each character (world/rewards.h). A death by a hit of
     // a character gives the rewards of the kill to the characters with the credit.

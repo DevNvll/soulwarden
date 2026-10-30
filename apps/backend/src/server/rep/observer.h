@@ -38,6 +38,8 @@ struct Known {
     std::optional<world::WorldClock::time_point> scopeDue;
     /** For the own entity: the health of the last vitals state that the session sent (finding S6-R7). Below 0: none. */
     float ownerHealth{-1.0F};
+    /** Stage QG9c: for a creature, its Creature::renewal when the session added it (a different value: the session makes it again). */
+    std::uint32_t renewal{0};
     /**
      * For the own entity (stage 1.8a): the world revision of the last record with the states that wait for the first message 2709
      * (StateCodec::afterObjectivesEnable). 0: none of them went out.
@@ -64,10 +66,11 @@ public:
     }
 
     /**
-     * Adds an entity of a different character. It gets the lowest free number from 2.
+     * Adds an entity of a different character. It gets the lowest free number from 2 that is not `avoid` (stage QG9c: the number of the
+     * last record of a renewed creature; 0: no such number).
      * @return The number, or 0 when the table has the entity or has no free number.
      */
-    std::uint32_t add(world::EntityId id) {
+    std::uint32_t add(world::EntityId id, std::uint32_t avoid = 0) {
         if (m_known.count(id) != 0) {
             return 0;
         }
@@ -75,6 +78,13 @@ public:
         // The set is sorted: the first gap from 2 is the lowest free number.
         for (auto used = m_used.lower_bound(kFirstOtherInterest); used != m_used.end() && *used == interest; ++used) {
             ++interest;
+        }
+        if (interest == avoid) {
+            // The next gap after the avoided number.
+            ++interest;
+            while (m_used.count(interest) != 0) {
+                ++interest;
+            }
         }
         if (interest > kLastInterest) {
             return 0;

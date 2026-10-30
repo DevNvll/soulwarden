@@ -392,3 +392,7 @@ tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
   the data (a trigger volume, a person in `tools/world persons`) and look at a picture before an input.
 - A dialogue of a quest has pages and options (stage 1.8b): E is "Next", the key 1 the first option. A key of a page can select the
   hand-in or the offer of the next page: take a picture before each key.
+- `tools/world travel` in the space of an instance moves the character in that space (stage QG9c): a level entrance of the main world is
+  then not there, and its use is refused. Leave the instance first (`tools/world instance return NAME`), then travel.
+- A test of a boss kill by hits with `tools/world ignore NAME on` gives no quest count (stage QG9c, the seraph and Lady Asena): lower the
+  health of the boss with the mode on, turn the mode off, then give the last hit. A travel near a creature of a fight resets its leash.

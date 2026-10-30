@@ -550,6 +550,13 @@ struct CreatureSlice {
      */
     std::optional<std::uint32_t> hitAction;
     /**
+     * Stage QG9c: the action table has an action with the ClearDamaged activity (kClearReactionActions of creature_data.cpp; also one with no
+     * fragment: its activities run). False: the client of a player that hits a creature of this slice keeps the reaction that it predicts
+     * pending, and it repairs the action history of the creature in each frame (Creatures::set_health, the renewal at the death). A slice
+     * with no action table: true (nothing to repair).
+     */
+    bool clearsReaction{true};
+    /**
      * Index of the action that a creature with this slice plays while it walks or runs: the
      * action "Move_Combat" (410 of the 412 slices that fight have it). Its fragment is a blend
      * of the locomotion of the slice that the client selects from the speed of the creature: a

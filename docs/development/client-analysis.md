@@ -51,3 +51,8 @@ tools/ghidra/start-mcp.sh &          # Ghidra MCP server on 127.0.0.1:8765 (need
   4896). The audit of all state types is `~/Games/soulwarden/work/research/state-layout-audit.md`.
 - The main thread of the client can stay in an endless loop with the loading screen on.
   `gdb -p PID -batch -ex 'info registers rip'` gives the address (subtract 0x140000000).
+- A watch of an access violation with gdb (stage QG9c): Proton gives the client its own SIGSEGV for each page guard. Use `handle all
+  nostop noprint pass` and then `handle SIGSEGV stop print pass`, and continue (`c`) at each stop that is not in the code range of the
+  fault. Only read: the watch writes nothing to the memory of the client. A register of the faulting function can hold a pointer that is
+  not the object of the fault (0x4871FDA: rsi is not the facet); find the object by its vtable in the registers and in the stack. The
+  script of stage QG9c: `~/Games/soulwarden/work/evidence/quests/qg9c/implement/scripts/fault_watch.py`.

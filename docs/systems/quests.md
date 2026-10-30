@@ -1193,6 +1193,11 @@ The story instance QuestMedea of quest 06A_MSQ_21 is in [Instances](instances.md
   does not grow outside its mode: `predicate` keeps the value of before for it [client 0x3AD5CC0: the base predicate gates each task with
   a mode]. Case QG9AR3. Finding QG9AR-R2: the world entry looks again at the mode tasks of each quest of the character (a restored
   StayActive TaskGameMode is false outside its mode). Case QG9AR2.
+- Stage QG9c (code review of stage QG9b, finding QG9BR-R3, rejected): an automatic task with a GameModeID (an achievement action, a
+  timer) acts at its activation also outside its mode; the mode gate is only the gate of the predicates [data: the first task of
+  `09A_M12_FightMedusa`, `09A_M12_LockTrialAchievement_Reset` (TaskLockAchievement, GameModeID QuestMedusa), runs in the main world before
+  the trial unlocks, and the end chain `09A_M12_Container_SwapEnd` (GameModeID QuestMedusa) runs after the exit trigger area of the main
+  world; live: with the gate the reset quest stopped at its first task]. Case QG9BR3C.
 - Stage QG9b: a TaskTriggerArea with GameModeID counts in an instance of the main world level of its mode (the trigger volumes of the
   main level are the same volumes there) [data; live: `09A_M11_TalkToMammothAmbush`, `09A_M12_EnterArena`]. Case SY3 has the trigger of a
   parent stage in the space of an instance.
@@ -1450,6 +1455,7 @@ tools/world quest templates                     # the backstory templates and th
 tools/world quest template CHARACTER TEMPLATE   # decision D2 option C (the command apply_backstory)
 tools/world quest rewards CHARACTER OBJECTIVE [TERRITORY]   # stage 1.8d: what a hand-in pays (or the reward that refuses it), and the offer
 tools/world quest grant CHARACTER OBJECTIVE     # development only: a new instance of an objective
+tools/world quest advance CHARACTER OBJECTIVE TASK   # stage QG9c, development aid: the tasks before TASK complete until it is Active
 tools/world quest abandon CHARACTER INSTANCE    # stage 1.8c: the rule of message 3836 (CanBeAbandoned 0 refuses it)
 tools/world quest reset CHARACTER INSTANCE      # stage 1.8c: the rule of message 5600 (a new instance; the award rows stay)
 tools/gamedata/pois.sh [OUTPUT.json]            # the points of interest (a test: a path outside the common game data folder)

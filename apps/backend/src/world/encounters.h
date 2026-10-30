@@ -91,6 +91,8 @@ inline constexpr float kSpawnEnter = 150.0F;
 inline constexpr float kSpawnLeave = 200.0F;
 /** The edge of a cell of the grid of the placements (meters). */
 inline constexpr float kCellSize = 64.0F;
+/** Stage QG9c: a creature member of an instance recipe whose spawn location is higher than this above the floor stands on the floor. */
+inline constexpr float kAboveFloor = 2.0F;
 /** The entries of the stage state 2133 that the client takes (client 0x26F7550: at most 10). */
 inline constexpr std::size_t kHistory = 10;
 /** The manager status (state 6786; the Lua names eEncounterStatus_*: static, protocol notes 4.62). */
@@ -118,15 +120,16 @@ inline constexpr std::uint32_t kFindAttempts = 20;
  */
 inline constexpr bool kDarknessAtAllTimes = true;
 /**
- * Stage QG9b, the setting of the mode QuestMedusa (a pick of the orchestrator after the live checks of stage QG9b; the user can change it):
- * the client of this build stops at the kill of Medusa by a hit of a player (docs/systems/instances.md, open problem). False: the runner
- * refuses each recipe of QuestMedusa with kQuestMedusaOff (one cause), so its entrance refuses the entry (result 10) and the support
- * manifest counts the rows of the mode as not supported with that reason. True: the mode runs with the rules of stage QG9b. The world
- * option WorldOptions::questMedusaRuns has this value (a test sets it; no start option).
+ * Stage QG9b, the setting of the mode QuestMedusa (a pick of the orchestrator; the user can change it). Stage QG9c: on. The stop of the client
+ * at the kill of Medusa by a hit of a player had its cause in the pending reaction that the client predicts on a slice with no reaction
+ * action; the death rule of Creatures::set_health corrects it (docs/systems/creatures.md). False: the runner refuses each recipe of
+ * QuestMedusa with kQuestMedusaOff (one cause), so its entrance refuses the entry (result 10) and the support manifest counts the rows of the
+ * mode as not supported with that reason. True: the mode runs with the rules of stage QG9b. The world option WorldOptions::questMedusaRuns has
+ * this value (a test sets it; no start option).
  */
-inline constexpr bool kQuestMedusaRuns = false;
+inline constexpr bool kQuestMedusaRuns = true;
 inline constexpr std::string_view kQuestMedusaMode = "QuestMedusa";
-inline constexpr std::string_view kQuestMedusaOff = "the client stops at the kill of Medusa by a hit (access violation at 0x4871DB6; open)";
+inline constexpr std::string_view kQuestMedusaOff = "the mode QuestMedusa is off by its setting (encounter_rules::kQuestMedusaRuns)";
 /** @return The reason of the setting for a mode that the setting turns off (`medusaRuns`: the world option), or an empty text. */
 [[nodiscard]] inline std::string_view mode_off(std::string_view mode, bool medusaRuns) {
     const bool medusa = mode.size() == kQuestMedusaMode.size() && std::equal(mode.begin(), mode.end(), kQuestMedusaMode.begin(), [](char a, char b) {
@@ -292,6 +295,8 @@ struct EncounterCounts {
     std::uint64_t failed{0};
     std::uint64_t dormant{0};
     std::uint64_t membersMade{0};
+    /** Stage QG9c: the creature members of an instance recipe put on the floor below their spawn location (kAboveFloor). */
+    std::uint64_t membersLowered{0};
     std::uint64_t membersRemoved{0};
     std::uint64_t memberDeaths{0};
     std::uint64_t objectsMade{0};

@@ -228,6 +228,7 @@ json creatures_view(world::World& target, const std::string& character, std::opt
                   {"removedByDistance", counts.removedByDistance},
                   {"removedByCommand", counts.removedByCommand},
                   {"removedByRespawn", counts.removedByRespawn},
+                  {"renewals", counts.renewals},
                   {"deaths", counts.deaths},
                   {"largest", counts.largest}}},
                 {"revision", target.revision()}};

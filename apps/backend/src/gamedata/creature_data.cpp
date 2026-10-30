@@ -72,6 +72,12 @@ constexpr std::int64_t kMaxFragmentIndex = 1000000;
 constexpr const char* kDeathActions[] = {"Death", "Death_FB"};
 /** The action that a creature plays when it takes a hit (live proof for the Grey Wolf: protocol notes 4.14). */
 constexpr const char* kHitAction = "Reaction";
+/**
+ * Stage QG9c: the actions of the action lists whose activities have ClearDamaged (baseai_reaction, damned_reaction, abominable_liang_reaction:
+ * Reaction, Reaction_Additive, Deflection, BrokenGuard, ReactionTalisman; baseai_pushable: Pushable). The client acknowledges a pending reaction
+ * of a creature only in one of them (client 0x2AB4E20 calls 0x67A3BA0, old count = new count; static read REACTION of stage QG9c, Q2).
+ */
+constexpr const char* kClearReactionActions[] = {"Reaction", "Reaction_Additive", "Pushable", "Deflection", "BrokenGuard", "ReactionTalisman"};
 /** The locomotion action of a slice (creature_data.h, CreatureSlice::moveAction). */
 constexpr const char* kMoveAction = "Move_Combat";
 /** The locomotion of a walk with no target (CreatureSlice::walkAction). */
@@ -1079,6 +1085,10 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
             }
         }
         slice.hitAction = slice.find_action(kHitAction);
+        slice.clearsReaction = slice.actions.empty() || std::any_of(slice.actions.begin(), slice.actions.end(), [](const CreatureSlice::Action& action) {
+            return std::any_of(std::begin(kClearReactionActions), std::end(kClearReactionActions),
+                               [&](const char* name) { return action.name == name; });
+        });
         slice.moveAction = slice.find_action(kMoveAction);
         slice.walkAction = slice.find_action(kWalkAction);
         slice.stunAction = slice.find_action(kStunAction);
