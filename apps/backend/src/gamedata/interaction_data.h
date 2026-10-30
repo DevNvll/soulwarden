@@ -270,6 +270,12 @@ struct InteractionObject {
     std::optional<std::array<std::uint8_t, 16>> claim;
     /** Stage QG9a (format 6): the entrance of a game mode (an object of the kind dungeonEntrance). No value: not an entrance. */
     std::optional<DungeonEntrance> entrance;
+    /**
+     * Stage QG9d (format 6, member "mode": {mode, map}): the mode of the exit portal of a mode root slice that the client makes at the load
+     * (an object of the kind dungeonExit: the portal of QuestSeraphim). The backend takes its ExitDungeon in an instance of that mode. Empty:
+     * no such portal.
+     */
+    std::string exitMode;
 };
 
 /** A unit quaternion (x, y, z, w): the rotation of a server child. */

@@ -4,9 +4,11 @@
 #include <cctype>
 
 #include "core/logging/log.h"
+#include "gamedata/gathering_data.h"
 #include "gamedata/interaction_data.h"
 #include "gamedata/quest_data.h"
 #include "world/encounters.h"
+#include "world/gathering.h"
 #include "world/position_index.h"
 #include "world/interactions.h"
 #include "world/quests.h"
@@ -82,8 +84,13 @@ public:
     }
     [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context) override {
         const Instance* instance = m_world.instances().instance_of(character.characterId);
-        if (context.option->action != kExitDungeon || instance == nullptr || instance->space != character.space
-            || std::find(instance->objects.begin(), instance->objects.end(), context.instance) == instance->objects.end()) {
+        // Stage QG9d: a portal of the instance (a server child that the instance system made), or the exit portal of the mode root of its
+        // mode that the client makes from the level data (InteractionObject::exitMode).
+        const bool own = instance != nullptr
+                         && std::find(instance->objects.begin(), instance->objects.end(), context.instance) != instance->objects.end();
+        const bool level = instance != nullptr && context.instance == 0 && context.object != nullptr && !context.object->exitMode.empty()
+                           && same_text(context.object->exitMode, instance->mode);
+        if (context.option->action != kExitDungeon || instance == nullptr || instance->space != character.space || (!own && !level)) {
             return InteractionVerdict::refused;
         }
         m_world.after(std::chrono::milliseconds(0), [characterId = character.characterId](World& world) {
@@ -189,6 +196,12 @@ void Instances::tick() {
     for (const std::uint64_t id : due) {
         ++m_counts.emptyEnded;
         end_instance(id, "it was empty for the time of its mode");
+    }
+    // Stage QG9d: the quest objects of the instances (only the instances with quest objects: MP-8).
+    for (auto& [id, instance] : m_instances) {
+        if (!instance.questObjects.empty()) {
+            look_quest_objects(instance);
+        }
     }
 }
 
@@ -311,7 +324,10 @@ void Instances::start_content(Instance& instance) {
     std::size_t portals = 0;
     if (recipes != nullptr && catalog != nullptr) {
         for (const gamedata::InstanceObject& object : recipes->instance_objects()) {
-            if (!same_text(object.mode, instance.mode) || !same_text(object.map, instance.map)) {
+            // Stage QG9d [data: m_spawnOnInitialize of the spawner of the mode root; live check of stage QG9c: the client sent ExitDungeon
+            // to its own portal of QuestSeraphim]: the client makes a portal whose spawner spawns at the init from the level data (the
+            // object with the member mode of interaction-data.json); the instance system makes no second one.
+            if (!same_text(object.mode, instance.mode) || !same_text(object.map, instance.map) || object.onInit) {
                 continue;
             }
             const std::optional<std::uint32_t> templateIndex = catalog->instance_object(object.slice);
@@ -327,8 +343,138 @@ void Instances::start_content(Instance& instance) {
         }
     }
     instance.content = instance.content || portals > 0;
-    log::write("world: the content of instance %llu (%s): %zu encounter(s), %zu exit portal(s)", static_cast<unsigned long long>(instance.id),
-               instance.map.c_str(), encounters, portals);
+    // Stage QG9d: the quest objects of the mode root (the heartgems of QuestCaerDun): an object of the mode with a template of the kind
+    // gathering, a row of the gathering data (gathering-data.json, member encounterObjects), and a game event that a task of the mode names
+    // [data; agent: the mode script that makes them is not in the client]. The instance makes each one while a member has its task active
+    // (look_quest_objects). The encounters of the mode wait: the tasks of the quest objects come before the tasks of the encounter (Caer
+    // Dun: PlaceHeartgem, SmashHeartgem, then the kill of Umberto and the final seal).
+    const gamedata::GatheringData* gathering = m_world.gathering().data();
+    const gamedata::QuestData* quests = m_world.quests().data();
+    if (recipes != nullptr && catalog != nullptr && gathering != nullptr && quests != nullptr) {
+        for (std::uint32_t index = 0; index < recipes->instance_objects().size(); ++index) {
+            const gamedata::InstanceObject& object = recipes->instance_objects()[index];
+            if (!same_text(object.mode, instance.mode) || !same_text(object.map, instance.map)) {
+                continue;
+            }
+            const std::optional<std::uint32_t> templateIndex = catalog->instance_object(object.slice);
+            const std::optional<gamedata::GatheringLink> link = gathering->encounter_object(object.slice);
+            if (!templateIndex || catalog->templates()[*templateIndex].kind != gamedata::InteractionKind::gathering || !link
+                || link->row >= gathering->rows().size() || gathering->rows()[link->row].event.empty()) {
+                continue;
+            }
+            const std::string event = gamedata::lower_text(gathering->rows()[link->row].event);
+            const bool named = std::any_of(quests->tasks().begin(), quests->tasks().end(), [&](const gamedata::QuestTask& task) {
+                return same_text(task.gameMode, instance.mode) && std::find(task.targets.begin(), task.targets.end(), event) != task.targets.end();
+            });
+            if (named) {
+                instance.questObjects.push_back(InstanceQuestObject{index, "e:" + event, 0, false});
+            }
+        }
+    }
+    if (!instance.questObjects.empty() && encounters > 0) {
+        instance.held = true;
+        m_world.encounters().hold_space(instance.space, true);
+    }
+    instance.content = instance.content || !instance.questObjects.empty();
+    log::write("world: the content of instance %llu (%s): %zu encounter(s), %zu exit portal(s), %zu quest object(s) of the mode root%s",
+               static_cast<unsigned long long>(instance.id), instance.map.c_str(), encounters, portals, instance.questObjects.size(),
+               instance.held ? " (the encounters wait for them)" : "");
+}
+
+void Instances::look_quest_objects(Instance& instance) {
+    const gamedata::EncounterData* recipes = m_world.encounters().data();
+    const gamedata::InteractionData* catalog = m_world.interactions().data();
+    if (recipes == nullptr || catalog == nullptr) {
+        return;
+    }
+    // The members in the space of the instance (a member that left has no entity there).
+    std::vector<const Entity*> present;
+    for (const auto& [characterId, member] : instance.members) {
+        const Entity* character = m_world.find_character(characterId);
+        if (character != nullptr && character->space == instance.space) {
+            present.push_back(character);
+        }
+    }
+    bool waiting = false;
+    for (InstanceQuestObject& quest : instance.questObjects) {
+        if (quest.gathered) {
+            if (quest.entity != 0) {
+                (void)m_world.interactions().remove_object(quest.entity);
+                instance.objects.erase(std::remove(instance.objects.begin(), instance.objects.end(), quest.entity), instance.objects.end());
+                quest.entity = 0;
+            }
+            continue;
+        }
+        waiting = true;
+        if (quest.entity != 0 || quest.object >= recipes->instance_objects().size()) {
+            continue;
+        }
+        const bool wanted = std::any_of(present.begin(), present.end(), [&](const Entity* character) {
+            return m_world.quests().mode_task_active(*character, instance.mode, {quest.key});
+        });
+        const gamedata::InstanceObject& object = recipes->instance_objects()[quest.object];
+        const std::optional<std::uint32_t> templateIndex = catalog->instance_object(object.slice);
+        if (!wanted || !templateIndex) {
+            continue;
+        }
+        const Interactions::SpawnedContainer made = m_world.interactions().spawn_container(
+            *templateIndex, object.position, object.yaw, object.key + "/instance/" + std::to_string(instance.id), instance.space);
+        if (made.entity == nullptr) {
+            continue;
+        }
+        quest.entity = made.entity->id;
+        instance.objects.push_back(made.entity->id);
+        m_world.gathering().encounter_object_made(*made.entity, object.slice);
+        ++m_counts.questObjectsMade;
+        log::write("world: instance %llu (%s) makes its quest object %s (%s) at %.2f %.2f %.2f: a member has the task of its event",
+                   static_cast<unsigned long long>(instance.id), instance.map.c_str(), object.spawner.c_str(), quest.key.c_str(),
+                   static_cast<double>(object.position.x), static_cast<double>(object.position.y), static_cast<double>(object.position.z));
+    }
+    if (!instance.held) {
+        return;
+    }
+    const bool later = std::any_of(present.begin(), present.end(), [&](const Entity* character) {
+        return m_world.encounters().mode_recipe_task(*character, instance.space);
+    });
+    if (!waiting || later) {
+        instance.held = false;
+        m_world.encounters().hold_space(instance.space, false);
+        log::write("world: the encounters of instance %llu (%s) start now: %s", static_cast<unsigned long long>(instance.id),
+                   instance.map.c_str(), waiting ? "a member has an active task of a recipe of the mode" : "each quest object is gathered");
+    }
+}
+
+const std::string* Instances::quest_object(EntityId object) const {
+    const gamedata::EncounterData* recipes = m_world.encounters().data();
+    if (object == 0 || recipes == nullptr) {
+        return nullptr;
+    }
+    const Entity* entity = m_world.find(object);
+    const Instance* instance = entity != nullptr ? instance_of_space(entity->space) : nullptr;
+    if (instance == nullptr) {
+        return nullptr;
+    }
+    for (const InstanceQuestObject& quest : instance->questObjects) {
+        if (quest.entity == object && !quest.gathered && quest.object < recipes->instance_objects().size()) {
+            return &recipes->instance_objects()[quest.object].slice;
+        }
+    }
+    return nullptr;
+}
+
+void Instances::quest_object_gathered(EntityId object) {
+    const Entity* entity = m_world.find(object);
+    const auto found = entity != nullptr ? m_bySpace.find(entity->space) : m_bySpace.end();
+    if (found == m_bySpace.end()) {
+        return;
+    }
+    Instance& instance = m_instances.at(found->second);
+    for (InstanceQuestObject& quest : instance.questObjects) {
+        if (quest.entity == object && !quest.gathered) {
+            quest.gathered = true;
+            ++m_counts.questObjectsGathered;
+        }
+    }
 }
 
 void Instances::member_gone(Instance& instance, const std::string& characterId, const char* cause) {
@@ -628,6 +774,7 @@ void Instances::end_instance(std::uint64_t id, const char* cause) {
     // and projectiles of a member end with its move). The space goes with the instance: a later instance gets a new one.
     const SpaceId space = found->second.space;
     // Stage QG9a: the content goes first, by its own systems (the encounters of the space and the objects of the instance).
+    m_world.encounters().hold_space(space, false);
     m_world.encounters().end_space(space);
     for (const EntityId object : found->second.objects) {
         (void)m_world.interactions().remove_object(object);

@@ -266,7 +266,20 @@ tools/gamedata/gathering.sh --near 8985 5328 10                # the gathering n
 
 The admin interface has the member `gathering` of the state of a character (the same values as `tools/world gathering`).
 
+- Stage QG9d ([Instances](instances.md)): a quest object of a mode root slice (the heartgems of QuestCaerDun) has the member
+  `encounterObjects` of the file (the key: its slice), with a direct row whose loot table is Empty or blank and whose game event a quest
+  task names, also with a tool (`instance_object_form`: `99B_MSQ_10_SmashHeartgem`, Mining with a pick, 35 s); the row is a quest row
+  (`quest`). The gather has the rules of its row and gives its event to the gatherer; then the instance system removes the object [data;
+  agent]. Stage QG9d, the tool: a mode object of a shared slice (`master_quest_instanced`, the jewel of QuestMedea) whose event no task
+  names is no quest object of an instance (the variant of its spawner, `variant` of the mode objects of the encounter data).
+
 ## Traps
+
+- Stage QG9d: the seal of Caer Dun (and each row of AzothStaff with RequiredTradeskillLevel above 0) shows "No equipped Azoth Staff Tier
+  N" also with an Azoth Staff in slot 38 when the rank of the trade skill AzothStaff is below N: the prompt has one text for a missing
+  tool and a low rank (static read AZOTH of stage QG9d: the gate 0x35C26E0). A chain that a test made short (`tools/world quest grant`)
+  has no rank 1 of `99A_MSQ_11_ForgeStaff_success`: give it with `tools/world tradeskill CHARACTER AzothStaff 1`, then walk out of the
+  range of the object and back.
 
 - Stage QG5a: a glyph lock needs the Azoth Staff in slot 38 and the rank 5 of the trade skill AzothStaff. Stage QG5b: the hand-ins of the
   main story give the ranks (the categorical progression reward, [Quests](quests.md)); for a test `tools/world tradeskill CHARACTER

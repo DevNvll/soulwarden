@@ -1461,7 +1461,8 @@ def instances_text(document: dict) -> str:
     counts = document["counts"]
     lines = [f"instances: {len(document['instances'])} now; {counts['made']} made, {counts['ended']} ended, {counts['entries']} entries, "
              f"{counts['exits']} returns, {counts['departures']} members that left the world, {counts['recovered']} rows of an earlier "
-             f"start, {counts['refused']} refused" + ("" if document.get("data", True) else " (the backend has no game modes)")]
+             f"start, {counts['refused']} refused, {counts.get('questObjectsMade', 0)} quest object(s) of a mode root made, "
+             f"{counts.get('questObjectsGathered', 0)} gathered" + ("" if document.get("data", True) else " (the backend has no game modes)")]
     for instance in document["instances"]:
         x, y, z = instance["start"]
         lines.append(f"  instance {instance['id']}  space {instance['space']}  map {instance['map']} ({instance['level']})  start "

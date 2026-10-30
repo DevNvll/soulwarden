@@ -9,6 +9,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -140,8 +141,13 @@ struct StoryShop : EncounterShop {
     /** `database`: a file of the store (code review of stage QG9a, finding QG9AR-R6: a trigger of the store refuses a row). */
     /** Stage QG9b: `document` and `quests`: the encounter data and the quest data of a case (default: the QuestMedea form of stage QG9a). */
     /** Stage QG9b: `mode`: the game mode of the map and of the entrance (the setting of QuestMedusa, case SY5). */
+    /**
+     * Stage QG9d: `more`: more level objects (the exit portal of a mode root that the client makes); `instanceObjects`: the templates of the
+     * objects of the mode root (default: the exit portal; the quest objects of case QG9D2 add the start object template).
+     */
     explicit StoryShop(const std::string& database = ":memory:", const json& document = story_document(),
-                       const json& quests = story_quests(), const char* mode = kMode)
+                       const json& quests = story_quests(), const char* mode = kMode, std::vector<gamedata::InteractionObject> more = {},
+                       std::map<std::string, std::uint32_t, std::less<>> instanceObjects = {{kPortalSlice, 1}})
         : EncounterShop({}, database) {
         check(host.gameModes.set({story_map(0, 600, mode)}), "setup: the map of the mode (the level of the main world)");
         std::vector<gamedata::InteractionOption> options{option_row("GatherOption", 14, true), option_row("OpenDungeonMenu", 71, true),
@@ -190,13 +196,14 @@ struct StoryShop : EncounterShop {
         portalBound.entity = kPortalBound;
         portalBound.options = {{kExitIndex, kPortalOption}};
         portal.bounds.push_back(portalBound);
-        if (!host.interactions.set(std::move(options), {},
-                                   {object_of(kCapitalTag, InteractionKind::gathering, kCapitalPlace, {kGatherOptionIndex}), entrance},
-                                   {start, portal})
+        std::vector<gamedata::InteractionObject> objects{object_of(kCapitalTag, InteractionKind::gathering, kCapitalPlace, {kGatherOptionIndex}),
+                                                         entrance};
+        objects.insert(objects.end(), more.begin(), more.end());
+        if (!host.interactions.set(std::move(options), {}, std::move(objects), {start, portal})
             || !host.interactions.set_encounter_objects({{kStartSlice, gamedata::EncounterObject{0, kVariationSlot, kVariant}}})) {
             throw std::runtime_error("story test: the interaction data was not set: " + host.interactions.error());
         }
-        host.interactions.set_instance_objects({{kPortalSlice, 1}});
+        host.interactions.set_instance_objects(std::move(instanceObjects));
         if (!host.quests.load_text(quests.dump())) {
             throw std::runtime_error("story test: the quest data did not load: " + host.quests.error());
         }

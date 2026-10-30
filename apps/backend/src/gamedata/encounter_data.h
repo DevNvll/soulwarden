@@ -144,7 +144,8 @@ struct EncounterShape {
     float radius{0.0F};
     float height{0.0F};
     std::array<float, 3> extents{0.0F, 0.0F, 0.0F};
-    /** m_center: the offset from the root (world axes). */
+    /** The offset of the center from the place of the recipe (or of the trigger) in world axes (stage QG9d: the tool turns m_center by the
+     *  rotation of the world transform of the entity of the volume, client 0x1710C60). */
     std::array<float, 3> center{0.0F, 0.0F, 0.0F};
 };
 

@@ -41,6 +41,13 @@ struct Known {
     /** Stage QG9c: for a creature, its Creature::renewal when the session added it (a different value: the session makes it again). */
     std::uint32_t renewal{0};
     /**
+     * Stage QG9d: the session made the creature again for a renewal (RepSession::update_interest): its first record has the death action
+     * and no dead mark, and the vitals state with the dead mark follows at deathMarkDue (kDeathMarkLead of rep_session.cpp).
+     */
+    bool renewed{false};
+    /** Stage QG9d: the time of the world clock of the vitals state with the dead mark of a renewed body. No value: nothing waits. */
+    std::optional<world::WorldClock::time_point> deathMarkDue{};
+    /**
      * For the own entity (stage 1.8a): the world revision of the last record with the states that wait for the first message 2709
      * (StateCodec::afterObjectivesEnable). 0: none of them went out.
      */

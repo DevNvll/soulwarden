@@ -19,7 +19,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 | The stacks of a status on a creature (stage B2): StackMax, the end of the rule of a character, the count at the name plate, the ApplicationCooldown on the target, the removal window, the one-time damage of a row with no duration | `Creatures::give_status`, `apply_effect`, `application_ready`, `stacks_of`, `remove_statuses`, `server/rep/states/status_state.cpp` (`encode_creature_status_state`), protocol notes 4.47, test cases BC1, BC2, BC6, BC7 |
 | The load of the world: the cost of the spawn rule, the time of a tick | `apps/backend/src/world/creatures.h` (`SpawnGrid`), `world/load_meter.h`, `tools/world list` (the line `load:`), test case WS2 |
 | The stationary targets (stage QG5c1: a totem, a nest): the place slot, the record with no movement state, the hit with no reaction, the kill and the respawn; the kept-out causes of the creature data | Protocol notes 4.14, `gamedata/creature_data.h` (`CreatureSlice::placeSlot`, `stationary`, `CreatureData::kept_out`), `server/rep/states/object_states.cpp` (`encode_target_place_state`), `world/creatures.cpp` (`hurt`, `knock`), `world/forced_motion.cpp`, `world/behavior.cpp` (`bind`), `tools/gamedata/creature_data.py` (`is_target`, `read_target_list`, `keep_out`), the list `targets` of `tools/gamedata/creature_slices.json`, test cases QG5C1A to QG5C1C |
-| The death of a slice with no reaction action after a hit (stage QG9c, the stop of the client at the kill of Medusa): the pending reaction that the client predicts, the renewal of the body on each client | `gamedata/creature_data.h` (`CreatureSlice::clearsReaction`), `world/creatures.cpp` (`hurt`, `set_health`), `world/entity.h` (`Creature::hitByCharacter`, `renewal`), `server/rep/rep_session.cpp` (`update_interest`, `kRenewalGap`), `server/rep/states/movement_state.cpp` (`creature_scope`), the section "The death of a slice with no reaction action" below, test case QG9C1 (`tests/reaction_renewal_tests.cpp`) |
+| The death of a slice with no reaction action after a hit (stage QG9c, the stop of the client at the kill of Medusa): the pending reaction that the client predicts, the renewal of the body on each client | `gamedata/creature_data.h` (`CreatureSlice::clearsReaction`), `world/creatures.cpp` (`hurt`, `set_health`), `world/entity.h` (`Creature::hitByCharacter`, `renewal`), `server/rep/rep_session.cpp` (`update_interest`, `kRenewalGap`, stage QG9d: `kDeathMarkLead`, `add_creature_record`), `server/rep/states/movement_state.cpp` (`creature_scope`), `server/rep/states/vitals_state.cpp` (`PartsRequest::renewedAlive`), the section "The death of a slice with no reaction action" below, test cases QG9C1, QG9D1 (`tests/reaction_renewal_tests.cpp`), QG9CR2, QG9CRC (`tests/review_qg9c_tests.cpp`) |
 
 ## Rules
 
@@ -490,9 +490,20 @@ folders of these stages.
   the client does not make it the current record of a remote creature (its selection 0x693DBD0 needs a key of an action state and a gate,
   static read REACTION, Q3); a death action with a time past its end gives one insertion in its first frame (the repair runs before the clamp
   of the fragment time) and the client stops.
-- The limit [live]: the new client entity of the body shows no body (the client shows the despawn effect of the old entity, and the new
-  record of a dead creature shows nothing). A skinning or a loot use of such a body is not possible. 18 slices that a session can see have
-  this form (the list below); the others keep the death action of their body.
+- Stage QG9d, the form of the first record of a renewed body (it replaces the limit of stage QG9c, "the new record of a dead creature
+  shows nothing"): the first record after the renewal has the death action from its start and the vitals state with no dead mark (a body
+  that lives, at the health 0); `kDeathMarkLead` (1 s) later the session sends the vitals state with the dead mark
+  (`Known::renewed`, `Known::deathMarkDue`, `PartsRequest::renewedAlive`). The client makes a new entity that lives, plays its death, and
+  gets the death effect of its slice: the body of Medusa stays on the ground as at a death with no hit, and the Corrupted Ogre dissolves
+  as at a death with no hit [agent; live run P1 of stage QG9d: `videos/qg9d-p1-medusa-a.mp4` and `qg9d-p1-medusa-control.mp4`,
+  `qg9d-p1-ogre-a.mp4` and `qg9d-p1-ogre-control.mp4`, `shots/P1-03-medusa-body-later.png`; no stop of the client]. The cause of the
+  limit of stage QG9c [inference]: a first record with the dead mark makes an entity that is dead at its start, and the client does not
+  show its body. A later observer of a dead body (no renewal) still gets the dead mark in its first record: not checked live. The renewed
+  body has 250 ms with no record before it (the gap). Case QG9D1.
+- Code review of stage QG9c, finding QG9CR-R2 (stage QG9d): a due renewal makes the creature again at once for each session that had it
+  when its distance is at most the leave distance of the interest (also beyond the radius of the scan of the new entities); a wait whose
+  creature left the world, went to an other space, or is beyond that distance ends, and the next scan adds the creature by the enter
+  rule. No wait stays due (before: the scan of the session ran in each update) [agent]. Case QG9CR2.
 - The slices (the creature data of the stage, `scripts/no_reaction_slices.py` of the evidence folder of stage QG9c): ancient_gargoyle,
   naga_withered_bride, ancient_amalgam_stone, worldevent_ai_risen_brute_20214, corruptedlegion_cyclops, ancient_amalgam, undead_brute,
   undead_pirate_brute, brute_yeti, corrupted_ogre, dryad_beast, undead_brute_gold, damned_priest, ai_fl_medusa, ai_fl_medusa_daily,

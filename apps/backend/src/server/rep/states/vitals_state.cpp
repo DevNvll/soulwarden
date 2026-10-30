@@ -106,7 +106,7 @@ std::vector<hub::Bytes> encode_creature_vitals_state(const world::Entity& entity
     const world::Creature& creature = entity.creature;
     StateWriter state(kGroups);
     state.field(0, kHealthAmount).f32(vitals.health);
-    write_vitals_data(state.field(0, kVitalsData), creature.dead);
+    write_vitals_data(state.field(0, kVitalsData), creature.dead && !request.renewedAlive);
     // Without this bit the client stores the health and tells no listener: the bar of the name
     // plate does not change (client code at image RVA 0x689FDC0; live proof).
     state.field(0, kHealthChangeFlags).u8(kHealthChangeNotify);

@@ -8191,6 +8191,33 @@ F1 to F4 of stage QG9c; static: static read REACTION of stage QG9c; the renewal 
   in the past: the client stopped.
 - Limit [live]: after the renewal the client shows the despawn effect of the body, not the body on the ground.
 
+**Stage QG9d: the form of the first record of a renewed body** [live: runs P1 of stage QG9d; project rule]: the first record after the
+renewal has the death action from its start and the vitals state (type 15) with the flags byte 0 in vitalsData (no dead mark; the health
+0); `kDeathMarkLead` (1 s) later the session sends the vitals state with the dead mark (bit 0) for the same interest number. The client
+makes an entity that lives, plays its death fragment, and shows the death effect of its slice at the mark; the body of Medusa stays on the
+ground, and the client does not stop (no pending reaction on the new entity). With the dead mark in the first record (stage QG9c) the new
+entity showed no body [live; the cause is an inference].
+
+**Stage QG9d: the offset of a detection volume** [static: static read AXES of stage QG9d]: DetectionVolumeComponent (reflection 0x17608F0:
+`m_center` at +0x140, `m_shape` +0x160, `m_shapeEntityID` +0x170). The transform reader 0x1714A80 takes GetWorldTM of `m_shapeEntityID`, else
+of its own entity. The pose helper 0x1710C60 removes the scale (0x1710EC7, when each axis has a length above 0) and computes the matrix
+times `m_center` (0x1710F01 to 0x1710F2D): a local offset with the rotation and no scale. With a shape entity it takes the center of the
+world AABB of the engine shape of that entity (0x1710D10 to 0x1710D36) and does not read `m_center`. The debug draw 0x177D7E0 adds
+`m_center` again in world axes (a debug path only). The server facet is a stub in the client (vtable entries to 0x294860): the query of
+the server is not proved. The backend applies the pose helper rule in the tool (docs/systems/encounters.md).
+
+**Stage QG9d: the exit portal of a mode root that the client makes** [data; live]: the spawner `Portal` of the seraph mode root
+(m_spawnOnInitialize true, not client-authoritative) gives a client child with the id of 0x6160B60 (the place 4877.52 5206.106 97.5, the
+yaw bucket, the slice asset: G 0860c3145624c367, actor 67c3245614c36008); the client sends ExitDungeon (action 74, option D5D62681) to it
+also in the space of an instance. The backend takes it for a member of an instance of the mode of the object (the member `mode` of
+interaction-data.json) [project rule; live run P2: the leave to the return place].
+
+**Stage QG9d: the cinematic of the Heartforge** [data; live]: the stage `Wave_04 - TriggerCinematic` of
+`enc_worldevent_heartforgeguardian` starts the IGC `99A_MSQ_15_YonasTheAltarRitual_IGC` and the DelayedEvent `Delay` (22 s) that triggers
+`02_Trigger_IGC_Spawner_Bink` (PlayCinematicVideoComponent, `m_cinematicEntryId` FTUE_Rit, local player only). Live (no sound): 0x2CC7E70
+with the entry id `FTUE_Rit` (read of the facet +0xF8), then 0x6506CB0, no 0x2EF9A00, no 6606 and no 6542: the white screen of 4.58. No
+task of the quest data waits for this cinematic.
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

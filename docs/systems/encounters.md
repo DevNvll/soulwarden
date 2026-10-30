@@ -26,6 +26,7 @@ wire contracts are in the protocol notes (section 4.62). The quest events are in
 | Stage QG5c5: the Darkness events and the boat reinforcements: the season rule, the group members and their parts, the spawns of an alias, the slices of a tracked alias, the stages that wait for their parent, the DestroySliceAction, the parts that the client does not show (the fill), the start objects of an earlier stage | `world/encounters.h` (`encounter_rules::kDarknessAtAllTimes`, `EncounterPlacement::partKinds`, `fills`, `EncounterMemberRun::part`), `world/encounters.cpp` (`resolve`, `spawn`, `count_destroyed`, `children_done`, `destroy_slices`), `gamedata/encounter_data.h` (`EncounterPart`, `EncounterDestroy`, `EncounterSpawn::alias`, `EncounterObjective::trackedSlices`, `EncounterObjectiveKind::waitParent`, `EncounterRecipe::season`), `world/entity.h` (`Creature::memberRoute`), `tools/gamedata/encounter_recipes.py` (`group_parts`, `part_route`, `alias_tiers`, `Reader.alias`), test cases QG5C5A to QG5C5F (`tests/encounter_darkness_tests.cpp`) |
 | The corrections of the code review of stage QG5c4 (QG5C4R-R1 to R5) | Test cases QGR5C4A to QGR5C4F (`tests/review_qg5c4_tests.cpp`; QGR5C4F starts the world with each encounter data file missing) |
 | Stage QG9a: the instance recipes (the encounter of a mode root slice), the cutscene stage and its grant, the event stage, the background stage of the manager, the start objects that the runner skips | `world/encounters.cpp` (`runs_mode`, `start_space`, `end_space`, `space_done`, `scan_spaces`, `cutscene_requested`, `cutscene_ended`, `DueKind::eventMet`), `gamedata/encounter_data.h` (`EncounterRecipe::mode`, `map`, `daily`, `EncounterObjectiveKind::cutscene`, `event`, `EncounterSpawn::skip`, `InstanceObject`), `tools/gamedata/encounter_recipes.py` (`Reader.mode_roots`, `Reader.mode_objects`), [Instances](instances.md), test cases SI4, SI5, SI7 (`tests/story_instance_tests.cpp`) |
+| Stage QG9d: the axes of the offset of a detection volume, the wait of the recipes of a space for the quest objects of the mode root, the corrections of the code review of stage QG9c (QG9CR-R1, R3, R4) | `tools/gamedata/encounter_recipes.py` (`local_offset`, `mode_area`, the detector and trigger shapes), `world/encounters.cpp` (`hold_space`, `mode_recipe_task`, `spawn` and `encounter_rules::kFloorWait`, `count_earlier_deaths`, `DueKind::eventMet`), the case `axes` of `check_encounters_tool.py`, test cases QG9CR1, QG9CR3, QG9CR4 (`tests/review_qg9c_tests.cpp`), QG9D2 (`tests/story_mode_qg9d_tests.cpp`) |
 | Stage QG9b: the detector of the mode areas, the end rules of the waits and of the stages with no objective, the boss phases and BossPhaseObjective, the spawns of the parent and of the earlier stages, the gate of a mode with more than one recipe | `world/encounters.cpp` (`advance_phases`, `look_phases`, `count_earlier_deaths`, `DueKind::endRule`, `DueKind::phases`, `EncounterPlacement::gated`), `gamedata/encounter_data.h` (`StageEnd`, `BossPhase`, `EncounterObjectiveKind::bossPhase`, `none`, `EncounterRecipe::detectorFromMode`), `world/quests.h` (`mode_task_active`), `tools/gamedata/encounter_recipes.py` (`mode_area`, `boss_phases`), `tools/gamedata/encounters.py` (`phase_index`, `phase_boss`), test cases SY1 to SY3 (`tests/story_mode_tests.cpp`), QG9AR4, the cases `mode-*` of `check_encounters_tool.py` |
 
 ## Rules
@@ -341,8 +342,21 @@ data does not decide), [user] a decision of the user, [review] a correction of a
   (about 131.8 m up: the boss arena) [data]. In the towers 10304, 10306, and 20338 the id is in no slice of the game copy (a scan of all
   slices found each id only in its own slice): the box stays at the root, and the sphere of the trigger of the setup is a shape of the
   detector too (`fromTrigger`) [agent: the fight is at the top, where the trigger is; with the box at the ground no character at the top
-  is a participant]. The offset `m_center` is in
-  world axes, and a box is aligned with the world axes [agent: the shapes of the data have no horizontal offset].
+  is a participant]. A box is aligned with the world axes [agent: the query of the server facet is not in the client].
+- Stage QG9d, the axes of the offset of a shape (it replaces the agent rule of stage QG5c4 "`m_center` in world axes"): the center of a
+  detection volume is its offset `m_center` in the local axes of the world transform of its entity, with the scale removed (when each
+  axis has a length above 0) [client 0x1710C60, the pose helper of the detection volume: the world transform 0x1714A80 (GetWorldTM),
+  the scale removal at 0x1710EC7, the matrix times `m_center` at 0x1710F01 to 0x1710F2D; a second caller 0x38E6C67; static read AXES
+  of stage QG9d]. A volume whose `m_shapeEntityID` names an other entity is at the place of that entity, and the helper does not read
+  `m_center` there (each such shape of the data has `m_center` 0) [client 0x1710D10]. The tool writes the result as the offset from the
+  root in world axes (`encounter_recipes.local_offset`), for the detector shapes, the trigger shapes, and the areas of the mode roots; the
+  runner needs no change. Of the 51 shapes with an offset, 7 move: the Thorpe event `252dc917.../6921051` (38.6 m, yaw -150), the two
+  Medea recipes (17.4 m, yaw 93), the two Gawain recipes (23.1 m), `d4106a27` (3.8 m), `eb8b7031` (6.0 m); the others have an entity
+  with no turn in the world or a shape entity [data: `logs/shape-moves.txt` of the evidence of stage QG9d]. The root of the Yonas boss
+  slice has the turn +115 in its slice and the spawner -115: its world turn is 0, and its center does not move [data; the rule of the
+  spawn of a slice root: the spawner transform times the slice transform of the root, as for each spawn location].
+  Live (stage QG9d): Medea starts only for a character in the new sphere (not in the old one); Thorpe makes a participant only in the
+  new sphere [live: `videos/qg9d-medea-new-center.mp4`, `qg9d-thorpe-new-center.mp4`, `shots/T1-02-thorpe-new-center.png`].
 - Each participant has the G of the root in the field 5 of its player Objectives state (one encoder: `objectives_state.cpp`); the client
   then shows the encounter at the top of the tracked list with the teal diamond icon [live QG5c1 I2]. The link goes at the end of the
   instance or when the character is no participant [agent]. A session stores no encounter state: the links are in the entity of the
@@ -496,6 +510,29 @@ mode root slices and of the encounter slices, and the live runs of stage QG9b. E
   encounter CHARACTER`) [agent, stage QG9c: Lady Asena of QuestWolf has her spawn location 6.7 m above the floor of the cave, at the start of
   the jump of her intro (Phase_Intro, Pounce); the boss tree is not in the client; at that location the client showed no body and no hit
   reached her]. A creature member of the main world keeps its spawn location. Case SY6.
+- Code review of stage QG9c, finding QG9CR-R1 (stage QG9d): a spawn of a creature member of an instance recipe waits for the navigation tile
+  of each of its spawn locations (`Navigation::line_ready`), each `encounter_rules::kFloorWait` (100 ms), at most `kFloorTries` (50)
+  times; then the floor rule above takes the floor that the navigation has. The terrain under a roof (a tile that is not in the world yet)
+  is not the floor, and the home and the anchor of the member come from the place of the spawn [agent; review: the data has the raised
+  floors of Umberto, the four seraphs, and Apophis; count `spawnsWaited`]. Case QG9CR1.
+- Code review of stage QG9c, finding QG9CR-R3 (stage QG9d): an earlier death does not count for a stage when a destroyed objective of the
+  source stage of the member, or of a stage above it that is not a parent of the stage, counts the member (a wave that has its creature
+  in a child setup consumed the death); a parent of the stage and the setup of the manager still supply it [agent; the rule of finding
+  QG9BR-R1 for a child setup]. Case QG9CR3.
+- Code review of stage QG9c, finding QG9CR-R4 (stage QG9d): a met event meets only the EncounterEventObjective; an other objective of the
+  stage (a destroyed objective of `more`) keeps its count, and the stage ends when each objective is met (the rule of `count_objective`)
+  [agent]. Case QG9CR4.
+- Stage QG9d, the quest objects of a mode root (QuestCaerDun): the instance recipes of a space wait (`Encounters::hold_space`, no look at
+  their detector) while the instance waits for its quest objects ([Instances](instances.md)); the instance ends the wait when each quest
+  object is gathered or when a member has an active task of the mode that names a recipe of the space (`Encounters::mode_recipe_task`, the
+  task keys of each instance recipe, `EncounterPlacement::taskKeys`: now of each instance recipe, the gate only for a mode with more than one
+  recipe) [agent from the quest data: the tasks of the heartgems come before the kill of Umberto; the mode script is not in the client].
+- Stage QG9d, QuestYonas: the boss fight does not run (open, input of stage BT3). The center of its detector does not move (the rule
+  above). Yonas stands at his anchor 43 m from that center; his leash is 20.1 m from his anchor (`behavior.leash` of his slice) and his
+  sight 20 m with a front cone of 180 degrees; at the start of the boss stage he takes the nearest participant and drops it ("the target
+  is too far"), and a character near him is out of the detector (the fail after the grace of 10 s) [live: `logs/p2-backend.log`,
+  `videos/qg9d-yonas-leash.mp4` of the evidence of stage QG9d]. The boss tree that brings him into the fight
+  (`quest_npcs/yonas/msq2.2/yonas_msq2_basebehavior`) is not in the client.
 - Live (stage QG9b): QuestMedusa (the area trigger of the setup in the instance, the intro IGC, the music stage with no objective, the
   wave phases of Medusa, the boss fight, the cleanup of 6 s with the DestroySliceAction of the adds, the success), QuestMammoth (the stages
   `Phase_01` to `Phase_04`, the root caster), and QuestApophis (the intro wait, the burrow phases with their Myrmidons, the cleanup with no

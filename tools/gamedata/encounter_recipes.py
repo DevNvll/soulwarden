@@ -59,8 +59,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure, field_id  # noqa: E402
 from creature_data import (REGIONS_FOLDER, TABLES_FOLDER, Catalog, Sources, asset_id, read_alias, read_target_list,  # noqa: E402
                            slice_assets, spawner_path)
-from interactions import (IDENTITY, INTERACT_CLASS, child_of, matrix_of, multiply, placement_matrix, quaternion_of, text_of,  # noqa: E402
-                          walk)
+from interactions import (IDENTITY, INTERACT_CLASS, child_of, matrix_of, mode_root_slices, multiply, placement_matrix,  # noqa: E402
+                          quaternion_of, text_of, walk)
 from item_catalog import Sheet, sheet_type  # noqa: E402
 from slice_ids import (COMPONENTS_FIELD, ENTITY_TYPE, ID_FIELD, NAME_FIELD, component_id, find_field, id_value)  # noqa: E402
 
@@ -123,7 +123,7 @@ F = {name: field_id(name) for name in (
     "m_trackedSlice", "m_trackedAlias", "m_requiredCount", "m_type", "m_applyRecursively", "m_localPlayerOnly", "m_localOnly",
     "m_vitalsTableRowId", "m_vitalsCategoryTableRowId", "m_vitalsLevel", "m_maintainPopulation", "m_spawnOnEnable", "m_spawnOnTrigger",
     "m_liveCount", "m_minRespawnRange", "m_maxRespawnRange", "m_minRespawnCooldown", "m_maxRespawnCooldown", "m_respawnAfterDeath",
-    "m_spawnOnInitialize", "m_isClientAuthoratative", "m_worldTM", "m_selectedVariant", "m_variationTableUniqueName",
+    "m_spawnOnInitialize", "m_isClientAuthoratative", "m_worldTM", "m_selectedVariant", "m_variationTableUniqueName", "m_sliceVariant",
     "m_gatherableEntryId", "m_eventId", "m_entityRef", "m_isProximityGatherable",
     "m_overrideAggroDelay", "m_aggroDelayOverride",
     "m_rowReference", "m_timeDelaySeconds", "m_eventData", "m_startDelayOnInit", "m_startDelayOnTrigger", "m_events", "m_Height",
@@ -141,12 +141,10 @@ PATH_CLASS = uuid.UUID("fa7fa996-f8c3-4cd0-8313-042fb6a66578")
 WAYPOINT_CLASS = uuid.UUID("3d1526bf-ac9c-4a5d-8b0d-00abfccd19f1")
 PATH_POLICIES = 4
 TASK_TYPE = "ObjectiveTasks"
-# Stage QG9a (docs/systems/instances.md): the tables of the game modes and of their maps. A map of a solo mode (IsSoloTrial 1) whose level is
+# Stage QG9a (docs/systems/instances.md): the tables of the game modes and of their maps (interactions.mode_root_slices, stage QG9d: one
+# reader for both tools). A map of a solo mode (IsSoloTrial 1) whose level is
 # the main world (CoatlicueName coatlicue\\NewWorld_VitaeEterna) has a mode root slice (SlicePath) that a layer of the main world places
 # (Dungeon/MedeaWindsward/MedeaScript in the layer 06sw_medea_script): its spawners are the encounters and the objects of the instance.
-MODES_TABLE = TABLES_FOLDER + "javelindata_gamemodes.datasheet"
-MAPS_TABLE = TABLES_FOLDER + "javelindata_gamemodemaps.datasheet"
-MAIN_TERRAIN = "coatlicue/newworld_vitaeeterna"
 # Stage QG9b (docs/systems/instances.md): the shape components of the engine (the shape of a detection volume with no query shape; the class
 # ids of triggers.py ENGINE_SHAPES and nav_slices.py): a box (Dimensions: the full size), a sphere (Radius), a cylinder (Radius, Height),
 # a capsule (Radius, Height).
@@ -270,6 +268,16 @@ def axis_scales(matrix: tuple[float, ...]) -> list[float]:
     return [math.sqrt(matrix[axis] ** 2 + matrix[4 + axis] ** 2 + matrix[8 + axis] ** 2) for axis in range(3)]
 
 
+def local_offset(matrix: tuple[float, ...], offset: list[float]) -> list[float]:
+    """Stage QG9d: @return The offset m_center of a detection volume in world axes: the rotation of the world transform of its entity times
+    the offset, with the scale of the transform removed (the pose helper of the detection volume, client 0x1710C60: it removes the scale
+    when each axis has a length above 0, then the matrix times m_center; static read AXES of stage QG9d). With an axis of the length 0 the
+    scale stays (the helper removes it only when all three lengths are above 0)."""
+    scales = axis_scales(matrix)
+    columns = scales if all(scale > 0.0 for scale in scales) else [1.0, 1.0, 1.0]
+    return [sum(matrix[row * 4 + axis] / columns[axis] * offset[axis] for axis in range(3)) for row in range(3)]
+
+
 def mode_area(entities: dict[int, dict], info: dict, world: tuple[float, ...]) -> dict | None:
     """Stage QG9b: @return The detection volume of the players of an entity of a mode root slice (the areas AreaBoss, AreaBossStart,
     AreaBossTeamwipe of the mode script) in the world, or no value (no detection volume, or a filter that is not of the players):
@@ -284,8 +292,13 @@ def mode_area(entities: dict[int, dict], info: dict, world: tuple[float, ...]) -
     if "player" not in flt.lower():
         return None
     shape = detector_shape(component)
-    holder = entities.get(shape.pop("_shapeEntity", None) or -1, info)
+    shape_entity = entities.get(shape.pop("_shapeEntity", None) or -1)
+    shape_entity = shape_entity if shape_entity is not info else None
+    holder = shape_entity or info
     matrix = multiply(world, holder["matrix"])
+    # Stage QG9d (client 0x1710C60, static read AXES): the center of the volume is its offset in the local axes of its entity; a volume with a
+    # shape entity is at the place of that entity (the helper takes the center of the shape of that entity and does not read m_center).
+    shape["center"] = [0.0, 0.0, 0.0] if shape_entity is not None else [round(value, 4) for value in local_offset(matrix, shape["center"])]
     area = {"name": info["name"], "position": place_of(matrix)["position"], "filter": flt, **shape}
     if shape["shape"] != "none":
         return area
@@ -656,29 +669,8 @@ class Reader:
         return chosen, every
 
     def mode_roots(self) -> dict[str, dict]:
-        """Stage QG9a: @return The mode root slices of the solo modes whose level is the main world: the lower-case slice name of a placement
-        (SlicePath of the map row, with "/") to its mode and its map. A solo mode is a row with IsSoloTrial 1 [data]; a separate level
-        (CoatlicueName of a different terrain) is stage DG2 (its level data)."""
-        modes_data = self.sources.read(MODES_TABLE)
-        maps_data = self.sources.read(MAPS_TABLE)
-        if modes_data is None or maps_data is None:
-            raise Failure(f"the game copy has no {MODES_TABLE if modes_data is None else MAPS_TABLE}")
-        modes, maps = Sheet(modes_data), Sheet(maps_data)
-        for sheet, path, columns in ((modes, MODES_TABLE, ("GameModeId", "IsSoloTrial")),
-                                     (maps, MAPS_TABLE, ("GameModeMapId", "GameModeId", "SlicePath", "CoatlicueName"))):
-            missing = [column for column in columns if column not in sheet.columns]
-            if missing:
-                raise Failure(f"{path} has no column {', '.join(missing)}")
-        solo = {modes.source(row, "GameModeId").strip().lower() for row in range(modes.row_count)
-                if modes.source(row, "IsSoloTrial").strip() == "1"}
-        roots: dict[str, dict] = {}
-        for row in range(maps.row_count):
-            mode = maps.source(row, "GameModeId").strip()
-            terrain = maps.source(row, "CoatlicueName").replace("\\", "/").strip().lower()
-            path = maps.source(row, "SlicePath").replace("\\", "/").strip().lower()
-            if mode.lower() in solo and terrain == MAIN_TERRAIN and path:
-                roots[path] = {"mode": mode, "map": maps.source(row, "GameModeMapId").strip()}
-        return roots
+        """Stage QG9a: @return The mode root slices of the solo modes whose level is the main world (interactions.mode_root_slices)."""
+        return mode_root_slices(self.sources)
 
     def task_events(self) -> set[str]:
         """@return The game events (lower case) that a quest task names: KillEnemyType of the task tables."""
@@ -944,21 +936,30 @@ class Reader:
         recipe.update(position=place["position"], rotation=place["rotation"], yaw=place["yaw"])
         holder = tracker_entity if tracker_entity in detectors else recipe["root"] if recipe["root"] in detectors \
             else next(iter(detectors), None)
-        shapes = detectors.get(holder) if holder is not None else None
+        # A copy: the shapes of a volume of a trigger below keep their own m_center.
+        shapes = [dict(shape) for shape in detectors[holder]] if holder is not None else None
         if shapes is not None:
-            # Stage QG5c4: a shape whose m_shapeEntityID names an other entity of the slice is at the place of that entity (its offset from
-            # the root in world axes, plus m_center); "shapeEntity" names it, or is "missing" for an id that no entity of the slice has
-            # (the eight tarot towers: the id is in no slice of the game copy; encounters.py adds their trigger, see below).
+            # Stage QG5c4: a shape whose m_shapeEntityID names an other entity of the slice is at the place of that entity; "shapeEntity"
+            # names it, or is "missing" for an id that no entity of the slice has (the eight tarot towers: the id is in no slice of the game
+            # copy; encounters.py adds their trigger, see below). Stage QG9d (client 0x1710C60, static read AXES): the center of a shape is
+            # its offset m_center in the local axes of the world transform of its entity (the rotation, no scale), from the place of that
+            # entity; a shape whose shape entity is an other entity of the slice is at the place of that entity, with no m_center (the helper
+            # does not read it there; each such shape of the data has m_center 0). "center" stays the offset from the root in world axes
+            # (the format of the backend).
+            holder_world = multiply(matrix, entities[holder]["matrix"]) if holder in entities else matrix
+            holder_at = place_of(holder_world)["position"]
             for shape in shapes:
                 entity = shape.pop("_shapeEntity", None)
-                if entity is None or entity == holder:
-                    continue
-                if entity not in entities:
+                if entity is not None and entity != holder and entity not in entities:
                     shape["shapeEntity"] = "missing"
                     continue
-                at = place_of(multiply(matrix, entities[entity]["matrix"]))["position"]
-                shape["center"] = [round(at[axis] - place["position"][axis] + shape["center"][axis], 4) for axis in range(3)]
-                shape["shapeEntity"] = entities[entity]["name"]
+                if entity is not None and entity != holder:
+                    at = place_of(multiply(matrix, entities[entity]["matrix"]))["position"]
+                    shape["center"] = [round(at[axis] - place["position"][axis], 4) for axis in range(3)]
+                    shape["shapeEntity"] = entities[entity]["name"]
+                    continue
+                offset = local_offset(holder_world, shape["center"])
+                shape["center"] = [round(holder_at[axis] - place["position"][axis] + offset[axis], 4) for axis in range(3)]
             radii = [shape.get("radius", 0.0) for shape in shapes if shape["shape"] in ("sphere", "cylinder")]
             recipe["detector"] = {"radius": max(radii, default=0.0), "filter": shapes[0]["filter"],
                                   "sphere": all(shape["shape"] == "sphere" for shape in shapes),
@@ -1044,11 +1045,22 @@ class Reader:
                 shapes = [shape for shape in detectors.get(volume, []) if shape["shape"] != "none"]
                 if not shapes or volume not in entities:
                     continue
-                at = place_of(multiply(matrix, entities[volume]["matrix"]))
+                volume_world = multiply(matrix, entities[volume]["matrix"])
+                at = place_of(volume_world)
+                placed = []
+                for shape in shapes:
+                    # Stage QG9d (client 0x1710C60): m_center in the local axes of the volume entity; a shape entity gives its place.
+                    entry = {key: value for key, value in shape.items() if key not in ("filter", "_shapeEntity")}
+                    holder = shape.get("_shapeEntity")
+                    holder = holder if holder != volume else None
+                    if holder is not None and holder in entities:
+                        held = place_of(multiply(matrix, entities[holder]["matrix"]))["position"]
+                        entry["center"] = [round(held[axis] - at["position"][axis], 4) for axis in range(3)]
+                    elif holder is None:
+                        entry["center"] = [round(value, 4) for value in local_offset(volume_world, shape["center"])]
+                    placed.append(entry)
                 triggers.append({"entity": entities[volume]["name"], "position": at["position"], "filter": shapes[0]["filter"],
-                                 "deadTargets": dead,
-                                 "shapes": [{key: value for key, value in shape.items() if key not in ("filter", "_shapeEntity")}
-                                            for shape in shapes]})
+                                 "deadTargets": dead, "shapes": placed})
             objective["triggers"] = triggers
             objective["changedBy"] = senders["gathers"]
             # Stage QG5c4 (a rule of this project): the detector of the participants of the tarot towers is a box at the ground whose
@@ -1126,7 +1138,9 @@ class Reader:
                                 self.mode_objects.append({"mode": mode_root["mode"], "map": mode_root["map"],
                                                           "key": object_key, "slice": target,
                                                           "spawner": info["name"], **place,
-                                                          "onInit": number(field(component, "m_spawnOnInitialize")) != 0})
+                                                          "onInit": number(field(component, "m_spawnOnInitialize")) != 0,
+                                                          # Stage QG9d: the variant of the spawned slice (gathering.py instance_capital).
+                                                          "variant": text(field(component, "m_sliceVariant"))})
                             continue
                         key = f"{placement.get('id', '')}/{spawner_entity}"
                         if key in recipes:

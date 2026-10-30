@@ -439,6 +439,13 @@ def quest_form(cells: dict, what: str, empty_loot: set[str] | frozenset[str] = f
             and bool(cells.get("GameEventID", "").strip()))
 
 
+def instance_object_form(cells: dict, task_events: set[str]) -> bool:
+    """Stage QG9d: @return True for a direct gatherable row of a quest object of a mode root slice (the heartgems of Caer Dun): the loot table
+    Empty or blank and a GameEventID that a quest task names, with any gathering type (99B_MSQ_10_SmashHeartgem: Mining, a pick, 35 s). The
+    gather has the rules of its row and gives its event."""
+    return (cells.get("FinalLootTable", "").strip() in ("", "Empty") and cells.get("GameEventID", "").strip().lower() in task_events)
+
+
 def task_event_form(cells: dict, task_events: set[str]) -> bool:
     """@return True for a gatherable row of a quest gimmick (stage QG5b, the direct bindings): the loot table Empty or blank, no tool
     (GatheringType None or blank), and a GameEventID that a quest task names (the cannon Gimmick_BreakingWallsCannon_Vignette of
@@ -889,6 +896,27 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
         counts["encounterDirect"] = counts.get("encounterDirect", 0) + 1
         return [template, row_of(identifier, f"{what}: the direct gatherable row"), extra["tag"], extra["onlyOnQuest"]]
 
+    def instance_capital(template: int, variant: str, what: str) -> list | None:
+        """Stage QG9d: @return The entry of a quest object of a mode root slice (a server child of the instance system: the heartgems of
+        Caer Dun), or no value: a quest object of the rule of quest_capital, or a direct row with the loot table Empty or blank and a game
+        event that a quest task names, with any gathering type (99B_MSQ_10_SmashHeartgem: Mining, a pick, 35 s; its event
+        99B_MSQ_10_SmashHeartgem_interact). The gather has the rules of its row (the tool, the rank, the time) and gives its event [data: the
+        rows; agent: the mode script that makes the objects is not in the client]. Only a row whose event a quest task names: a mode object of
+        a shared slice (master_quest_instanced, the jewel of QuestMedea: no task names its event) is no quest object of an instance."""
+        entry = quest_capital(template, variant, what)
+        if entry is not None:
+            return entry if rows[entry[1]]["event"].strip().lower() in tables.task_events else None
+        identifier = slices.templates[template]["entry"]
+        if slices.templates[template]["table"] or not identifier or identifier.lower() not in tables.rows:
+            return None
+        if not instance_object_form(tables.rows[identifier.lower()][1], tables.task_events):
+            return None
+        row = row_of(identifier, f"{what}: the direct gatherable row")
+        rows[row]["quest"] = True
+        counts["instanceQuestObjects"] = counts.get("instanceQuestObjects", 0) + 1
+        extra = slices.extra[template]
+        return [template, row, extra["tag"], extra["onlyOnQuest"]]
+
     spawner_cache: dict[str, list[dict]] = {}
 
     def spawners_of(path: str) -> list[dict]:
@@ -986,6 +1014,17 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
                 counts["encounterObjectsLeftOut"] = counts.get("encounterObjectsLeftOut", 0) + 1
                 continue
             encounter_objects[member["slice"]] = entry
+        # Stage QG9d: the quest objects of the mode root slices (encounter_recipes.Reader.mode_objects; the instance system of the backend
+        # makes each one while a member has an active task of the mode that names its event). Same member: the backend finds a server child
+        # of a slice by its slice path.
+        for entry in reader.mode_objects:
+            if entry["slice"] in encounter_objects or not sources.has(entry["slice"]):
+                continue
+            template = slices.template_of(entry["slice"], False)
+            link = instance_capital(template, entry.get("variant", ""), f"the instance object {entry['slice']}") \
+                if template is not None else None
+            if link is not None:
+                encounter_objects[entry["slice"]] = link
     counts["encounterObjects"] = len(encounter_objects)
 
     # The skinning of a creature: the creature slices of the creature data with a GatherableController and a GatherOption bound.

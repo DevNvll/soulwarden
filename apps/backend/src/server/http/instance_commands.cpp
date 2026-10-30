@@ -112,7 +112,9 @@ json instances_json(world::World& world) {
               {"exits", counts.exits},
               {"departures", counts.departures},
               {"recovered", counts.recovered},
-              {"refused", counts.refused}}}};
+              {"refused", counts.refused},
+              {"questObjectsMade", counts.questObjectsMade},
+              {"questObjectsGathered", counts.questObjectsGathered}}}};
 }
 
 json game_maps_json(const gamedata::GameModes* modes) {

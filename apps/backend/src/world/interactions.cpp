@@ -321,7 +321,14 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
         const auto child = m_instances.find(request.object.group);
         const Entity* entity = child != m_instances.end() ? find_entity(child->first) : nullptr;
         if (entity == nullptr || entity->space != character.space) {
-            return InteractionVerdict::unknownObject;
+            // Stage QG9d: the exit portal of a mode root that the client makes from the level data of the main world level (the portal of
+            // QuestSeraphim; live check of stage QG9c: the client sent ExitDungeon to it in the instance) is there in an instance of its
+            // mode.
+            const std::optional<gamedata::BoundRef> ref = catalog->find(request.object.group, request.object.target);
+            const gamedata::InteractionObject* level = ref ? &catalog->objects()[ref->object] : nullptr;
+            if (level == nullptr || level->exitMode.empty() || !m_world.instances().in_mode(character, level->exitMode)) {
+                return InteractionVerdict::unknownObject;
+            }
         }
     }
     // The reference: a bound of a level object (the reference map of the data), or of a server child (its G is its entity id).

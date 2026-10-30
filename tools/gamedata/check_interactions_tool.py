@@ -114,6 +114,13 @@ BOARD_SLICE = "slices/test/town_project_board.dynamicslice"
 BOARD_ASSET = (uuid.UUID("0a0b0c0d-0000-4000-8000-0000000000e5").bytes, 2)
 BOARD_SPAWNER_ENTITY, BOARD_ROOT, BOARD_INTERACTION, BOARD_INTERACT, BOARD_TERRITORY, BOARD_PROVIDER = (
     0x2002, 0x3100, 0x3101, 0x6201, 0x6202, 0x6203)
+# Stage QG9d: the mode root slice of the made-up mode Test_Story (the map row names it) with the spawner of its exit portal (m_spawnOnInitialize
+# true: the client makes the portal), and the portal slice with the option ExitDungeon.
+MODE_ROOT_ID = "0a0b0c0d-0000-4000-8000-000000000007"
+MODE_ROOT_SLICE = "slices/test/storyscript.dynamicslice"
+PORTAL_SLICE = "slices/test/portalstone.dynamicslice"
+PORTAL_ASSET = (uuid.UUID("0a0b0c0d-0000-4000-8000-0000000000e6").bytes, 2)
+MODE_ROOT, PORTAL_SPAWNER_ENTITY, PORTAL_ROOT, PORTAL_INTERACT = 0x8300, 0x8301, 0x8400, 0x8401
 
 
 def element(name: str | int | None, value: bytes | None = None, children: list | None = None,
@@ -245,6 +252,23 @@ def check_entrance(document: dict) -> bool:
             and check_entrance_npas())
 
 
+def check_exit_portal(document: dict, present: bool) -> bool:
+    """Stage QG9d: @return True when the exit portal of the mode root (its spawner at (0, 3, 0) of the root at (1060, 2000, 50), with
+    m_spawnOnInitialize) is an object of the kind dungeonExit with the client id of its place (client 0x6160B60), its bound of ExitDungeon,
+    and the member mode {mode, map}; with no spawn at the init (present False) the file has no such object."""
+    portals = [entry for entry in document.get("objects", []) if entry.get("mode") is not None]
+    if not present:
+        return not portals and document["counts"].get("exitChildren") is None
+    if len(portals) != 1:
+        return False
+    portal = portals[0]
+    group = tool.child_groups(1060.0, 2003.0, 50.0, 0.0, PORTAL_ASSET[0])[0]
+    names = [document["options"][index]["name"] for index, _ in portal["bounds"][0]["options"]] if portal["bounds"] else []
+    return (portal["kind"] == "dungeonExit" and portal["key"] == f"{MODE_ROOT_ID}/{PORTAL_SPAWNER_ENTITY:016x}" and portal["slice"] == PORTAL_SLICE
+            and portal["actor"] == (group.to_bytes(8, "little") + bytes(8)).hex() and portal["mode"] == {"mode": "Test_Story", "map": "Test_Story"}
+            and names == ["ExitDungeon"] and document["counts"].get("exitChildren") == 1)
+
+
 def check_entrance_npas() -> bool:
     """Stage QG9b: @return True when entrance_npas makes a requirement of one NPA id the conditional of its bound, and keeps a name with no
     row and a list of two names unresolved."""
@@ -360,6 +384,9 @@ class MadeUpSources:
         if mode == "entrance":
             placements.append({"id": ENTRANCE_ID, "worldPosition": {"x": 1050.0, "y": 2000.0, "z": 50.0}, "rotation": {"w": 1.0},
                                "sliceName": "Slices/Test/Entrance.slice", "sliceAssetId": "{0A0B0C0D-0000-4000-8000-0000000000FF}:2"})
+        if mode in ("exit-portal", "exit-portal-no-init"):
+            placements.append({"id": MODE_ROOT_ID, "worldPosition": {"x": 1060.0, "y": 2000.0, "z": 50.0}, "rotation": {"w": 1.0},
+                               "sliceName": "Slices/Test/StoryScript.slice", "sliceAssetId": "{0A0B0C0D-0000-4000-8000-0000000000F1}:2"})
         if mode == "two-slices":
             placements.append(dict(placements[0], sliceName="Slices/Test/Other.slice",
                                    sliceAssetId="{0A0B0C0D-0000-4000-8000-0000000000DD}:2"))
@@ -400,6 +427,15 @@ class MadeUpSources:
             KEG_SLICE: keg_slice(),
             BAG_SLICE: bag_slice(mode),
             ENTRANCE_SLICE: entrance_slice(),
+            # Stage QG9d: the mode root with the spawner of its exit portal at (0, 3, 0), and the portal.
+            MODE_ROOT_SLICE: [element(None, children=[
+                entity(MODE_ROOT, "StoryScript", [transform(NO_ENTITY, (0.0, 0.0, 0.0))]),
+                entity(PORTAL_SPAWNER_ENTITY, "Portal", [transform(MODE_ROOT, (0.0, 3.0, 0.0)),
+                                                         spawner(PORTAL_ASSET, False, mode != "exit-portal-no-init")])])],
+            PORTAL_SLICE: [element(None, children=[
+                entity(PORTAL_ROOT, "Portal", [transform(NO_ENTITY, (0.0, 0.0, 0.0)),
+                                               component(getattr(tool, "POSITION_CLASS", uuid.UUID(int=3)), 0x8500, 1, []),
+                                               interact(["ExitDungeon"], slot=2, identifier=PORTAL_INTERACT, option_entity=PORTAL_ROOT)])])],
         }
         layer = {"Other": []} if mode == "missing-capitals" else {"Capitals": placements}
         person_achievement = "Lore_unlock_00_Test_Title_02" if mode == "duplicate-bit" else ""
@@ -416,7 +452,9 @@ class MadeUpSources:
             tool.TABLES_FOLDER + "javelindata_gamemodes.datasheet": sheet("GameModes", "GameModeData", [
                 {"GameModeId": "Test_Story", "IsSoloTrial": "1"}]),
             tool.TABLES_FOLDER + "javelindata_gamemodemaps.datasheet": sheet("GameModeMaps", "GameModeMapData", [
-                {"GameModeMapId": "Test_Story", "GameModeId": "Test_Story", "SlicePath": "", "CoatlicueName": "coatlicue/newworld_vitaeeterna"}]),
+                {"GameModeMapId": "Test_Story", "GameModeId": "Test_Story",
+                 "SlicePath": "Slices/Test/StoryScript.slice" if mode in ("exit-portal", "exit-portal-no-init") else "",
+                 "CoatlicueName": "coatlicue/newworld_vitaeeterna"}]),
             tool.CATALOG_PATH: b"made-up",
             UI_DATABASE: b"made-up",
             getattr(tool, "CRAFTING_STATIONS", "made-up/stations"): b"made-up",
@@ -445,7 +483,8 @@ class MadeUpSources:
                                             option_row("OpenConversation", 63, True), option_row("OpenCraftingOption", 20, True),
                                             option_row("Trigger", 33, True, 5.0), option_row("TakeAllOption", 28, True),
                                             option_row("OpenStorageOption", 26, True), option_row("OpenMissionBoardOption", 51, True),
-                                            option_row("OpenDungeonMenu", 71, True), option_row("EnterQuestTest", 72, False)])]
+                                            option_row("OpenDungeonMenu", 71, True), option_row("EnterQuestTest", 72, False),
+                                            option_row("ExitDungeon", 74, False)])]
         if path == getattr(tool, "CRAFTING_STATIONS", None):
             # The crafting station database: one row (its name and its crafting types).
             return [element(None, children=[element(None, children=[text("Name", "Blacksmith5"),
@@ -488,6 +527,10 @@ CASES = [
     ("board-not-community", True, "a board whose ObjectiveProvider is not a community board: no board object (stage QG6a)"),
     ("board-client", True, "a board of a client-authoritative spawner: no board object (stage QG6a)"),
     ("entrance", True, "the entrance of a game mode: the kind dungeonEntrance and its member entrance (stage QG9a, format 6)"),
+    ("exit-portal", True, "the exit portal of a mode root that the client makes: a dungeonExit object with the client id and the member "
+                          "mode (stage QG9d)"),
+    ("exit-portal-no-init", True, "the exit portal of a mode root with no spawn at the init: no object (the instance system makes it; "
+                                  "stage QG9d)"),
 ]
 # The cases of the code review of stage 2.5a (--review, case IR5).
 REVIEW_CASES = [
@@ -918,7 +961,8 @@ def main() -> int:
         tool.LOOT_CONTAINERS = {"personal": BAG_SLICE}
         return 0 if run_person_cases(work) == 0 else 1
     tool.Sources = MadeUpSources
-    every = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE, BAG_ASSET: BAG_SLICE, BOARD_ASSET: BOARD_SLICE}
+    every = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE, BAG_ASSET: BAG_SLICE, BOARD_ASSET: BOARD_SLICE,
+             PORTAL_ASSET: PORTAL_SLICE}
     assets = dict(every)
     tool.Catalog = lambda data: SimpleNamespace(path=lambda asset: assets.get(asset), paths=assets)
     tool.FIXTURES = {"powderKeg": KEG_SLICE}
@@ -949,6 +993,8 @@ def main() -> int:
             # town board of the settlement is not an object of stage 2.5a).
             correct = (len(stage_25a_objects(document)) == 2 if review else check_station(document) if stations
                        else check_valid(document))
+        elif correct and mode in ("exit-portal", "exit-portal-no-init"):
+            correct = check_exit_portal(document, mode == "exit-portal")
         elif correct and mode == "unknown-option":
             bound = next(entry for entry in document["objects"] if entry["key"] == PAGE_ID)["bounds"][0]
             correct = bound.get("unknownOptions") == ["NoSuchOption"] and len(bound["options"]) == 2 and "option NoSuchOption" in document["unresolved"]

@@ -9,6 +9,10 @@
 //          observer) each stop its interest and make it again with a new number and the death action from its start; the stop comes
 //          before the new record, not in the same tick; controls: a wolf with the action Reaction dies after a hit of A (no renewal), and
 //          a brute that no character hit dies by the command (no renewal)
+//   QG9D1  stage QG9d: the form of the first record of a renewed body (the body stays on the ground): in the session of A (the hitter) and
+//          of B (an observer) the first record after the renewal has the vitals state with no dead mark (the client makes a new entity
+//          that lives, then dies); kDeathMarkLead (1 s) later a vitals state with the dead mark for the same interest number; a dead
+//          creature that a session sees for the first time with no renewal (a later observer) keeps the dead mark in its first record
 
 #include <algorithm>
 #include <optional>
@@ -173,10 +177,90 @@ void renewal_at_death(const Options&) {
     }
 }
 
+/** @return The vitals states (type 15) of an interest number from the message `from` on: the flags byte of vitalsData of each one. */
+std::vector<int> dead_marks(const FakeClient& client, std::uint32_t interest, std::size_t from) {
+    std::vector<int> marks;
+    for (std::size_t index = from; index < client.got.size(); ++index) {
+        if (client.got[index].type != 8) {
+            continue;
+        }
+        for (const Record& record : read_bundle(client.got[index].body).records) {
+            if (record.interest != interest) {
+                continue;
+            }
+            for (const Fragment& fragment : record.fragments) {
+                const auto data = fragment.fields.find({0, 2});
+                if (fragment.type == 15 && data != fragment.fields.end() && !data->second.empty()) {
+                    marks.push_back(data->second[0] & 0x01);
+                }
+            }
+        }
+    }
+    return marks;
+}
+
+void renewal_alive_form(const Options&) {
+    Range range(true, true);
+    if (!range.host.creatures.set_full({wolf_slice(), brute_slice()}, {wolf_kind(), brute_kind()}, {}, {{1, kWolfHealth, 100.0F, 50.0F}})) {
+        throw std::runtime_error("QG9D1: the creature data is not valid: " + range.host.creatures.error());
+    }
+    range.host.world.set_creature_behavior(false);
+    range.enter_both();
+    world::Entity* brute = range.host.world.creatures().spawn(kBrute, at(kPlace.x + 2.0F, kPlace.y), 90.0F).entity;
+    check(brute != nullptr && range.until([&] { return interest_in(range.host, 1, brute->id) != 0 && interest_in(range.host, 2, brute->id) != 0; }),
+          "setup: the sessions of A and B observe the brute");
+    if (brute == nullptr) {
+        return;
+    }
+    const world::EntityId id = brute->id;
+    const std::uint32_t oldA = interest_in(range.host, 1, id);
+    const std::uint32_t oldB = interest_in(range.host, 2, id);
+    check(range.strike(*brute, "Test_Light").verdict == world::HitVerdict::accepted, "setup: A hits the brute");
+    const std::size_t fromA = range.a.got.size();
+    const std::size_t fromB = range.b.got.size();
+    check(range.host.world.creatures().set_health(id, 0.0F).error == world::CreatureError::none, "setup: the brute dies");
+    range.step(2);
+    check(range.until([&] {
+        const std::uint32_t a = interest_in(range.host, 1, id);
+        const std::uint32_t b = interest_in(range.host, 2, id);
+        return a != 0 && a != oldA && b != 0 && b != oldB;
+    }, 30),
+          "setup: the brute comes in again in both sessions with a new interest number");
+    const world::WorldClock::time_point renewed = range.host.clock.now();
+    const auto sessions = {std::tuple{1U, &range.a, fromA, oldA}, std::tuple{2U, &range.b, fromB, oldB}};
+    for (const auto& [session, client, from, old] : sessions) {
+        const std::string who = session == 1 ? "A (the hitter)" : "B (an observer)";
+        const std::uint32_t interest = interest_in(range.host, session, id);
+        const std::vector<int> marks = dead_marks(*client, interest, stop_message(*client, old, from));
+        check(!marks.empty() && marks.front() == 0, who + ": the first record of the renewed body has no dead mark (a body that lives)");
+        check(std::count(marks.begin(), marks.end(), 1) == 0, who + ": no dead mark before kDeathMarkLead");
+    }
+    range.to(renewed + std::chrono::milliseconds(1300));
+    for (const auto& [session, client, from, old] : sessions) {
+        const std::string who = session == 1 ? "A (the hitter)" : "B (an observer)";
+        const std::uint32_t interest = interest_in(range.host, session, id);
+        const std::vector<int> marks = dead_marks(*client, interest, stop_message(*client, old, from));
+        check(marks.size() >= 2 && marks.back() == 1, who + ": the vitals state with the dead mark follows (the death of the new entity)");
+        note("QG9D1 " + who + " interest=" + std::to_string(interest) + " vitals states=" + std::to_string(marks.size()));
+    }
+    // Control: a dead creature with no renewal in its first record of a session (a later observer) has the dead mark.
+    world::Entity* other = range.host.world.creatures().spawn(kBrute, at(kPlace.x + 400.0F, kPlace.y), 90.0F).entity;
+    check(other != nullptr && range.host.world.creatures().set_health(other->id, 0.0F).error == world::CreatureError::none,
+          "setup: a brute that no character hit dies far from A and B");
+    if (other != nullptr) {
+        const std::size_t from = range.a.got.size();
+        range.host.world.place_creature(*other, at(kPlace.x + 3.0F, kPlace.y + 1.0F));
+        check(range.until([&] { return interest_in(range.host, 1, other->id) != 0; }, 60), "setup: A observes the dead brute");
+        const std::vector<int> marks = dead_marks(range.a, interest_in(range.host, 1, other->id), from);
+        check(!marks.empty() && marks.front() == 1, "control: the first record of a dead body with no renewal has the dead mark");
+    }
+}
+
 } // namespace
 
 std::vector<Case> reaction_renewal_cases() {
-    return {{"QG9C1", "stage QG9c: the death of a slice with no reaction action after a hit: each session makes the body again", renewal_at_death}};
+    return {{"QG9C1", "stage QG9c: the death of a slice with no reaction action after a hit: each session makes the body again", renewal_at_death},
+            {"QG9D1", "stage QG9d: the first record of a renewed body lives, and the dead mark follows (two sessions)", renewal_alive_form}};
 }
 
 } // namespace soulwarden::backend::tests

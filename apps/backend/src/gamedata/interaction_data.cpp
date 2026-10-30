@@ -365,7 +365,21 @@ public:
             }
         }
         return assembly(entry, object.assembly) && person(entry, object) && board(entry, object) && person_provider(entry, object)
-               && entrance(entry, object);
+               && entrance(entry, object) && exit_mode(entry, object);
+    }
+
+    /** Stage QG9d: the member mode of an exit portal of a mode root that the client makes: {mode, map} of an object of the kind dungeonExit. */
+    bool exit_mode(const json& entry, InteractionObject& object) {
+        if (!entry.contains("mode")) {
+            return true;
+        }
+        const json& value = entry["mode"];
+        std::string map;
+        if (object.kind != InteractionKind::dungeonExit || !value.is_object() || !text(value, "mode", object.exitMode)
+            || object.exitMode.empty() || !text(value, "map", map)) {
+            return fail("the mode of the object " + object.key + " is not {mode, map} of an object of the kind dungeonExit");
+        }
+        return true;
     }
 
     /** Stage QG9a (format 6): the member entrance of an object: {mode, solo, slot, target, exit}. An object of the kind dungeonEntrance has it. */

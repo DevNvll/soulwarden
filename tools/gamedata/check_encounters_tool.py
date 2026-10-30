@@ -67,6 +67,10 @@ The test program of the backend runs it (case QG5C2I; QG5C2A and QG5C3A have the
   mode-areas         stage QG9b (encounter_recipes.mode_area): a detection volume of the players of a mode root with a query sphere, and
                      one with no query shape and the sphere shape component of a scaled entity (its radius times the scale), are areas; a
                      volume of an other filter (AICast) is none
+  axes               stage QG9d (encounter_recipes.local_offset, mode_area; client 0x1710C60): the offset m_center of a detection volume
+                     is in the local axes of the world transform of its entity (an entity turned by 90 degrees turns (10, 0, 0) into
+                     (0, 10, 0)), with no scale (a scale of 2 gives the same offset); a volume whose shape entity is an other entity is at
+                     the place of that entity with no m_center
 
 Usage: python3 -B check_encounters_tool.py [WORK_FOLDER] [CASE...]    (status 0: each case passed; the folder is not used)
 """
@@ -749,6 +753,27 @@ def case_mode_areas() -> bool:
             and from_component["position"] == [10.0, 20.0, 0.0])
 
 
+def case_axes() -> bool:
+    turned = (0.0, -1.0, 0.0, 5.0, 1.0, 0.0, 0.0, 6.0, 0.0, 0.0, 1.0, 0.0)
+    scaled = (0.0, -2.0, 0.0, 5.0, 2.0, 0.0, 0.0, 6.0, 0.0, 0.0, 2.0, 0.0)
+    offset = [round(value, 4) for value in reader.local_offset(turned, [10.0, 0.0, 0.0])]
+    unscaled = [round(value, 4) for value in reader.local_offset(scaled, [10.0, 0.0, 0.0])]
+    sphere_node = Node(None, None, [Node("m_Radius", struct.pack(">f", 5.0))], reader.SPHERE_CLASS)
+
+    def volume(shape_entity: int) -> dict:
+        component = Node(None, None, [Node("m_shape", None, [sphere_node]), Node("m_strFilter", b"OnlyPlayerTarget"),
+                                      Node("m_center", struct.pack(">fff", 10.0, 0.0, 0.0)),
+                                      Node("m_shapeEntityID", None, [Node(None, shape_entity.to_bytes(8, "big"))])],
+                         reader.DETECTOR_CLASS)
+        return {"name": "AreaBoss", "matrix": turned, "components": [component]}
+    own = reader.mode_area({}, volume(0xFFFFFFFF), reader.IDENTITY)
+    holder = {"name": "Shape", "matrix": (1.0, 0.0, 0.0, 40.0, 0.0, 1.0, 0.0, 50.0, 0.0, 0.0, 1.0, 0.0), "components": []}
+    other = reader.mode_area({77: holder}, volume(77), reader.IDENTITY)
+    return (offset == [0.0, 10.0, 0.0] and unscaled == [0.0, 10.0, 0.0] and own is not None and own["position"] == [5.0, 6.0, 0.0]
+            and [round(value, 4) for value in own["center"]] == [0.0, 10.0, 0.0] and other is not None
+            and other["position"] == [40.0, 50.0, 0.0] and other["center"] == [0.0, 0.0, 0.0])
+
+
 CASES = {"taken": case_taken, "manager": case_manager, "parent": case_parent, "objectives": case_objectives,
          "cardinality": case_cardinality, "children": case_children, "members": case_members, "visual": case_visual,
          "lifetime": case_lifetime, "shapes": case_shapes, "alias": case_alias, "later": case_later, "counts": case_counts,
@@ -756,7 +781,8 @@ CASES = {"taken": case_taken, "manager": case_manager, "parent": case_parent, "o
          "group": case_group, "shape": case_shape, "wait": case_wait, "destroy": case_destroy, "season": case_season,
          "earlier": case_earlier, "ancestor": case_ancestor, "removed-earlier": case_removed_earlier,
          "removed-by-child": case_removed_by_child, "instance": case_instance, "skip": case_skip, "mode-wait": case_mode_wait,
-         "mode-none": case_mode_none, "mode-earlier": case_mode_earlier, "mode-phase": case_mode_phase, "mode-areas": case_mode_areas}
+         "mode-none": case_mode_none, "mode-earlier": case_mode_earlier, "mode-phase": case_mode_phase, "mode-areas": case_mode_areas,
+         "axes": case_axes}
 
 
 def main() -> int:

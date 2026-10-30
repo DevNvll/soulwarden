@@ -48,6 +48,11 @@ constexpr std::chrono::milliseconds kInterestInterval{500};
 /** Stage QG9c: the time between the stop of a renewed creature and its new first record (RepSession::update_interest). */
 constexpr std::chrono::milliseconds kRenewalGap{250};
 /**
+ * Stage QG9d: the time between the first record of a renewed body (no dead mark, the death action from its start) and its vitals state
+ * with the dead mark (RepSession::add_creature_record).
+ */
+constexpr std::chrono::milliseconds kDeathMarkLead{1000};
+/**
  * Longest wait of the new creatures after a travel for the client to confirm the new place
  * (RepSession::m_creaturesAfterTravel): a client with no position report and no camera near
  * the place gets its creatures after this time. A far travel needs 3 s to 8 s.
@@ -818,9 +823,16 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
         scopeDue = playing != known.scope;
     }
     const bool leading = known.scopeDue.has_value();
+    // Stage QG9d: the first record of a renewed body has no dead mark, and the vitals state with the mark follows kDeathMarkLead later.
+    const bool renewedAlive = known.sent == 0 && known.renewed && entity.creature.dead;
+    bool markDue = false;
+    if (known.deathMarkDue && now >= *known.deathMarkDue) {
+        known.deathMarkDue.reset();
+        markDue = true;
+    }
     for (const StateCodec& codec : creature_codecs()) {
         const auto changed = entity.changed.find(codec.key);
-        const bool due = scopeDue && codec.key == world::ComponentKey::movement;
+        const bool due = (scopeDue && codec.key == world::ComponentKey::movement) || (markDue && codec.key == world::ComponentKey::vitals);
         if (!due && (changed == entity.changed.end() || changed->second <= known.sent)) {
             continue;
         }
@@ -829,10 +841,13 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
             continue; // The slice of the creature has no such component.
         }
         if (codec.parts != nullptr) {
-            for (hub::Bytes& state :
-                 codec.parts(entity, View::observer,
-                             PartsRequest{known.sent, kFragmentBudget, &m_clock, known.scope, leading && known.sent != 0})) {
+            PartsRequest request{known.sent, kFragmentBudget, &m_clock, known.scope, leading && known.sent != 0};
+            request.renewedAlive = renewedAlive;
+            for (hub::Bytes& state : codec.parts(entity, View::observer, request)) {
                 fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
+            }
+            if (renewedAlive && codec.key == world::ComponentKey::vitals) {
+                known.deathMarkDue = now + kDeathMarkLead;
             }
             if (codec.key == world::ComponentKey::movement && !(leading && known.sent != 0)) {
                 // The first record of a creature that needs the spawn action: the creature keeps its time, and its shot waits to the end of
@@ -1027,14 +1042,30 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
                        static_cast<unsigned long long>(id), interest);
         }
     }
-    bool renewalScan = false;
+    // Code review of stage QG9c, finding QG9CR-R2: a due renewal makes the creature again at once, here, for this observer that had it: the
+    // leave distance of the interest holds (a creature between the enter and the leave distance stays observed), also beyond the radius of
+    // the scan of the new entities. A wait whose creature left the world, went to a different space, or is beyond the leave distance ends:
+    // the next scan adds the creature again by the enter rule, and no wait stays due.
     for (auto wait = m_renewalWaits.begin(); wait != m_renewalWaits.end();) {
-        if (m_world.find(wait->first) == nullptr) {
-            wait = m_renewalWaits.erase(wait);
+        const world::Entity* entity = m_world.find(wait->first);
+        if (entity != nullptr && now < wait->second.due) {
+            ++wait;
             continue;
         }
-        renewalScan = renewalScan || now >= wait->second.due;
-        ++wait;
+        if (entity != nullptr && entity->kind == world::EntityKind::creature && entity->space == own.space
+            && world::horizontal_distance(own.position, entity->position) <= m_world.interest_leave(*entity)) {
+            const std::uint32_t interest = m_observer.add(entity->id, wait->second.interest);
+            if (interest == 0) {
+                ++wait;
+                continue; // The table has no free number: the creature waits for one.
+            }
+            Known& known = *m_observer.find(entity->id);
+            known.renewal = entity->creature.renewal;
+            known.renewed = true;
+            log::write("rep: creature %016llx (%s, level %u) comes into the interest table again after its renewal (interest %u)",
+                       static_cast<unsigned long long>(entity->id), entity->creature.kind->id.c_str(), entity->creature.level, interest);
+        }
+        wait = m_renewalWaits.erase(wait);
     }
     // A session observes the creatures near its character in each start. It observes the
     // characters of other players only with the option.
@@ -1052,7 +1083,7 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     const bool scan = (m_cameraSeen || waitEnded)
                       && (now - m_lastInterestScan >= kInterestInterval || m_world.last_travel() > m_interestTravel
                           || m_world.last_spell() > m_interestSpell || m_world.last_projectile() > m_interestProjectile
-                          || (m_creaturesWaited && !creaturesWait) || renewalScan);
+                          || (m_creaturesWaited && !creaturesWait));
     if (scan) {
         m_lastInterestScan = now;
         m_interestTravel = m_world.last_travel();
@@ -1128,9 +1159,8 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
         }
         const float distance = world::horizontal_distance(own.position, entity.position);
         if (entity.kind == world::EntityKind::creature) {
-            // Stage QG9c: a creature that went out for its renewal comes in again after its wait.
-            const auto wait = m_renewalWaits.find(entity.id);
-            if (!creaturesWait && distance <= m_world.interest_enter(entity) && (wait == m_renewalWaits.end() || now >= wait->second.due)) {
+            // Stage QG9c: a creature that went out for its renewal comes in again after its wait (finding QG9CR-R2: the wait above adds it).
+            if (!creaturesWait && distance <= m_world.interest_enter(entity) && !m_renewalWaits.contains(entity.id)) {
                 creatures.emplace_back(distance, &entity);
             }
             return;
@@ -1255,15 +1285,11 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
         creatures.resize(kMaxNewCreaturesInScan);
     }
     for (const auto& [distance, entity] : creatures) {
-        const auto wait = m_renewalWaits.find(entity->id);
-        const std::uint32_t interest = m_observer.add(entity->id, wait != m_renewalWaits.end() ? wait->second.interest : 0);
+        const std::uint32_t interest = m_observer.add(entity->id);
         if (interest == 0) {
             break; // The table has no free number.
         }
         m_observer.find(entity->id)->renewal = entity->creature.renewal;
-        if (wait != m_renewalWaits.end()) {
-            m_renewalWaits.erase(wait);
-        }
         log::write("rep: creature %016llx (%s, level %u) comes into the interest table (interest %u, %.1f m)",
                    static_cast<unsigned long long>(entity->id),
                    entity->creature.kind->id.c_str(),

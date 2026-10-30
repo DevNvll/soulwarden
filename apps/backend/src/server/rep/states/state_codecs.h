@@ -181,6 +181,11 @@ struct PartsRequest {
      * that the client of the owner has. Below 0: not known.
      */
     float ownerHealth{-1.0F};
+    /**
+     * Stage QG9d: the first record of a renewed body (Known::renewed): the vitals state of the dead creature has no dead mark (the
+     * client makes a new entity that lives, and the mark follows in a later state).
+     */
+    bool renewedAlive{false};
 };
 
 /**

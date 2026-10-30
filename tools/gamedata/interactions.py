@@ -415,6 +415,7 @@ STATION_OPTIONS = ("OpenCraftingOption", "OpenCraftingOptionLevel60", "BindToCam
 ASSETS_NOT_IN_GAME = frozenset({uuid.UUID("5f3bb00e-2549-523f-9063-98c2c3c132d0"), uuid.UUID("3e227128-6334-5dd2-8929-c12b15a6aadf"),
                                 uuid.UUID("e21df46d-ebfc-57db-82c7-52233ca4ded3")})
 CAUSE_SPAWNER = "a child of a PrefabSpawner that is not a station or a camp, or that the client makes: a later stage"
+CAUSE_EXIT_CHILD_ID_TAKEN = "an exit portal child of a mode root whose client id an earlier child slot has: the first slot keeps the id"
 CAUSE_NOT_IN_GAME = "a child of a PrefabSpawner whose slice asset no record of the asset catalog of the game has (ASSETS_NOT_IN_GAME)"
 CAUSE_ALIAS = "a child of a PrefabSpawner with an alias asset and no slice asset: not read"
 CAUSE_CHILD_NO_PLACE = "a child of a station or a camp slice with no PositionInTheWorld component: the client cannot place it"
@@ -615,6 +616,40 @@ def station_overrides(spawned: list[dict], templates: list[dict], has, load) -> 
         entry["override"] = {"rule": "D1", "from": key, "to": variant["key"], "slice": variant_path}
         overrides += 1
     return overrides, missing
+
+
+MODES_TABLE = TABLES_FOLDER + "javelindata_gamemodes.datasheet"
+MAPS_TABLE = TABLES_FOLDER + "javelindata_gamemodemaps.datasheet"
+MAIN_TERRAIN = "coatlicue/newworld_vitaeeterna"
+
+
+def mode_root_slices(sources: Sources, required: bool = True) -> dict[str, dict]:
+    """Stage QG9a (stage QG9d: here, for this tool and encounter_recipes.py): @return The mode root slices of the solo modes whose level is
+    the main world: the lower-case slice name of a placement (SlicePath of the map row, with "/") to its mode and its map. A solo mode is a
+    row with IsSoloTrial 1 [data]; a separate level (CoatlicueName of a different terrain) is stage DG2 (its level data). With `required`
+    False a source with no table of the modes gives no root (the made-up sources of check_interactions_tool.py)."""
+    modes_data = sources.read(MODES_TABLE)
+    maps_data = sources.read(MAPS_TABLE)
+    if (modes_data is None or maps_data is None) and not required:
+        return {}
+    if modes_data is None or maps_data is None:
+        raise Failure(f"the game copy has no {MODES_TABLE if modes_data is None else MAPS_TABLE}")
+    modes, maps = Sheet(modes_data), Sheet(maps_data)
+    for sheet, path, columns in ((modes, MODES_TABLE, ("GameModeId", "IsSoloTrial")),
+                                 (maps, MAPS_TABLE, ("GameModeMapId", "GameModeId", "SlicePath", "CoatlicueName"))):
+        missing = [column for column in columns if column not in sheet.columns]
+        if missing:
+            raise Failure(f"{path} has no column {', '.join(missing)}")
+    solo = {modes.source(row, "GameModeId").strip().lower() for row in range(modes.row_count)
+            if modes.source(row, "IsSoloTrial").strip() == "1"}
+    roots: dict[str, dict] = {}
+    for row in range(maps.row_count):
+        mode = maps.source(row, "GameModeId").strip()
+        terrain = maps.source(row, "CoatlicueName").replace("\\", "/").strip().lower()
+        path = maps.source(row, "SlicePath").replace("\\", "/").strip().lower()
+        if mode.lower() in solo and terrain == MAIN_TERRAIN and path:
+            roots[path] = {"mode": mode, "map": maps.source(row, "GameModeMapId").strip()}
+    return roots
 
 
 def actor_of(placement_id: str) -> bytes:
@@ -1502,6 +1537,8 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
             bounds.append(changed)
         return bounds
     person_groups: set[int] = set()
+    # Stage QG9d: the mode root slices of the story instances of the main world level (their exit portals that the client makes).
+    mode_roots = mode_root_slices(sources, required=False)
     counts.update({"persons": 0, "personsDirect": 0, "personsUnresolved": 0, "personSlotsWithTwoIds": 0, "personsFromTemplate": 0,
                    "personsAlsoOnTrigger": 0, "personsOfLevelScripts": 0, "personSwapStateDiffers": 0, "personsObjectiveFlow": 0})
     # The asset id of each slice path (the catalog of the game): the metadata state of a fixture.
@@ -1777,6 +1814,43 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                         "position": [round(value, 3) for value in place], "assembly": None, "bounds": bounds,
                         "questChild": {"spawner": identifier, "variant": spawner["variant"] or child.selected_variant}})
 
+    def exit_children(layer: str, region: str, identifier: str, matrix: tuple[float, ...], template: Template, spawner: dict,
+                      child_path: str, child: Template, mode: dict) -> None:
+        """Stage QG9d: adds the exit portal of a mode root slice of a story instance that the client makes at the load (a PrefabSpawner with
+        m_spawnOnInitialize true: the portal of QuestSeraphim; live check of stage QG9c: the client sent ExitDungeon to the actor of this
+        id), with the id of client 0x6160B60 from its place, its yaw, and its slice asset (the rule of a person child, live check L1 of
+        stage 2.5c). Its key is "UUID/ENTITY" of the spawner; the member "mode" has the mode and the map of the root: the backend takes its
+        ExitDungeon in an instance of that mode (docs/systems/instances.md)."""
+        world = multiply(matrix, template.matrices.get(spawner["entity"], IDENTITY))
+        place = (world[3], world[7], world[11])
+        if not all(math.isfinite(value) for value in place):
+            raise Failure(f"{layer}: the exit portal child of the placement {identifier} has a place that is not finite")
+        if child.root is None:
+            raise Failure(f"{child_path}: the slice of an exit portal child has no root entity")
+        group = child_groups(*place, yaw_of(world), spawner["asset"][0])[0]
+        if group in person_groups:
+            exclude(CAUSE_EXIT_CHILD_ID_TAKEN)
+            return
+        person_groups.add(group)
+        k = child.root ^ group
+        bounds = []
+        for bound in varied_bounds(child, spawner["variant"]):
+            target = ((bound["entity"] ^ k) + bound["component"]) & 0xFFFFFFFFFFFFFFFF
+            entry, _ = bound_entry(bound, f"{layer}: the exit portal child of {identifier}", k, apply(world, bound["translation"]))
+            entry["target"] = f"{target:016x}"
+            text = json.dumps(entry, sort_keys=True)
+            if (group, target) in references and references[(group, target)] != text:
+                raise Failure(f"two bounds have the reference {group:016x} {target:016x} with different content")
+            references[(group, target)] = text
+            bounds.append(entry)
+        counts["byKind"]["dungeonExit"] = counts["byKind"].get("dungeonExit", 0) + 1
+        counts["bounds"] += len(bounds)
+        counts["exitChildren"] = counts.get("exitChildren", 0) + 1
+        objects.append({"key": f"{identifier}/{spawner['entity']:016x}", "kind": "dungeonExit", "slice": child_path,
+                        "asset": spawner["asset"][0].hex(), "sub": spawner["asset"][1], "actor": (group.to_bytes(8, "little") + bytes(8)).hex(),
+                        "region": region, "position": [round(value, 3) for value in place], "assembly": None, "bounds": bounds,
+                        "mode": {"mode": mode["mode"], "map": mode["map"]}})
+
     def board_children(layer: str, region: str, identifier: str, matrix: tuple[float, ...], template: Template, spawner: dict,
                        child_path: str, child: Template) -> None:
         """Adds the town project board of a settlement (stage QG6a): the client makes it at the load, with the id of client 0x6160B60 from
@@ -1968,6 +2042,12 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                             board_children(layer, region, identifier, matrix, template, spawner, child_path, child)
                         else:
                             exclude(CAUSE_BOARD_NO_INIT)
+                        continue
+                    mode_root = mode_roots.get(slice_name.lower().replace("\\", "/"))
+                    if mode_root is not None and spawner["onInit"] and not child.is_station() and kind_of(child.bounds) == "dungeonExit":
+                        # Stage QG9d: the exit portal of a mode root that the client makes (a portal with no spawn at the init is a server
+                        # child of the instance system: instanceObjects).
+                        exit_children(layer, region, identifier, matrix, template, spawner, child_path, child, mode_root)
                         continue
                     if not child.is_station():
                         exclude(CAUSE_SPAWNER)

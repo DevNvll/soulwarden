@@ -123,13 +123,12 @@ void Encounters::load() {
     }
     const gamedata::LootTables* tables = m_world.rewards().tables();
     for (const auto& [mode, list] : byMode) {
-        if (list.size() < 2) {
-            continue;
-        }
+        // Stage QG9d: the task keys of each instance recipe (mode_recipe_task: the end of the wait for the quest objects of the mode root);
+        // the gate only for a mode with more than one recipe.
         for (const std::uint32_t index : list) {
             EncounterPlacement& placement = m_placements[index];
             const gamedata::EncounterRecipe& recipe = *placement.recipe;
-            placement.gated = true;
+            placement.gated = list.size() >= 2;
             const auto add = [&](std::string key) {
                 if (std::find(placement.taskKeys.begin(), placement.taskKeys.end(), key) == placement.taskKeys.end()) {
                     placement.taskKeys.push_back(std::move(key));
@@ -1025,9 +1024,10 @@ bool Encounters::in_detector(const gamedata::EncounterRecipe& recipe, const stat
 bool Encounters::in_shapes(const std::vector<gamedata::EncounterShape>& shapes, const state::WorldPosition& place, const WorldCapsule& body) {
     // Stage QG5c3: the detection volume overlaps the body of the character (its capsule: upright, from its feet; capsule_of), not only its
     // feet [agent: the backend has no shape of the physics; a character on the ground at the height of the root is at the floor of the
-    // cylinder of Torment]. The offset m_center in world axes [agent: the shapes of the data with an offset (the cylinder of Torment: 5 m up)
-    // have no horizontal offset]; an axis box is aligned with the world axes. Stage QG5c4: the same test for the shapes of a trigger at its
-    // place, and for a detector shape at its shape entity (the offset in world axes from the root: the box at the top of a tarot tower).
+    // cylinder of Torment]. The center of a shape is its offset from the place in world axes; stage QG9d: the tool turns m_center by the
+    // rotation of the world transform of its entity (client 0x1710C60, encounter_recipes.local_offset), so the offset here needs no turn.
+    // An axis box is aligned with the world axes [agent: the query of the server facet is not in the client]. Stage QG5c4: the same test
+    // for the shapes of a trigger at its place, and for a detector shape at its shape entity (the box at the top of a tarot tower).
     const float low = std::min(body.a.z, body.b.z) - body.radius;
     const float high = std::max(body.a.z, body.b.z) + body.radius;
     for (const gamedata::EncounterShape& shape : shapes) {
@@ -1340,7 +1340,7 @@ void Encounters::start_stage(EncounterInstance& instance, std::uint32_t index) {
     }
 }
 
-void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::uint32_t entry) {
+void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::uint32_t entry, std::size_t tries) {
     EncounterPlacement& placement = m_placements[instance.placement];
     const gamedata::EncounterRecipe& recipe = *placement.recipe;
     const gamedata::EncounterStage& stage = recipe.stages[index];
@@ -1354,6 +1354,23 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
         return;
     }
     const gamedata::EncounterMember& member = m_data->members()[spawn.memberIndex];
+    if (!recipe.mode.empty() && member.kind == gamedata::EncounterMemberKind::creature && member.parts.empty() && tries < encounter_rules::kFloorTries) {
+        // Code review of stage QG9c, finding QG9CR-R1: the floor rule below needs the navigation tile of each spawn location in the world.
+        // A tile that loads (or that no character wanted yet) is not the terrain: the spawn waits for it and tries again.
+        bool ready = true;
+        for (const gamedata::EncounterPlace& location : spawn.locations) {
+            ready = m_world.navigation().line_ready(location.position, location.position, instance.space) && ready;
+        }
+        if (spawn.locations.empty()) {
+            ready = m_world.navigation().line_ready(recipe.position, recipe.position, instance.space);
+        }
+        if (!ready) {
+            ++m_counts.spawnsWaited;
+            schedule(m_world.clock().now() + encounter_rules::kFloorWait,
+                     Due{DueKind::spawn, instance.placement, instance.generation, index, entry, tries + 1});
+            return;
+        }
+    }
     const bool needed = spawn_needed(placement, index, spawn);
     std::uint32_t made = 0;
     // Stage QG5c5: the part of each member that this entry made (-1: not a part of a group), for the spawned objectives below.
@@ -1804,7 +1821,7 @@ void Encounters::take_due() {
             activate(*instance);
             break;
         case DueKind::spawn:
-            spawn(*instance, entry.stage, entry.spawn);
+            spawn(*instance, entry.stage, entry.spawn, entry.payout);
             break;
         case DueKind::stageTime: {
             const gamedata::EncounterStage& stage = m_placements[entry.placement].recipe->stages[entry.stage];
@@ -1836,13 +1853,17 @@ void Encounters::take_due() {
                            m_placements[entry.placement].recipe->stages[entry.stage].name.c_str());
                 // Code review of stage QG9b, finding QG9BR-R2: the met event is the count of the stage; the stage ends by the rule of its
                 // required child stages (objective_met), as the end rule does. A direct end cut the timed wait of the QuestWolf intro and
-                // never started its user wave 1.
+                // never started its user wave 1. Code review of stage QG9c, finding QG9CR-R4: only the event objective is met; an other
+                // objective of the stage (a destroyed objective of `more`) keeps its count, and the stage ends when each one is met (the
+                // rule of count_objective).
                 EncounterStageRun& run = instance->stages[entry.stage];
                 if (!run.met.empty()) {
-                    run.met.assign(run.met.size(), true);
+                    run.met[0] = true;
                 }
                 publish_objectives(*instance);
-                objective_met(*instance, entry.stage);
+                if (std::all_of(run.met.begin(), run.met.end(), [](bool value) { return value; })) {
+                    objective_met(*instance, entry.stage);
+                }
             }
             break;
         case DueKind::endRule:
@@ -1876,20 +1897,33 @@ void Encounters::count_earlier_deaths(EncounterInstance& instance, std::uint32_t
     // objectives do not count it (the setup of the manager, the background setup of a boss). A member of an earlier wave that counted it
     // (the soldiers of the Phase 1.5 Burrowing of QuestApophis) is not a member of this stage [agent: the data has no owner of a member; the
     // count of a wave is the deaths of its own spawns].
-    const auto supplies = [&](const EncounterMemberRun& member) {
+    // Code review of stage QG9c, finding QG9CR-R3: also a wave that counts the member through a child setup of its own (the source stage
+    // and each stage above it that is not a parent of this stage: a destroyed objective of one of them that counts the member consumed its
+    // death). A parent of this stage and the setup of the manager still supply it.
+    const auto parent_of_stage = [&](std::uint32_t candidate) {
         for (std::int32_t parent = stage.parent; parent >= 0; parent = recipe.stages[static_cast<std::uint32_t>(parent)].parent) {
-            if (static_cast<std::uint32_t>(parent) == member.stage) {
+            if (static_cast<std::uint32_t>(parent) == candidate) {
                 return true;
             }
         }
-        if (member.stage == index) {
+        return false;
+    };
+    const auto supplies = [&](const EncounterMemberRun& member) {
+        if (parent_of_stage(member.stage) || member.stage == index) {
             return true;
         }
-        const gamedata::EncounterStage& source = recipe.stages[member.stage];
-        for (std::size_t number = 0; number <= source.more.size(); ++number) {
-            const gamedata::EncounterObjective& own = objective_of(source, number);
-            if (own.kind == gamedata::EncounterObjectiveKind::destroyed && counts_toward(own, source.spawns[member.spawn], member.part)) {
-                return false;
+        const gamedata::EncounterSpawn& spawn = recipe.stages[member.stage].spawns[member.spawn];
+        for (std::int32_t owner = static_cast<std::int32_t>(member.stage); owner >= 0;
+             owner = recipe.stages[static_cast<std::uint32_t>(owner)].parent) {
+            if (static_cast<std::uint32_t>(owner) == index || parent_of_stage(static_cast<std::uint32_t>(owner))) {
+                break; // A stage of the path of this stage: its objectives do not consume the death for this stage.
+            }
+            const gamedata::EncounterStage& source = recipe.stages[static_cast<std::uint32_t>(owner)];
+            for (std::size_t number = 0; number <= source.more.size(); ++number) {
+                const gamedata::EncounterObjective& own = objective_of(source, number);
+                if (own.kind == gamedata::EncounterObjectiveKind::destroyed && counts_toward(own, spawn, member.part)) {
+                    return false;
+                }
             }
         }
         return true;
@@ -2599,6 +2633,25 @@ bool Encounters::space_done(SpaceId space) const {
     return std::all_of(found->second.begin(), found->second.end(), [&](std::uint32_t index) { return m_spaceDone.contains({index, space}); });
 }
 
+void Encounters::hold_space(SpaceId space, bool held) {
+    if (held) {
+        m_heldSpaces.insert(space);
+    } else if (m_heldSpaces.erase(space) != 0) {
+        scan_soon();
+    }
+}
+
+bool Encounters::mode_recipe_task(const Entity& character, SpaceId space) {
+    const auto found = m_spaces.find(space);
+    if (found == m_spaces.end()) {
+        return false;
+    }
+    return std::any_of(found->second.begin(), found->second.end(), [&](std::uint32_t index) {
+        const EncounterPlacement& placement = m_placements[index];
+        return !placement.taskKeys.empty() && m_world.quests().mode_task_active(character, placement.recipe->mode, placement.taskKeys);
+    });
+}
+
 void Encounters::scan_spaces() {
     if (m_spaces.empty()) {
         return;
@@ -2608,6 +2661,9 @@ void Encounters::scan_spaces() {
     const gamedata::CreatureCapsule* player = creatures != nullptr && creatures->player_capsule() ? &*creatures->player_capsule() : nullptr;
     std::vector<std::pair<std::uint32_t, SpaceId>> wanted;
     for (const auto& [space, list] : m_spaces) {
+        if (m_heldSpaces.contains(space)) {
+            continue; // Stage QG9d: the recipes wait for the quest objects of the instance.
+        }
         for (const std::uint32_t index : list) {
             if (m_spaceLive.contains({index, space}) || m_spaceDone.contains({index, space})) {
                 continue;

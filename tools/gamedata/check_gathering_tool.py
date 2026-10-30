@@ -20,7 +20,9 @@ functions of the tool made-up tables, rows, and distribution files, and compares
   distribution-stops a cut file, a file with more bytes, a record that names a slice outside the list: each one stops the tool
   quest-gimmick      stage QG5b: a direct quest gimmick (task_event_form: no tool, no loot, an event of a quest task; the cannon) and a
                      direct destructible quest row (quest_objects.destructible_form: no loot and an event of a quest task; the crate);
-                     an event that no task names, a loot table, or a tool type is no quest object (the gongs of a world event)
+                     an event that no task names, a loot table, or a tool type is no quest object (the gongs of a world event);
+                     stage QG9d: a quest object of a mode root (instance_object_form: no loot and an event of a quest task, also with a
+                     tool: the heartgem to smash with a pick) is one; an event that no task names or a loot table is none
 
 The cases of the code review of stage 3.6a run the main writer of the tool with a made-up game copy (tables, one region, one slice).
 They run only when a name is given (the case GR4 and GR6 of the test program give them; GAT1 runs the cases above):
@@ -444,6 +446,9 @@ def check(case: str) -> tuple[bool, str]:
             "crate": quest_objects.destructible_form(crate, events),
             "crate, no task": not quest_objects.destructible_form(dict(crate, GameEventID="Test_Gong_Interact"), events),
             "crate, a loot table": not quest_objects.destructible_form(dict(crate, FinalLootTable="Test_GatherOre"), events),
+            "heartgem with a pick": tool.instance_object_form(dict(cannon, GatheringType="Mining", GatheringAction="Mining"), events),
+            "heartgem, no task": not tool.instance_object_form(dict(cannon, GameEventID="Test_Gong_Interact"), events),
+            "heartgem, a loot table": not tool.instance_object_form(dict(cannon, FinalLootTable="Test_GatherOre"), events),
         }
         return all(results.values()), "; ".join(f"{name}: {'ok' if value else 'wrong'}" for name, value in results.items())
     if case == "empty-loot":

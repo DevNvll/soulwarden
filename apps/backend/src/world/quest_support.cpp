@@ -1003,6 +1003,17 @@ void QuestSupport::build() {
                 add_row(row, source);
             }
         }
+        // Stage QG9d: the quest objects of the mode roots of the modes that the backend runs (the heartgems of QuestCaerDun: the instance
+        // system makes each one while a member has the task of its event, Instances::look_quest_objects): their gathering rows.
+        const gamedata::InteractionData* catalog = m_world.interactions().data();
+        for (const gamedata::InstanceObject& object : encounters->instance_objects()) {
+            const std::optional<std::uint32_t> templateIndex = catalog != nullptr ? catalog->instance_object(object.slice) : std::nullopt;
+            const std::optional<gamedata::GatheringLink> link = gathering != nullptr ? gathering->encounter_object(object.slice) : std::nullopt;
+            if (templateIndex && link && catalog->templates()[*templateIndex].kind == gamedata::InteractionKind::gathering
+                && index.modes.count(lower_text(object.mode)) != 0) {
+                add_row(link->row, "the quest object " + object.spawner + " of the mode " + object.mode);
+            }
+        }
     }
     // Stage 1.8e: the destructible quest objects (game data quest-objects.json): their game events, their tags, and their rows (a quest drop
     // of a gather names the row).

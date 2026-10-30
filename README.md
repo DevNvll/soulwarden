@@ -140,9 +140,15 @@ This is an independent project with no connection to Amazon Games. The repositor
   Medea; the boss fights with the attacks of its data, or with one ranged attack of its data (Apophis, the seraphs, Yonas). The quest
   counts the kill in the instance, and the exit portal of the arena takes you back. Not yet: the special attacks and the summons of the
   bosses, the Empress Zhou, Varlaam, Sir Gawain, and Morgaine (their entrance shows a refusal). The support list has 652 quests now.
-- The Medusa instance (`09A_M12_FightMedusa`, stage QG9c) is on: the game does not stop at the kill of Medusa by a hit any more. At her
-  death her body leaves with the despawn effect (it does not stay on the ground). Lady Asena of the werewolf cave now stands on the floor
-  of the cave. In the cave of Yonas the boss fight does not work yet: Yonas stays at his place and the encounter fails.
+- The Medusa instance (`09A_M12_FightMedusa`, stage QG9c) is on: the game does not stop at the kill of Medusa by a hit any more. From
+  stage QG9d her body stays on the ground after her death (before: it left with the despawn effect); the same rule acts for the 17 other
+  creatures of that form (the Corrupted Ogre dissolves at its death, as at each death with no hit). Lady Asena of the werewolf cave now stands on the floor of
+  the cave. In the cave of Yonas the boss fight does not work yet: Yonas stays at his place and the encounter fails.
+- Caer Dun (stage QG9d): in the undercroft the altar now has the heartgem: place it (E), then smash it with a pick in your pick slot;
+  then Brother Umberto comes. After his death break the final seal with the Azoth Staff: the seal needs the rank 1 of the Azoth Staff
+  (the main story gives it at "Forge the Staff"; the prompt "No equipped Azoth Staff Tier 1" means that rank is missing). The quest goes on
+  to "Return to the surface". The exit portal of the seraph trial now works (hold E). After the end cutscene of the Heartforge the game
+  plays a video; it needs the sound of the game.
 - Territory standing (stage QG1). The standing of a territory goes up to rank 300: the points above a rank go to the next rank, and each new rank gives character experience (for example 125 at rank 1 of Windsward) and one standing point ("token"). A quest gives its standing to the territory where you hand it in (the notice shows "+100 Windsward Standing"). Open the map (M), the second tab "Territories": a territory with a free token shows a badge; click it to "Claim your reward" and choose a card (Standing Gain, XP Gain, Gather, Station Fee, Trading Fee, Storage, House Ownership; the house card keeps the token). Standing Gain, XP Gain, and Gather act now while you are in that territory; the other cards are kept for their later systems. The standing, the tokens, and the cards stay after a restart. The Windsward main story goes on after "Feast to Famine" (Marcel Dupont, then Saatvik Agrawal).
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.

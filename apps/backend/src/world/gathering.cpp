@@ -341,8 +341,11 @@ std::optional<Gathering::Target> Gathering::target_of(const InteractionContext& 
     if (!context.external) {
         if (context.instance != 0) {
             // Stage QG5c2: the start object of an encounter stage (a server child of the encounter system). Each other server child is no
-            // node.
+            // node. Stage QG9d: also a quest object of the mode root of an instance (a server child of the instance system).
             const std::string* slice = m_world.encounters().start_object(context.instance);
+            if (slice == nullptr) {
+                slice = m_world.instances().quest_object(context.instance);
+            }
             const std::optional<gamedata::GatheringLink> link = slice != nullptr ? m_data->encounter_object(*slice) : std::nullopt;
             if (!link) {
                 return std::nullopt;
@@ -959,7 +962,12 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
         log::write("world: gathering: character %s used the start object %s of an encounter (%s): %s", characterId.c_str(),
                    target->key.c_str(), row.id.c_str(), item_list(given).c_str());
         quest_events(character, row, items, target->interactTag, context.bound->tag);
-        m_world.encounters().object_gathered(target->group, character);
+        if (m_world.instances().quest_object(target->group) != nullptr) {
+            // Stage QG9d: a quest object of the mode root of an instance: the instance system removes it in its next tick.
+            m_world.instances().quest_object_gathered(target->group);
+        } else {
+            m_world.encounters().object_gathered(target->group, character);
+        }
         return true;
     }
     if (row.quest) {

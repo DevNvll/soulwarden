@@ -19,6 +19,7 @@ section 3.5 for the account rule). The encounter of a mode is in [Encounters](en
 | The entrance of a game mode, the result 3094, the exit portal, the empty timer (stage QG9a) | `world/instances.cpp` (`EntranceHandler`, `ExitHandler`, `Instances::entrance_result`, `enter_mode`, `in_mode`, `start_content`, `member_gone`, `content_succeeded`, `dungeon_result`), `gamedata/interaction_data.h` (`DungeonEntrance`, kinds `dungeonEntrance` and `dungeonExit`, `instance_object`), `server/rep/instance_messages.h`, test cases SI1, SI6, SI7 (`tests/story_instance_tests.cpp`) |
 | The GameModeParticipant state, the leave 3309 and 1980, TaskGameMode (stage QG9a) | `world/entity.h` (`GameModeMembership`), `Instances::membership_changed`, `server/rep/states/game_mode_state.cpp`, `RepSession::handle_game_mode_request`, `world/quests.cpp` (`task_type::kGameMode`, `mode_changed`), test cases SI2, SI3, SI6 |
 | The corrections of the code review of stage DG1 (the paths that cross two spaces) | `tests/review_dg1_tests.cpp` (cases DG1R1 to DG1R8), the section "The paths across two spaces" below |
+| Stage QG9d: the quest objects of a mode root, the exit portal of a mode root that the client makes | `world/instances.cpp` (`InstanceQuestObject`, `look_quest_objects`, `quest_object`, `start_content`), `world/interactions.cpp` (`check`), `gamedata/interaction_data.h` (`InteractionObject::exitMode`), `tools/gamedata/interactions.py` (`exit_children`, `mode_root_slices`), `tools/gamedata/gathering.py` (`instance_object_form`, `instance_capital`), test cases QG9D2, QG9D3 (`tests/story_mode_qg9d_tests.cpp`), the section "The story instances of stage QG9d" below |
 | The other story instances (stage QG9b), the corrections of the code review of stage QG9a | the section "The other story instances" below, `world/instances.cpp` (`exit_pending`, `m_unrecovered`, the `committed` call of `enter_mode`), `world/quests.cpp` (`predicate`, `mode_task_active`), `world/abilities.cpp` (`space_left`), `tests/review_qg9a_tests.cpp` (cases QG9AR1 to QG9AR6, QG9ARC), `tests/story_mode_tests.cpp` (SY1 to SY5; SY5: the setting of QuestMedusa, `encounter_rules::kQuestMedusaRuns`, `World::set_quest_medusa`) |
 
 ## Rules
@@ -145,7 +146,7 @@ until the level data of an instance comes (stage DG2) [agent]:
 - the abilities, the spells, the projectiles, the passive rules, the heart rune, the chain of a perk: the space of the caster, of the
   spell, of the creature, or of the target;
 - the interaction request (a use of an object, a gather, a station, a person): in an instance only a server child of the space of the
-  character (the exit portal; stage QG9a);
+  character (the exit portal; stage QG9a), and (stage QG9d) the exit portal of the level data of the mode of the instance of the character;
 - the LootTracker of the chests, the bags of the LootTracker and of the storage map, the discard of an item (refused in an instance: a bag
   is an object of the main world), the proximity quest objects, the place tasks and the trigger tasks of the quests, the location rule of
   a drop, and the territory of a character (`World::territory_of`: 0 in an instance): only the main world.
@@ -256,15 +257,54 @@ made short with `tools/world quest grant` and the development aid `tools/world q
 | QuestHeartforge | yes | yes (the guardian, after the four flames with the Azoth Staff) | yes | `99A_MSQ_15_01D_KillNamed` and the cutscene tasks done | `instance return` (a white screen after the cutscene until the exit) |
 | QuestYonas | yes | no (the open problem below) | the hallway and the Isabella intro yes; the boss no | `ApproachFogwall` (the pressure plate, finding QG9BR-R4) done; `Kill_1_CorruptedYonas` active | `instance return` |
 
-- Open (stage QG9c): Yonas stands at his spawn place 43 m from the center of the detector sphere of his recipe (`enc_quest_yonasboss01`:
-  the offset (-15, -13, 0) in world axes, 30 m), and he does not come to the character (the boss tree is not in the client). A character
-  near him is out of the detector, and the encounter fails after its grace of 10 s. With the offset in the local axes of the root (yaw
-  -115), the center is 9.6 m from him. The axes of a detector offset are a rule of the tool and of the runner for 50 shapes [agent rule of
-  stage QG5c3]; a later stage decides it with live checks of the shapes with an offset.
-- Open (stage QG9c): in the seraph instance the client sends ExitDungeon to an exit portal of its level data (actor 67c3245614c36008...)
-  that `interaction-data.json` does not have, not to the server child portal of the instance: the request is refused.
-- Open (stage QG9c): the Caer Dun seal shows "No equipped Azoth Staff Tier 1" with `Omega_AzothStaff_T5` in the paperdoll slot 38; the
-  flames of Heartforge take that staff.
+- Stage QG9c, open then: Yonas stands 43 m from the center of the detector sphere of his recipe. Stage QG9d: the axes rule of the engine
+  ([Encounters](encounters.md)) does not move that center (the root of the slice has the world turn 0); the cause is the leash of Yonas
+  and his boss tree (open, input of stage BT3; [Encounters](encounters.md), "QuestYonas").
+- Stage QG9c, open then: the seraph portal of the level data and the Caer Dun seal. Stage QG9d: corrected or explained in the section
+  below.
+
+### The story instances of stage QG9d
+
+The sources: the static reads AXES and AZOTH and the live runs P1 and P2 of stage QG9d
+(`~/Games/soulwarden/work/evidence/quests/qg9d/implement/`).
+
+- The quest objects of a mode root (QuestCaerDun: `PlaceHeartgem`, `SmashHeartgem`): an object of the mode root slice (`instanceObjects` of
+  the encounter data) with a template of the kind gathering, a row of the gathering data (`encounterObjects` of `gathering-data.json`),
+  and a game event that a task with the GameModeID of the mode names [data: the spawners of `caerdunscript` with m_spawnOnInitialize false,
+  the rows `99B_MSQ_10_PlaceHeartgem` (Handcrafting, 3 s) and `99B_MSQ_10_SmashHeartgem` (Mining with a pick, 35 s), the tasks of
+  `99B_MSQ_10_cleansefort`]. The instance makes each one (a server child of its space) while a member has an active task of the mode that
+  names its event, and it goes after its gather; the gather has the rules of its row and gives its event to the gatherer
+  (`Instances::look_quest_objects`, `quest_object`, `quest_object_gathered`) [agent: the mode script that spawns them is not in the
+  client]. The encounters of the space wait until each quest object is gathered or a member has an active task that names a recipe of
+  the space [agent from the quest data: the heartgem tasks come before the kill of Umberto]. A character with no such task never gets the
+  objects, and the encounters of its instance wait [agent]. Count `questObjectsMade`, `questObjectsGathered` of `tools/world instance
+  list`. Case QG9D2.
+- The exit portal of a mode root that the client makes: the spawner `Portal` of the seraph mode root has m_spawnOnInitialize true, so the
+  client makes the portal from the level data with the id of a child (client 0x6160B60, the rule of a person child) [data; live: the
+  actor 67c3245614c36008 of the refused request of stage QG9c is this id]. The interactions tool writes it as a level object of the kind
+  dungeonExit with the member `mode` (`exit_children`); the backend takes its ExitDungeon from a member of an instance of that mode (also
+  in the space of the instance), and the instance system makes no server child for a portal of such a spawner [agent]. The modes that run:
+  QuestSeraphim has this portal (QuestVarlaam too, a mode that does not run); the portals of QuestMedea, QuestWolf, QuestCaerDun,
+  QuestMedusa, QuestHeartforge, QuestMammoth, QuestApophis, and QuestYonas have no spawn at the init and stay server children [data:
+  `logs/exit-portals.txt` of the evidence]. Case QG9D3.
+- The seal of Caer Dun shows "No equipped Azoth Staff Tier 1" when the rank of the trade skill AzothStaff is below the
+  RequiredTradeskillLevel of its row (1); the prompt has one text for a missing tool and a low rank [client: the gate 0x35C26E0 (the rank
+  compare 0x35C2941), the rank 0x3CB6330 from the CategoricalProgression state 911; script `gatheringtooladditionalinfo`; static read
+  AZOTH]. The main story gives the rank 1 at `99A_MSQ_11_ForgeStaff_success` (before Caer Dun) [data]; the test character of stage QG9c had
+  skipped that hand-in. No change of the backend [live: the seal with the rank 1].
+- The white screen after the end cutscene of QuestHeartforge is the cinematic video `FTUE_Rit`: the stage `Wave_04 - TriggerCinematic`
+  starts the IGC and the entity `Delay` (22 s), which starts `02_Trigger_IGC_Spawner_Bink` (PlayCinematicVideoComponent) [data]. In a
+  development run (`-sys_audio_disable 1`) the play function returns before it opens the video (protocol notes 4.58): the screen stays
+  white, and no 6606 or 6542 comes [live: the trace of 0x2CC7E70 with the entry `FTUE_Rit` and of 0x6506CB0, no 0x2EF9A00]. No task
+  waits for this cinematic, and no server message ends the screen; the game of the user (with sound) plays it. No change of the backend.
+
+| Mode (stage QG9d) | Check | Result |
+| --- | --- | --- |
+| QuestCaerDun | entry, the two heartgems, Umberto by hits, the seal (rank 1) | the success; next task `99B_MSQ_10_d_05_02_TriggerArea_UndercroftExit` ("Return to the surface") |
+| QuestSeraphim | ExitDungeon at the portal of the level data | the leave to the return place |
+| QuestMedea | the detector at the new center (axes) | starts in the new sphere only |
+| QuestHeartforge | the end cutscene, the trace of the cinematic | the white screen is `FTUE_Rit` with no sound |
+| QuestYonas | the boss stage | open (BT3) |
 
 ### The paths across two spaces (the code review of stage DG1)
 
@@ -327,8 +367,8 @@ world level whose content the backend runs (QuestMedea; stage QG9b: the modes of
   comes before the kind handler.
 - Stage QG9b, corrected in stage QG9c: the client stopped (an access violation at 0x4871DB6 or 0x4871FDA in the repair 0x4871B60 of the
   action history of the remote entity Medusa) at the death of Medusa after a hit of the player, also by the kill command after a hit. The
-  cause and the rule are in [Creatures](creatures.md), "The death of a slice with no reaction action". The body of Medusa leaves with the
-  despawn effect at her death (the limit of that rule).
+  cause and the rule are in [Creatures](creatures.md), "The death of a slice with no reaction action". Stage QG9d: the body stays on the
+  ground (the first record of the renewed body lives, and the dead mark follows).
 - Stage QG9b: the arena of Medusa is full of statues with collision. The start of the map and the place of the intro are between them,
   and a walk to Medusa stops at a statue. Use `tools/world travel` to open ground near her (8621.5 1421.3 203.7).
 - Stage QG9b: the level objects of the main world are not in an instance (the rule above; stage DG2). The task `09A_M12_SaveTaurus` (the

@@ -396,3 +396,8 @@ tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
   then not there, and its use is refused. Leave the instance first (`tools/world instance return NAME`), then travel.
 - A test of a boss kill by hits with `tools/world ignore NAME on` gives no quest count (stage QG9c, the seraph and Lady Asena): lower the
   health of the boss with the mode on, turn the mode off, then give the last hit. A travel near a creature of a fight resets its leash.
+- A cinematic video of the game (`TempestRising`, the `FTUE_Rit` after the end cutscene of the Heartforge, stage QG9d) gives a white
+  screen in a development run (no sound: the client opens no video), and a hold of Escape does not close it. Leave the instance (`tools/world
+  instance return NAME`) or the world. No quest task waits for `FTUE_Rit`.
+- In a command of zsh a variable with two numbers is one word (stage QG9d: `tools/world travel NAME $place 134.8` failed with no line).
+  Write the numbers, or use an array.

@@ -296,6 +296,12 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   flag, the slot and the facet target of the component, the exit point) [data]. `dungeonExit`: the exit portal of a mode (ExitDungeon,
   action 74), a template of `instanceObjects` (the server children of the mode root slices) [data]. The instance system has the handler
   of each option of the two kinds (`register_kind_handler`: the Enter options have many names) [agent].
+- Stage QG9d ([Instances](instances.md)): a level object of the kind `dungeonExit` with the member `mode` (interaction data format 6,
+  `InteractionObject::exitMode`: the exit portal of a mode root that the client makes at the load, the portal of QuestSeraphim) is the one
+  level object that a request of a character in an instance reaches: only for a member of an instance of that mode; its handler is the
+  handler of the exit portal [agent; live: the client sent ExitDungeon to its actor 67c3245614c36008]. A quest object of a mode root (the
+  heartgems of QuestCaerDun) is a server child of the instance system with a template of the kind gathering; the gathering system takes its
+  GatherOption with the row of its slice (`Instances::quest_object`).
 - Stage QG9a: a server child that the instance system makes in the space of an instance (`spawn_container` with a space) is an object of
   that space: a request of a character in an instance is checked only against the server children of its space, and the grid gives it
   only for that space [agent].

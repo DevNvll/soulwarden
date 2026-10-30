@@ -92,6 +92,21 @@ struct InstanceMember {
     WorldClock::time_point entered{};
 };
 
+/**
+ * Stage QG9d: a quest object of the mode root of an instance (the heartgems of QuestCaerDun): an object of the mode root slice with a
+ * gatherable row whose game event a task of the mode names. The instance system makes it while a member has that task active, and it goes
+ * at its gather [agent: the mode script that makes it is not in the client; data: the objects and the order of the tasks].
+ */
+struct InstanceQuestObject {
+    /** The index of the object in EncounterData::instance_objects(). */
+    std::uint32_t object{0};
+    /** The key of the task of its event ("e:" and the lower case event: Quests::mode_task_active). */
+    std::string key;
+    /** The server child of the object; 0: not made. */
+    EntityId entity{0};
+    bool gathered{false};
+};
+
 struct Instance {
     /** The id of the instance: 1, 2, ... in one backend process (the allocator of the instance system). */
     std::uint64_t id{0};
@@ -128,6 +143,13 @@ struct Instance {
      */
     std::array<std::uint8_t, 16> modeActor{};
     EntityId modeEntity{0};
+    /** Stage QG9d: the quest objects of the mode root (InstanceQuestObject). */
+    std::vector<InstanceQuestObject> questObjects;
+    /**
+     * Stage QG9d: the encounters of the mode wait (Encounters::hold_space) until each quest object is gathered or a member has an active
+     * task of the mode that names a recipe of the space (a later step of the quest: an entry after the objects).
+     */
+    bool held{false};
 };
 
 enum class InstanceError {
@@ -186,6 +208,9 @@ struct InstanceCounts {
     std::uint64_t portalLeaves{0};
     std::uint64_t requestLeaves{0};
     std::uint64_t emptyEnded{0};
+    /** Stage QG9d: the quest objects of the mode roots that the instances made and that a member gathered. */
+    std::uint64_t questObjectsMade{0};
+    std::uint64_t questObjectsGathered{0};
 };
 
 class Instances {
@@ -235,6 +260,13 @@ public:
     [[nodiscard]] bool in_mode(const Entity& character, std::string_view mode) const;
     /** Stage QG9a: the encounter system reports the success of the content of the instance of a space (the log; the counts). */
     void content_succeeded(SpaceId space);
+    /**
+     * Stage QG9d: @return The slice of a quest object of an instance (InstanceQuestObject) that is there, or null: the gathering system takes
+     * its GatherOption with the row of the slice (gathering-data.json, member encounterObjects).
+     */
+    [[nodiscard]] const std::string* quest_object(EntityId object) const;
+    /** Stage QG9d: the gather of a quest object completed (its events went to the gatherer): the object goes in the next tick. */
+    void quest_object_gathered(EntityId object);
 
     /**
      * The entity of a member leaves the world (World::remove_entity: a session that ended, a removal; decision D9): the exit rows, the
@@ -277,6 +309,8 @@ private:
     void member_gone(Instance& instance, const std::string& characterId, const char* cause);
     /** Stage QG9a: the content of the mode of a new instance: the encounters of its mode and its objects (the exit portal). */
     void start_content(Instance& instance);
+    /** Stage QG9d: the quest objects of an instance: make one whose task a member has, remove a gathered one, end the wait of the encounters. */
+    void look_quest_objects(Instance& instance);
     /**
      * Stage QG9a: the membership of a character changed: its GameModeParticipant state (the entry of its instance, or none) and its
      * TaskGameMode tasks.

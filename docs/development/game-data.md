@@ -687,6 +687,19 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   member `townExcluded` (the enabled town rows whose objective has no row: none in this build); the backend of stage QG8 refuses a file
   whose town buckets miss another enabled town row of the goals Gather, Kill, Explore (finding QG6BR-R1). The file of stage QG6b has every
   town row in a bucket and loads as it is. `tools/release.sh` takes the two changed files.
+- Stage QG9d ([Instances](../systems/instances.md), [Encounters](../systems/encounters.md)) changes three files, with no new format.
+  Write them from one game copy in this order: `tools/gamedata/encounters.sh`, `interactions.sh`, `gathering.sh`.
+  - `encounter-data.json` (format 3): the offset of each detector shape, trigger shape, and mode area is `m_center` turned by the rotation
+    of the world transform of its entity, with no scale (`local_offset`; client 0x1710C60); a shape whose shape entity is an other entity
+    is at the place of that entity. 7 of 51 shapes with an offset move. Each object of a mode root has `variant` (the m_sliceVariant of
+    its spawner). The two tools read the modes of the main world level with `interactions.mode_root_slices`.
+  - `interaction-data.json` (format 6): the exit portal of a mode root that the client makes at the load (a PrefabSpawner child with
+    m_spawnOnInitialize true and the option ExitDungeon) is an object of the kind dungeonExit with the client id of a child and the member
+    `mode` ({mode, map}); the count `exitChildren` (2: QuestSeraphim, QuestVarlaam). A backend of before ignores the member.
+  - `gathering-data.json` (format 1): `encounterObjects` also has the quest objects of the mode roots (`instance_object_form`: a direct
+    row with no loot and an event of a quest task, also with a tool): `99B_MSQ_10_PlaceHeartgem`, `99B_MSQ_10_SmashHeartgem`,
+    `MB_MSQ2_DefeatGawain_Crown` (57 objects, 1,262 rows). The region set does not change.
+  `tools/release.sh` takes the three files.
 - Stage QG9b ([Instances](../systems/instances.md), [Encounters](../systems/encounters.md)) changes three files. Write them from one game
   copy (`tools/gamedata/encounters.sh`, `interactions.sh`, `gathering.sh`, in this order: the gathering tool reads the start objects of
   the recipes).

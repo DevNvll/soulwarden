@@ -1074,6 +1074,13 @@ button on "Confirm").
   member of an instance recipe more than 2 m above the floor stands on the floor ([Encounters](systems/encounters.md)). In a development
   run, `tools/world quest advance NAME OBJECTIVE TASK` completes the active tasks of an objective before a task until that task is active
   (a development aid for the live checks of a long quest chain; `POST /v1/dev/quests/advance`).
+- Stage QG9d: the first record of a renewed body lives, and its dead mark follows 1 s later: the body stays on the ground
+  ([Creatures](systems/creatures.md)). The offset of a detection volume is in the local axes of the transform of its entity (the encounter
+  data; [Encounters](systems/encounters.md)). The quest objects of a mode root (the heartgems of Caer Dun) come while a member has their
+  task, and the encounter of the instance waits for them; the exit portal of a mode root that the client makes (the seraph trial) takes
+  ExitDungeon in an instance of its mode ([Instances](systems/instances.md)). `tools/world instance list` shows the quest objects that the
+  instances made and that a member gathered; `tools/world encounter NAME` shows `spawnsWaited` (a spawn that waited for its navigation
+  tile).
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is

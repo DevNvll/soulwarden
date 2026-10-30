@@ -93,6 +93,12 @@ inline constexpr float kSpawnLeave = 200.0F;
 inline constexpr float kCellSize = 64.0F;
 /** Stage QG9c: a creature member of an instance recipe whose spawn location is higher than this above the floor stands on the floor. */
 inline constexpr float kAboveFloor = 2.0F;
+/**
+ * Code review of stage QG9c, finding QG9CR-R1: a spawn of a creature member of an instance recipe whose navigation tile is not in the world
+ * yet (it loads) tries again after this time, at most kFloorTries times; then the floor rule takes the floor that it has.
+ */
+inline constexpr std::chrono::milliseconds kFloorWait{100};
+inline constexpr std::size_t kFloorTries = 50;
 /** The entries of the stage state 2133 that the client takes (client 0x26F7550: at most 10). */
 inline constexpr std::size_t kHistory = 10;
 /** The manager status (state 6786; the Lua names eEncounterStatus_*: static, protocol notes 4.62). */
@@ -297,6 +303,8 @@ struct EncounterCounts {
     std::uint64_t membersMade{0};
     /** Stage QG9c: the creature members of an instance recipe put on the floor below their spawn location (kAboveFloor). */
     std::uint64_t membersLowered{0};
+    /** Code review of stage QG9c, finding QG9CR-R1: the spawns of an instance recipe that waited for a navigation tile (kFloorWait). */
+    std::uint64_t spawnsWaited{0};
     std::uint64_t membersRemoved{0};
     std::uint64_t memberDeaths{0};
     std::uint64_t objectsMade{0};
@@ -397,6 +405,16 @@ public:
     void end_space(SpaceId space);
     /** @return True when each instance recipe of a space succeeded (the content of the instance is done). */
     [[nodiscard]] bool space_done(SpaceId space) const;
+    /**
+     * Stage QG9d: the recipes of a space wait (no look at their detector) while the space is held: the instance system holds the space of
+     * an instance until the quest objects of its mode root are gathered (Instances::look_quest_objects).
+     */
+    void hold_space(SpaceId space, bool held);
+    /**
+     * Stage QG9d: @return True when the character has an active task of the mode of a recipe of the space that names that recipe (its
+     * success event, a kill category of a tracked creature member, the event of a tracked start object: EncounterPlacement::taskKeys).
+     */
+    [[nodiscard]] bool mode_recipe_task(const Entity& character, SpaceId space);
     /**
      * Stage QG9a: the cutscene `crc` of a running cutscene stage of an instance of the space of the character (6703 of its client): the
      * session grants it (6707). @return True when such a stage runs.
@@ -526,7 +544,8 @@ private:
     void scan_spaces();
     void activate(EncounterInstance& instance);
     void start_stage(EncounterInstance& instance, std::uint32_t stage);
-    void spawn(EncounterInstance& instance, std::uint32_t stage, std::uint32_t spawn);
+    /** @param tries The waits of the spawn for a navigation tile before (finding QG9CR-R1: encounter_rules::kFloorWait). */
+    void spawn(EncounterInstance& instance, std::uint32_t stage, std::uint32_t spawn, std::size_t tries = 0);
     void count_destroyed(EncounterInstance& instance, EntityId member);
     /** Stage QG5c3: the count of one stage reached its required count (or a spawned objective its spawns): it ends, or it waits for its child
      *  stages that are not optional. */
@@ -605,6 +624,8 @@ private:
     std::map<SpaceId, std::vector<std::uint32_t>> m_spaces;
     std::map<std::pair<std::uint32_t, SpaceId>, EntityId> m_spaceLive;
     std::set<std::pair<std::uint32_t, SpaceId>> m_spaceDone;
+    /** Stage QG9d: the spaces whose recipes wait for the quest objects of the instance (hold_space). */
+    std::set<SpaceId> m_heldSpaces;
     std::map<std::pair<std::uint32_t, std::uint64_t>, EntityId> m_byGeneration;
     /** The members and the start objects of the instances: entity to its placement and generation. */
     std::unordered_map<EntityId, std::pair<std::uint32_t, std::uint64_t>> m_memberOf;

@@ -1209,6 +1209,12 @@ The story instance QuestMedea of quest 06A_MSQ_21 is in [Instances](instances.md
   rows); off, each task with the GameModeID QuestMedusa has the reason of the setting ([Instances](instances.md); case SY5). The second
   computation of the evidence folder of stage QG9b gives the same counts before and after (0 row and 0 fact differences).
 
+- Stage QG9d: the quest objects of the mode roots of the modes that run (the heartgems of QuestCaerDun, [Instances](instances.md)) are
+  producers of the support manifest: their gathering rows with their own gates. The manifest keeps 653 supported rows; the rows
+  `99B_MSQ_10_cleansefort` and `99B_MSQ_10_cleansefort_alt` have no blocked task any more (before: "no producer of the game event
+  99b_msq_10_placeheartgem_interact" and "... smashheartgem_interact"). The second computation of the evidence folder of stage QG9d gives
+  the same counts before and after (0 row and 0 fact differences).
+
 ### The corrections of the code review of stage QG8 (in stage DG1)
 
 The findings: `~/Games/soulwarden/work/evidence/quests/qg8/code-review/FINDINGS.md`. Each case fails on the tree of stage QG8.
