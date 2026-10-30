@@ -30,6 +30,7 @@
 #include "server/rep/instance_messages.h"
 #include "server/rep/states/state_codecs.h"
 #include "support/story_fixture.h"
+#include "world/quest_support.h"
 
 namespace soulwarden::backend::tests {
 namespace {
@@ -361,12 +362,54 @@ void dungeon_leave(const Options&) {
 
 } // namespace
 
+/**
+ * QG9ER1 (code review of stage QG9e, finding QG9ER-R1; stage BT3): no main encounter file. The level set of the mode has a valid recipe: its
+ * encounter runs in the instance of A (the tick runs from the recipes that the runner took), and the support manifest counts its success
+ * event (the event walk of QuestSupport::build does not need the main file). B stays in the main world.
+ */
+void missing_main_encounters(const Options&) {
+    json quests = story_quests();
+    quests["tasks"]["test_level_story_done"] = questfix::task("Test_Level_Story_Done", "taskgameevent", gamedata::task_type::kGameEvent,
+                                                              {{"KillEnemyType", kLevelSuccess}, {"TargetQty", "1"}});
+    quests["objectives"].push_back({{"id", "Test_Level_Done"},
+                                    {"cells", {{"Type", "Journey"}, {"NpcDestinationId", "Test_Artificer"}}},
+                                    {"tree", json::array({json::array({0, "test_level_story_done", json::array()})})}});
+    LevelStoryShop shop;
+    check(shop.host.quests.load_text(quests.dump()), "setup: a quest task of the success event of the level recipe");
+    shop.host.encounters = gamedata::EncounterData{};
+    shop.enter();
+    check(shop.encounters().data() == nullptr, "setup: no main encounter file");
+    shop.enter_story(kCharacterA);
+    shop.wait(2.0F);
+    const world::Entity* a = shop.entity(kCharacterA);
+    const world::Instance* instance = shop.instances().instance_of(kCharacterA);
+    check(a != nullptr && instance != nullptr && a->space != world::kMainSpace && instance->content && shop.encounters().counts().taken == 1,
+          "setup: the entry is accepted, the content of the level set is registered, and the runner takes its recipe");
+    note("QG9ER1 scans=" + std::to_string(shop.encounters().counts().scans) + " runs=" + std::to_string(shop.encounters().instances().size())
+         + " boss=" + std::to_string(a != nullptr && shop.boss(a->space) != nullptr));
+    check(a != nullptr && shop.story_run(a->space) != nullptr && shop.boss(a->space) != nullptr,
+          "the recipe of the level set runs with no main encounter file (the scans, the run, its boss)");
+    check(shop.entity(kCharacterB)->space == world::kMainSpace, "B stays in the main world");
+    world::QuestSupport support(shop.host.world);
+    const json manifest = support.manifest({});
+    bool supported = false;
+    std::string reason;
+    for (const json& entry : manifest["objectives"]) {
+        if (entry["id"] == "Test_Level_Done") {
+            supported = entry["tasks"][0].value("supported", false);
+            reason = entry["tasks"][0].value("reason", std::string());
+        }
+    }
+    check(supported, "the support manifest counts the success event of the level recipe with no main encounter file (" + reason + ")");
+}
+
 std::vector<Case> story_level_cases() {
     return {{"QG9E1", "stage QG9e: two instances of a solo mode of an own level with the recipe of its set, and the main world (MP-10)",
              two_level_instances},
             {"QG9E2", "stage QG9e: the rules of the modes that run for a solo mode of an own level", level_mode_rules},
             {"QG9E3", "stage QG9e: a WaitForParentObjective child stage of an instance recipe runs in the background", waiting_child},
-            {"QG9E4", "stage QG9e: the dungeon leave of the escape menu (PlayerArena, 926) with two characters (MP-10)", dungeon_leave}};
+            {"QG9E4", "stage QG9e: the dungeon leave of the escape menu (PlayerArena, 926) with two characters (MP-10)", dungeon_leave},
+            {"QG9ER1", "review of QG9e (QG9ER-R1): a level recipe runs and counts in the manifest with no main encounter file", missing_main_encounters}};
 }
 
 } // namespace soulwarden::backend::tests

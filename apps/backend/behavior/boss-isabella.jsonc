@@ -1,0 +1,66 @@
+// The tree of Isabella De Leon in the story mode QuestIsabella (stage BT3, part C: the kind isabella_msq2 of the level set
+// nw_ori_sm_questisabella, slice isabella_msq2). The server tree of the original (isabella/isabella_solo_msq2.3/isabella_solomsq2_base_behavior)
+// is not in the client: this tree is a rule of this project. Its events are the events that the stages of the recipe of the mode wait for
+// [data: the EncounterEventObjective of each stage of enc_quest_isabella: Wave 1 - Isabella_Normal (Transform_Winged), Phase 1b - Intro
+// Complete (Intro_Complete), Wave 2 - Transformation (Winged_Ready), First_Checkpoint (Water_1), Wave 3 - Isabella_Winged (Water_2),
+// Checkpoint_3 (Water_3), Wave 4 - 2ndCheckpointAndTimer (Defeat)]; the health of each event, the wait of Winged_Ready, and the arena are
+// decisions of the agent of stage BT3 [agent]. An event that comes before its stage starts is kept: the stage is met at its start
+// (docs/systems/encounters.md, "The events of a boss tree"). Times in seconds, distances in meters, health in percent.
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "boss/isabella",
+  // The step of the fight: 1 (normal), 2 (winged), 3 to 5 (the waters), 6 (defeated) [agent].
+  "blackboard": { "step": { "type": "int", "default": 1 } },
+  "root": {
+    "node": "selector",
+    "children": [
+      {
+        "node": "sequence",
+        "name": "fight",
+        "children": [
+          { "node": "in_fight" },
+          // A target in the arena of 60 m around her home is kept [agent: the church of the mode; the leash of the slice is 70 m].
+          { "node": "keep_target", "lose_distance": 60, "arena": 60 },
+          {
+            "node": "selector",
+            "children": [
+              // The intro ends when the fight starts [agent: the intro action Intro_Despawn of the slice is not a tree action of the data].
+              { "node": "once", "name": "intro", "child": { "node": "event", "event": "Intro_Complete" } },
+              {
+                "node": "phase",
+                "name": "winged",
+                "health_below": 75,
+                "key": "step",
+                "to": 2,
+                "child": { "node": "sequence", "children": [ { "node": "event", "event": "Transform_Winged" }, { "node": "tag_set", "tag": "Winged" } ] }
+              },
+              // The transformation ends 6 s after it started [agent].
+              {
+                "node": "sequence",
+                "name": "winged ready",
+                "children": [
+                  { "node": "tag_is", "tag": "Winged" },
+                  { "node": "timer", "seconds": 6, "since": "phase" },
+                  { "node": "once", "child": { "node": "event", "event": "Winged_Ready" } }
+                ]
+              },
+              { "node": "phase", "name": "water 1", "health_below": 60, "key": "step", "to": 3, "child": { "node": "event", "event": "Water_1" } },
+              { "node": "phase", "name": "water 2", "health_below": 45, "key": "step", "to": 4, "child": { "node": "event", "event": "Water_2" } },
+              { "node": "phase", "name": "water 3", "health_below": 30, "key": "step", "to": 5, "child": { "node": "event", "event": "Water_3" } },
+              { "node": "phase", "name": "defeat", "health_below": 10, "key": "step", "to": 6, "child": { "node": "event", "event": "Defeat" } },
+              // The attacks: the rules of the default fight after its target checks (the subtrees of BT2) with the melee attacks of her slice.
+              { "node": "subtree", "tree": "default/status" },
+              { "node": "subtree", "tree": "default/area" },
+              { "node": "subtree", "tree": "default/shot" },
+              { "node": "subtree", "tree": "default/cast" },
+              { "node": "subtree", "tree": "default/melee" },
+              { "node": "turn_to_target" }
+            ]
+          }
+        ]
+      },
+      { "node": "subtree", "tree": "default/rest" }
+    ]
+  }
+}

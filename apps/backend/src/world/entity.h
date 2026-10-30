@@ -834,6 +834,11 @@ enum class StepCause : std::uint8_t {
  * value for each node and each key of that tree, thus a step of the tree allocates nothing.
  */
 struct CreatureBrain {
+    /** Stage BT3: the state of a node with a state (tree::Node::state): a time (a cooldown end, the next choice of a target) and a count. */
+    struct NodeState {
+        WorldClock::time_point at{};
+        std::uint32_t index{0};
+    };
     std::shared_ptr<const tree::CompiledTree> tree;
     /** The result of each node in the last step of the tree (tree::Status: 0 the step did not run the node). */
     std::vector<std::uint8_t> last;
@@ -844,6 +849,18 @@ struct CreatureBrain {
      * the slice of the creature (the behavior binds them when it binds the tree).
      */
     std::vector<std::int32_t> actions;
+    /**
+     * Stage BT3: the state of each node with a state, the tags of the creature (one bit for each tag of tree::CompiledTree::tags), the status
+     * row of each named status of the tree (null: the ability data has no such row), the start of the fight and of the phase, and the
+     * statuses that a tree action gave for the fight (the reset at the anchor removes them). The end of a fight (the reset) gives them their
+     * first values again (Behavior::reset_fight).
+     */
+    std::vector<NodeState> states;
+    std::uint64_t tags{0};
+    std::vector<const gamedata::StatusRow*> statusRows;
+    WorldClock::time_point fightAt{};
+    WorldClock::time_point phaseAt{};
+    std::vector<std::string> fightStatuses;
     /**
      * Stage BT2: the binding that selected the tree (tree::Selection::text: "family Wolf (binding 3)", "a command"), and the cause when the
      * slice of the creature does not fit the tree of its binding (the creature then has the tree default). Texts for a view: the behavior
@@ -953,6 +970,11 @@ struct CreatureMind {
     std::uint32_t nextArea{0};
     /** The status actions of stage 3.4f-D: the time from which the creature can start its next status action (its heal, its buff). */
     WorldClock::time_point statusReady{};
+    /**
+     * Stage BT3: the tree action that plays (an index into CreatureSlice::treeActions; its action plays as the action of a shot): at its end
+     * the behavior removes the statuses of its exit. No value: none.
+     */
+    std::optional<std::uint32_t> treeAction;
     /** Steps in sequence in which a different creature stood at the place of the next step of this one. */
     std::uint32_t blockedSteps{0};
     /** The tree of the creature and its state (stage BT1). */
@@ -1224,6 +1246,12 @@ struct Creature {
      * natural end, a step, or a new action), not at its natural end.
      */
     std::optional<std::uint16_t> reactionLimitAction;
+    /**
+     * Stage BT3: the creature plays no reaction to a hit (no full reaction, no additive reaction, no push) until this time: the phase
+     * transition of a boss tree (game data: SetReactionFragment with the empty table BaseAI_EmptyReactionTableHarness of the action Intermission
+     * of the commander of the damned). No value: none.
+     */
+    std::optional<WorldClock::time_point> reactionsOffUntil;
     /** The behavior values of the creature. */
     CreatureMind mind;
     /**
@@ -1319,6 +1347,12 @@ struct Creature {
      *         (an effect of an ability with only that value). An empty type: DMGStandard (stage 3.3a).
      */
     [[nodiscard]] float damage_factor(WorldClock::time_point now, std::string_view type = {}) const;
+    /**
+     * Stage BT3: @return The part of the damage of a hit of a damage type that the effects of the creature absorb: the sum of the ABS<type> of
+     * their rows times their stacks (the rule of the statuses of a character, Statuses::values: the ABS part of the type of the hit), from 0
+     * to 1. The phase transition of a boss tree: AI_Thorpe_Phase_1_to_2_Transition (ABSSlash 0.6, ...), AI_Thorpe_Phase_2 (0.1).
+     */
+    [[nodiscard]] float absorb_part(WorldClock::time_point now, std::string_view type) const;
     /** @return The part of the armor of the creature that its effects add (a rend: -0.05; stage 1.3b). The strongest rend counts. */
     [[nodiscard]] float armor_part(WorldClock::time_point now) const {
         float part = 0.0F;
@@ -1330,6 +1364,25 @@ struct Creature {
         return part;
     }
 };
+
+inline float Creature::absorb_part(WorldClock::time_point now, std::string_view type) const {
+    if (type.empty()) {
+        return 0.0F;
+    }
+    float part = 0.0F;
+    std::string column;
+    for (const CreatureEffect& effect : effects) {
+        if (now >= effect.ends || effect.row == nullptr) {
+            continue;
+        }
+        if (column.empty()) {
+            column = "ABS";
+            column += type;
+        }
+        part += effect.row->cells.number(column) * static_cast<float>(std::max<std::uint8_t>(effect.stacks, 1));
+    }
+    return std::clamp(part, 0.0F, 1.0F);
+}
 
 inline float Creature::damage_factor(WorldClock::time_point now, std::string_view type) const {
     float part = 0.0F;

@@ -188,6 +188,18 @@ tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
 
 ## Traps
 
+- Stage BT3: `tools/world` finds the backend of a run by its program name `soulwarden-backend`. Put a test backend into a folder of its own
+  with that name (`SOULWARDEN_BACKEND_EXE=.../b1/soulwarden-backend`); a file with a different name runs, and `tools/world` says "no backend
+  of a development run uses the data directory".
+- Stage BT3: a copied data folder has the made-up test account of its database. Give the run its Steam id and persona name
+  (`SOULWARDEN_STEAM_ID`, `SOULWARDEN_PERSONA_NAME`), or the menu has no character ("the name Soulwarden is in use").
+- Stage BT3: the Thorpe event (`99D_MSQ_08_ThorpeFight`, near 9500 8112 429) has four waves before Thorpe. For a test of the boss, end them
+  with `tools/world creature kill` on the members of `tools/world encounter NAME 150` and wait the timed waves (60 s and the intermissions).
+  The kill of Thorpe completes the kill task (`DefeatThorpe_Solo`) and the quest root (the hand-in "Talk to Yash Zafar"); the success event
+  of the encounter after the cleanup of 12 s then finds no active task.
+- Stage BT3: the summon of darkness of Thorpe (11.5 s) hides his body in a red cloud for about 5 s: hits in that time still count (the
+  damage numbers show 146 with ABS 0.7).
+
 - More than one gamescope can run on this computer (stage 1.8a: an other project had `gamescope-0`, and the development run got
   `gamescope-1`; a later run got `gamescope-0`). `gamescopectl screenshot` with no variable can take the picture of the other display.
   Read the socket of the run from the environment of its backend and give it to each call:

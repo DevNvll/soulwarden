@@ -595,6 +595,29 @@ mode root slices and of the encounter slices, and the live runs of stage QG9b. E
   the evaluator ([Passive rules](passive-rules.md)), the bridge from the stacks of the barrier to the events of the stages, and the gather of
   the soul of a living creature.
 
+### The events of a boss tree (stage BT3)
+
+- One event path: an `event` node of the tree of a creature member ([Creature behavior](creature-behavior.md), "Behavior trees, stage BT3")
+  sends a named event; the behavior queues it after its step, and `Encounters::creature_event` finds the instance of the member
+  (`Creature::encounter`). The instance keeps the event (`EncounterInstance::events`, lower case), and each stage of that instance that runs
+  and waits for it (an EncounterEventObjective with that name; the letter case is not significant) is met by the rule of a met event
+  (`meet_event`: the count of the stage; the stage ends by the rule of its required child stages) [agent]. An event of a creature with no
+  running instance is lost (count `treeEventsLost`). Only the instance of the member gets it (MP-10: two instances of one mode; case BT3H).
+- The start of an event stage: the stage waits when the tree of a creature member of its recipe sends its event (`tree_sends`:
+  `Behavior::sends_event` with the binding of each member kind and slice; a slice that does not fit the tree of its binding has the tree
+  default); the stage is met at its start when the instance has the event already (the tree sent it before the stage), and when no tree
+  sends it (the rule of stage QG9a: no sender in the client) [agent]. Counts `eventStagesWaited`, `treeEvents`, `treeEventsMet`.
+- The runner takes an instance recipe that the tool refused because no stage ends by the act of a player (`encounters.player_ends`, the
+  cause `encounter_rules::kNoPlayerEnds`) when the tree of a member sends the event of each event stage: the fight with that member ends the
+  stages (the tree sends the events at health thresholds) [agent]. The log line: `the recipe KEY: the tree of its member sends the event of
+  each event stage (stage BT3)`. Case BT3I (a tree that sends only some events: the recipe stays refused).
+- Code review of stage QG9e, finding QG9ER-R1 (one rule with the events of the boss trees, which come through the due list): the tick of the
+  runner runs from the recipes that it took and from the payouts that wait, also with no main encounter file (the recipes of a level set);
+  the first read of the main file stays the lazy read. The support manifest counts the events of the recipes that the runner took with no
+  main file too (`QuestSupport::build`). Case QG9ER1.
+- The modes of stage BT3: QuestIsabella runs (the tree `boss/isabella` sends its seven events); the table of the modes and the causes of
+  the others is in [Instances](instances.md).
+
 ## Commands
 
 - `tools/world encounter CHARACTER [METERS]` (route `GET /v1/dev/encounters`; the admin state member `encounters`, 200 m): the instances

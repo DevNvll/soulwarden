@@ -170,8 +170,15 @@ This is an independent project with no connection to Amazon Games. The repositor
   gear) now has "Leave" in a story instance and in an expedition: its Yes ("Exit Soul Trial?", "Exit Expedition?") takes you back to the
   place of the entry. The compass shows the name of the mode in an instance with a level of its own ("Lilith's Dream", "Amrine
   Excavation"). After a leave of the game menu before the end of the fight the game still shows "Soul Trial Completed". Not yet: Liang,
-  Isabella, Motherwell, Nihilo, and the season trials (their entrance shows a refusal), and Taurus after the Medusa fight
+  Motherwell, Nihilo, and the season trials (their entrance shows a refusal), and Taurus after the Medusa fight
   (`09A_M12_TalkToTaurus`).
+- Boss fights with phases (stage BT3). Commander Thorpe (the main story event "To Stand Against the Dark", wave 5) now fights with his own
+  pattern: combos of two attacks, a charge, heavy attacks with a cooldown, and at 60 percent health his transition (he summons the darkness
+  for about 11 seconds and heals in it; your hits do less damage in it), then a second phase with one more attack and some more armor. When
+  you die or run away, he goes back and starts again from his first phase. The fight with Isabella De Leon (QuestIsabella, "Prodigal
+  Daughter") now runs: the stages of the fight follow her health, and her defeat completes the quest task. Not yet: her winged
+  transformation and her other animations of the phases, the bubble in front of the entrance of her church (its gather is refused: enter
+  with the development command), the boss of the cave of Yonas (no floor in the navigation data of the cave).
 - Territory standing (stage QG1). The standing of a territory goes up to rank 300: the points above a rank go to the next rank, and each new rank gives character experience (for example 125 at rank 1 of Windsward) and one standing point ("token"). A quest gives its standing to the territory where you hand it in (the notice shows "+100 Windsward Standing"). Open the map (M), the second tab "Territories": a territory with a free token shows a badge; click it to "Claim your reward" and choose a card (Standing Gain, XP Gain, Gather, Station Fee, Trading Fee, Storage, House Ownership; the house card keeps the token). Standing Gain, XP Gain, and Gather act now while you are in that territory; the other cards are kept for their later systems. The standing, the tokens, and the cards stay after a restart. The Windsward main story goes on after "Feast to Famine" (Marcel Dupont, then Saatvik Agrawal).
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.

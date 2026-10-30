@@ -442,6 +442,30 @@ struct CreatureStatusAction {
 };
 
 /**
+ * One tree action of a slice (stage BT3): an action of its action table that a behavior tree plays by its name and that is not an attack, a
+ * shot, an area attack, or a status action (the phase transition Phase_Transition_1_to_2 of the commander of the damned). Only the actions of
+ * the list `treeActions` of tools/gamedata/creature_slices.json (each with its live check) are in the data. Game data
+ * (creature_behavior.py, read_tree_actions): the length of the selected variant of its fragment and the statuses of its ModifyStatusEffects
+ * that are not in a condition.
+ */
+struct CreatureTreeAction {
+    /** Index of the action in CreatureSlice::actions. */
+    std::uint32_t action{0};
+    /** The time of the action, in seconds: the creature starts no other action before its end. */
+    float length{0.0F};
+    /** The ids of the status rows that the action puts on the creature at its start (EffectsToApplyOnEnter). */
+    std::vector<std::string> enter;
+    /** The ids of the status rows that the action removes from the creature at its exit (EffectsToRemoveOnExit). */
+    std::vector<std::string> removed;
+    /**
+     * The tag state of the record of the action: the bits of the weapon tags and of the default tags of the slice (the tags of the selection
+     * of its variant). The client does not add the default tags of its slice (live checks L2 and L3 of stage BT3). No value: the tags of the
+     * slice (a file of the first form of the member).
+     */
+    std::optional<FragmentTags> tags;
+};
+
+/**
  * The basic shot of an archer (stage 3.4f-A, a rule of this project for the scope of the stage): the ranged attack of the action
  * with this name is the one ranged attack that a creature uses (the action FireBow of 20 slices of the supported build: one
  * release, the ammunition of the slice). The other ranged attacks of the data (a charged or a fast shot, the shot of a caster) are
@@ -653,6 +677,8 @@ struct CreatureSlice {
     std::vector<CreatureAreaAttack> areas;
     /** The status actions of the slice (stage 3.4f-D): its heals and buffs of itself. Empty: a file of an older tool, or none. */
     std::vector<CreatureStatusAction> statusActions;
+    /** The tree actions of the slice (stage BT3): the actions that a behavior tree plays by name. Empty: a file of an older tool, or none. */
+    std::vector<CreatureTreeAction> treeActions;
     /**
      * m_lowHealthPercentThreshold of the Vitals component of the slice (stage 3.4f-D; game data: 0.15 for the Inquisitor Cleric): the part
      * of the maximum health at which the creature is at low health (the input LowHealth of the target curves of the AI). A heal of a

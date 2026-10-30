@@ -289,6 +289,20 @@ def read_status_action_list() -> dict[str, str]:
     return {name.lower(): proof for name, proof in listed.items()}
 
 
+def read_tree_action_list() -> dict[str, str]:
+    """@return The tree actions whose length and statuses have a live check (stage BT3, the list treeActions of the slice lists file: the
+    action name to its check): the actions that a behavior tree of the backend plays by their name and that are not an attack, a shot, an
+    area attack, or a status action (the phase transition of a boss). The tool writes the tree actions of these actions only. A file with no
+    list: none."""
+    try:
+        listed = json.loads(SLICE_LISTS_PATH.read_text(encoding="utf-8")).get("treeActions", {})
+        if not isinstance(listed, dict) or not all(isinstance(name, str) and isinstance(proof, str) for name, proof in listed.items()):
+            raise ValueError("the list treeActions does not have its form")
+    except (OSError, ValueError) as error:
+        raise Failure(f"{SLICE_LISTS_PATH.name} has no correct list treeActions: {error}") from error
+    return {name.lower(): proof for name, proof in listed.items()}
+
+
 REPLICATION_FIELD = field_id("m_replicationIndex")
 # Stage 3.4f-D: the low-health part of the Vitals component of a slice (the input LowHealth of the target curves of the AI).
 LOW_HEALTH_FIELD = field_id("m_lowHealthPercentThreshold")
@@ -1040,6 +1054,21 @@ def marker_statuses(action: ElementTree.Element) -> list[tuple[str, list[str]]]:
     return found
 
 
+def direct_statuses(action: ElementTree.Element) -> tuple[list[str], list[str]]:
+    """@return The statuses of the ModifyStatusEffects activities of an action definition that are not in a condition (stage BT3): (the
+    EffectId of each EffectsToApplyOnEnter, the EffectId of each EffectsToRemoveOnExit). An activity inside an IfThenElse (a mark, a tag) is
+    not one of them."""
+    activities = action.find("Activities")
+    enter: list[str] = []
+    removed: list[str] = []
+    for modify in (activities.findall("ModifyStatusEffects") if activities is not None else []):
+        for listed in modify.iter("EffectsToApplyOnEnter"):
+            enter.extend(effect.get("EffectId", "") for effect in listed.iter("EffectId") if effect.get("EffectId"))
+        for listed in modify.iter("EffectsToRemoveOnExit"):
+            removed.extend(effect.get("EffectId", "") for effect in listed.iter("EffectId") if effect.get("EffectId"))
+    return enter, removed
+
+
 def reaction_condition(element: ElementTree.Element | None, named: dict[str, ElementTree.Element], depth: int = 0) -> tuple:
     """@return The condition of a row of a reaction table (stage U3): ("always",), ("angles", [[min, max, tolerance], ...]) for an
     IfDamagedByAngle or an Or of them (degrees; client code 0x2C07B70: true when min - tolerance < angle < max + tolerance), ("tag",
@@ -1171,7 +1200,7 @@ def read_reactions(sources: Sources, roots: list[Element], definitions: dict) ->
 
 
 def read_action_table(sources: Sources, roots: list[Element], markers: dict | None = None,
-                      reaction_definitions: dict | None = None) -> list[list] | None:
+                      reaction_definitions: dict | None = None, effects: dict | None = None) -> list[list] | None:
     """@return The action table of a creature slice: [action name, fragment name, fragment index, server started]
     for each action, or no value when the slice names no grid file. The position of an action in the list is its
     index on the wire: the scope record of a movement state has the index plus 1. A file that the slice, the
@@ -1234,6 +1263,11 @@ def read_action_table(sources: Sources, roots: list[Element], markers: dict | No
                 linked = marker_statuses(action)
                 if linked:
                     markers.setdefault(name, linked)
+            if effects is not None:
+                # Stage BT3: the statuses of the action at its enter and at its exit (the tree actions of creature_behavior.py).
+                direct = direct_statuses(action)
+                if direct[0] or direct[1]:
+                    effects.setdefault(name, direct)
     return actions
 
 
@@ -1624,6 +1658,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     import spells as spell_tool  # noqa: E402 (the module imports this one: the import is here, after the load)
     behavior = creature_behavior.Behavior(sources, TABLES_FOLDER, ranged_attacks, projectile_of,
                                           spell_tool.AreaSpells(sources, read_area_spell_list()), read_status_action_list())
+    # Stage BT3: the tree actions of the list treeActions (the phase transitions of the boss trees).
+    behavior.tree_actions = read_tree_action_list()
     regions = all_region_names(sources) if whole_world else region_names(center, radius)
     counts = {"entries": 0, "inArea": 0, "usual": 0, "creatures": 0}
     left_out: dict[str, int] = {}
@@ -1680,8 +1716,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
             slices.append(read_creature_slice(path, asset, roots))
             markers: dict = {}
             definitions: dict = {}
+            effects: dict = {}
             try:
-                slices[-1]["actions"] = read_action_table(sources, roots, markers, definitions) or []
+                slices[-1]["actions"] = read_action_table(sources, roots, markers, definitions, effects) or []
                 reactions = read_reaction_fragments(sources, roots)
                 if reactions is not None and any(index >= 0 for index in reactions):
                     slices[-1]["reactions"] = reactions
@@ -1694,7 +1731,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
             # What the behavior of a creature with this slice needs: its sense and speed values, the
             # tags of its animation fragments, and its attacks.
             try:
-                slices[-1].update(behavior.read(roots, controller_path_of(roots), slices[-1]["actions"], path, markers, reaction_facts))
+                slices[-1].update(behavior.read(roots, controller_path_of(roots), slices[-1]["actions"], path, markers, reaction_facts, effects))
             except Failure as error:
                 raise Failure(f"the behavior data of {path} is not complete: {error}") from error
         return slice_index[path]
@@ -2044,7 +2081,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     target_slices = [body for body in used if is_target(slices[body], targets)]
     for body in target_slices:
         entry = slices[body]
-        for member in ("attacks", "ranged", "areas", "statusActions", "spawnAction", "basicShot"):
+        for member in ("attacks", "ranged", "areas", "statusActions", "treeActions", "spawnAction", "basicShot"):
             if entry.get(member):
                 raise Failure(f"{entry['path']} is in the list targets of {SLICE_LISTS_PATH.name}, and it has the member {member}")
         for member in ("behavior", "serverTrees", "tags", "reactionTable", "additive", "reactions", "reactionLengths"):
@@ -2104,6 +2141,10 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                                 projectile_list))
     counts.update(area_counts([slices[body] for body in used], points, document_kinds, behavior.areas_left_out))
     counts.update(status_counts([slices[body] for body in used], points, document_kinds, getattr(behavior, "status_left_out", {})))
+    # Stage BT3: the tree actions (the slices in the file that have one, and the causes of a listed action that is not one).
+    counts["slicesWithTreeActions"] = sum(1 for body in used if slices[body].get("treeActions"))
+    counts["treeActions"] = sorted({slices[body]["actions"][action[0]][0] for body in used for action in slices[body].get("treeActions", [])})
+    counts["treeActionsLeftOut"] = dict(sorted(getattr(behavior, "tree_left_out", {}).items()))
     # User test 2 (UT2-7): the sources of the lengths of the attacks and the reaction fragments with a length (each slice that the tool read).
     counts.update({"attackLengths": dict(getattr(behavior, "attack_lengths", {"endBlend": 0, "animation": 0, "guess": 0})),
                    "reactionLengths": dict(getattr(behavior, "reaction_lengths", {"known": 0, "unknown": 0})),
@@ -2429,6 +2470,9 @@ def main() -> int:
           f"low-health part: {counts['slicesWithLowHealth']}")
     for cause, count in counts["statusActionsLeftOut"].items():
         print(f"  no status action, {cause}: {count}")
+    print(f"  tree actions (stage BT3): {counts.get('slicesWithTreeActions', 0)} slices: {', '.join(counts.get('treeActions', []))}")
+    for cause, count in counts.get("treeActionsLeftOut", {}).items():
+        print(f"  no tree action, {cause}: {count}")
     lengths = counts["attackLengths"]
     print(f"  the lengths of the attacks: {lengths['endBlend']} from an end blend, {lengths['animation']} from the animation file, "
           f"{lengths['guess']} the last contact plus {creature_behavior.TIME_AFTER_CONTACT} s; reaction fragments with a length: "

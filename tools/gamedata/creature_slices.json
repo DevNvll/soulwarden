@@ -90,5 +90,8 @@
   "slices/darkness/events/pois/characterspawners/myrkgard_07sm06/darkness_core_shell_major_monolith_westmyrkgard_07sm06b_64_elite.dynamicslice": "live check L1 of stage QG5c5 (the core shell of a Darkness monolith, \"Damage Carapace\"): the metadata, the PositionInTheWorld state at slot 4, the vitals at slot 1, and the marker at slot 6 show the orb, the name plate (\"Crystallized Anxiety\" level 65), and the health bar; arrows hurt it, and its death ends its stage",
   "slices/pois/brimstone/totem_scorpion_nest_sm.dynamicslice": "live check I4 of stage QG5c1: the PositionInTheWorld state at slot 5, the vitals at slot 1, and the marker at slot 8 show the egg clutch and its name plate; the death plays a dust burst and the name plate goes away",
   "slices/worldevents/shatteredmountain/interact/corruptedtotem/totem_corrupted.dynamicslice": "live check I4 of stage QG5c1: the place at slot 3, the vitals at slot 1, and the marker at slot 5 show the barb, its red area, and the name plate"
+ },
+ "treeActions": {
+  "Phase_Transition_1_to_2": "live checks L3 to L6 of stage BT3: on Commander Thorpe (damned_commander_thorpe) the record with the tag state of the weapon tags and the default tags (the bit thorpe) plays the summon of darkness (intro, loop, end; 11.53 s); AI_Thorpe_Phase_1_to_2_Transition heals 2 percent each 0.1 s with ABS 0.6, AI_Thorpe_Phase_2 stays with ABS 0.1"
  }
 }

@@ -639,6 +639,15 @@ void Creatures::react(Entity& entity, const HitReaction& reaction, HitPush& push
         creature.reactionChain = 0;
         ++m_counts.chainResets;
     }
+    // Stage BT3: the phase transition of a boss tree has the empty reaction table (game data, SetReactionFragment of the action Intermission):
+    // no reaction, no additive reaction, and no push of a hit.
+    if (creature.reactionsOffUntil) {
+        if (now < *creature.reactionsOffUntil) {
+            ++m_counts.reactionsOff;
+            return;
+        }
+        creature.reactionsOffUntil.reset();
+    }
     const bool limited = creature.reactionLimitUntil.has_value();
     // The grit of an attack: a creature of the backend that plays an attack, a shot, a cast, or a status action has grit (the ActivateGrit
     // clips of the attacks, game data). A hit then plays no full reaction (the reaction would take the action of the attack away, and a
@@ -838,7 +847,8 @@ CreatureResult Creatures::play(EntityId id, const std::string& action, std::opti
     return result;
 }
 
-bool Creatures::start_action(Entity& entity, std::uint32_t action, std::optional<std::chrono::milliseconds> length) {
+bool Creatures::start_action(Entity& entity, std::uint32_t action, std::optional<std::chrono::milliseconds> length,
+                             const std::optional<gamedata::FragmentTags>& tags) {
     const gamedata::CreatureSlice& body = *entity.creature.body;
     if (action >= body.actions.size() || body.actions[action].fragmentIndex < 0) {
         return false;
@@ -851,7 +861,7 @@ bool Creatures::start_action(Entity& entity, std::uint32_t action, std::optional
     // not have the count of an action that a client got.
     started.generation = static_cast<std::uint16_t>(++entity.creature.actions);
     started.started = m_world.clock().now();
-    started.tags = body.tags;
+    started.tags = tags ? *tags : body.tags;
     if (length) {
         started.ends = started.started + *length;
         m_acting.insert(entity.id);

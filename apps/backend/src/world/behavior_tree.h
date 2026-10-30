@@ -36,6 +36,13 @@
 // default/melee), and the binding file (kBindingFile, world/tree_binding.h) selects the tree of each creature. A `status_action` and an
 // `area_attack` can name the action of the slice that they use (`action`): the behavior refuses such a tree for a creature whose slice does
 // not have the action (one log line), and the creature has the tree "default".
+//
+// Stage BT3: the boss nodes (research BT0 section 4; docs/systems/creature-behavior.md, "Behavior trees, stage BT3"): `action` (an action of
+// the slice by its name), `phase` (a health threshold that fires one time in a fight, with its transition), `tag_set` and `tag_is` (the
+// tags of the creature), `health_below`, `has_status`, `cooldown`, `weighted_random`, `sequence` with `memory` (a combo of separate
+// actions), `once` (one time in a fight), `timer` (the time of the fight or of the phase), `target` (the target policy), the arena of
+// `keep_target`, and `event` (a named event of the creature for the encounter runner). The state of these nodes is in the creature
+// (CreatureBrain::states, tags, board), and the end of a fight (the reset at the anchor) gives it its first values again.
 
 namespace soulwarden::backend::world::tree {
 
@@ -46,6 +53,11 @@ inline constexpr std::size_t kMaxNodes = 1024;
 inline constexpr std::size_t kMaxDepth = 32;
 /** The limit of a blackboard: the declared keys of a compiled tree. */
 inline constexpr std::size_t kMaxKeys = 64;
+/** Stage BT3: the limits of the tags, the named statuses, and the named events of a compiled tree. */
+inline constexpr std::size_t kMaxTags = 64;
+inline constexpr std::size_t kMaxNamed = 64;
+/** Stage BT3: the place of a node in CompiledTree::states for a node with no state (Node::state). */
+inline constexpr std::uint16_t kNoState = 0xFFFF;
 /** The largest file of a folder of trees, and of a binding file (bytes). */
 inline constexpr std::size_t kMaxFileBytes = 1024 * 1024;
 /** The tree of a creature with no binding, and of a creature whose slice does not fit the tree of its binding. */
@@ -73,8 +85,32 @@ enum class NodeKind : std::uint8_t {
     turn_to_target, ///< the creature turns to its target
     roam,           ///< the patrol or the wander of a creature at rest (stage 3.4e; its waits are parameters from stage BT2)
     set,            ///< a key of the blackboard gets a value (`key`, `value`)
+    // Stage BT3: the boss nodes.
+    action,          ///< an action of the slice by its name (`action`): an attack, a status action, an area attack, or a tree action
+    phase,           ///< one child (the transition): a health threshold (`health_below`) that fires one time in a fight; the key (`key`, `to`)
+    tag_set,         ///< a tag of the creature gets a value (`tag`, `value`)
+    tag_is,          ///< the creature has a tag (`tag`)
+    health_below,    ///< the health of the creature is at `percent` of its maximum or below
+    has_status,      ///< a status effect of the creature (`status`)
+    cooldown,        ///< one child: it fails for `seconds` after its child succeeded
+    weighted_random, ///< the children in a random order by their `weight`, until one does not fail
+    once,            ///< one child: it runs until its child succeeded one time in the fight
+    timer,           ///< `seconds` passed since the start of the fight or of the phase (`since`)
+    target,          ///< the target policy (`policy`: nearest, random, threat) among the characters in `range`, each `every` seconds
+    event,           ///< a named event of the creature for its encounter (`event`)
 };
-inline constexpr std::size_t kNodeKinds = static_cast<std::size_t>(NodeKind::set) + 1;
+inline constexpr std::size_t kNodeKinds = static_cast<std::size_t>(NodeKind::event) + 1;
+
+/** @return True for a node that does something in a step (the view "decided": the last one that succeeded). Stage BT3. */
+[[nodiscard]] constexpr bool acts(NodeKind kind) {
+    return (kind >= NodeKind::keep_target && kind <= NodeKind::roam) || kind == NodeKind::action || kind == NodeKind::tag_set
+           || kind == NodeKind::target || kind == NodeKind::event;
+}
+
+/** Stage BT3: the reference time of a `timer` node. */
+enum class Since : std::uint8_t { fight, phase };
+/** Stage BT3: the target policies of a `target` node. */
+enum class Policy : std::uint8_t { nearest, random, threat };
 
 /** The result of a node in one step. `idle`: the step did not run the node. */
 enum class Status : std::uint8_t { idle, success, failure, running };
@@ -107,6 +143,24 @@ inline constexpr std::size_t kWaitShortest = 0, kWaitLongest = 1, kNoWayPause = 
 inline constexpr float kDefaultWaitShortest = 4.0F, kDefaultWaitLongest = 12.0F, kDefaultNoWayPause = 3.0F;
 inline constexpr std::size_t kCheckKey = 0, kCheckOp = 1, kCheckValue = 2;
 inline constexpr std::size_t kSetKey = 0, kSetValue = 1;
+// Stage BT3. keep_target: the radius of the arena (0: no arena; the leash of the slice from the anchor). sequence: 1 with memory.
+inline constexpr std::size_t kArena = 1;
+inline constexpr std::size_t kMemory = 0;
+// action: the pause after it (seconds), then the place of its name in CompiledTree::actions.
+inline constexpr std::size_t kActionPause = 0, kActionSlot = 1;
+inline constexpr float kDefaultActionPause = 1.5F;
+// phase: the health part (percent), the slot of its key, the value of the key in the phase.
+inline constexpr std::size_t kPhaseHealth = 0, kPhaseKey = 1, kPhaseTo = 2;
+// tag_set and tag_is: the bit of the tag in CompiledTree::tags, then (tag_set) the value 0 or 1.
+inline constexpr std::size_t kTagBit = 0, kTagValue = 1;
+inline constexpr std::size_t kHealthPercent = 0;
+// has_status: the place of its name in CompiledTree::statuses. event: the place of its name in CompiledTree::events.
+inline constexpr std::size_t kStatusSlot = 0, kEventSlot = 0;
+inline constexpr std::size_t kCooldownSeconds = 0;
+inline constexpr std::size_t kTimerSeconds = 0, kTimerSince = 1;
+// target: the policy, the range (meters), the time between two choices (seconds).
+inline constexpr std::size_t kTargetRange = 0, kTargetEvery = 1, kTargetPolicy = 2;
+inline constexpr float kDefaultTargetRange = 30.0F, kDefaultTargetEvery = 1.0F;
 } // namespace param
 
 /** One node of a compiled tree: its children are the nodes after it up to `end` (a pre-order table). */
@@ -118,6 +172,10 @@ struct Node {
     std::uint16_t end{0};
     /** The first value of its parameters in `CompiledTree::params`. */
     std::uint32_t param{0};
+    /** Stage BT3: the place of the state of the node in CompiledTree::states (cooldown, once, a sequence with memory, target), or kNoState. */
+    std::uint16_t state{kNoState};
+    /** Stage BT3: the weight of a child of a `weighted_random` node (0 for each other node). */
+    float weight{0.0F};
     /** The name of the node for a view (the field "name" of the file, or the name of the tree of a subtree). Empty: none. */
     std::string label;
 };
@@ -150,6 +208,16 @@ struct CompiledTree {
     std::vector<Key> keys;
     /** The actions of the slice that its nodes name (stage BT2): the parameter kStatusAction or kAreaAction of a node is a place here. */
     std::vector<NamedAction> actions;
+    /**
+     * Stage BT3: the tags of its `tag_set` and `tag_is` nodes (a bit of CreatureBrain::tags each), the status rows of its `has_status` nodes
+     * (the behavior finds each row when it binds a creature), the events of its `event` nodes, and the number of node states.
+     */
+    std::vector<std::string> tags;
+    std::vector<std::string> statuses;
+    std::vector<std::string> events;
+    std::uint16_t states{0};
+    /** @return True when an `event` node of the tree sends the event (the encounter runner: a stage that waits for it). */
+    [[nodiscard]] bool sends(std::string_view event) const;
     /** The first node of each kind (a development command takes its values from it), or -1. */
     std::array<std::int32_t, kNodeKinds> firstOfKind{};
     /** The cadence of the light and heavy attacks of the first melee node (the melee rule of a shot needs the next melee attack). */

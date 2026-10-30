@@ -17,6 +17,7 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 | The area attack of a creature (stage 3.4f-C): the choice, the range, the repeat, the walk of a creature with only area attacks, the casts and their cancels, the place; the correction CS-R4 (the spawn lead for a new observer) | Protocol notes 4.39, `world/behavior.h` (`behavior_rules::kArea*`, `Behavior::think_area`, `start_area`, `cast`, `area_place`, `command_area`, `spawn_lead_over`), `gamedata/creature_data.h` (`CreatureAreaAttack`, `AreaCast`), [Spell entities](spells.md), `tools/world creature area`, test cases CRA6, RZ4 |
 | The behavior trees (stage BT1): the format of a tree file, the loader and the compiler, the runtime, the leaves, the default tree, the blackboard, the folder of a development run, the reload, the view of a tree | This document, section "Behavior trees" below, `apps/backend/behavior/*.jsonc` and `tree.schema.json`, `world/behavior_tree.h`, `world/behavior.h` (`decide`, `run_tree`, `run_node`), `tools/world creature tree`, test cases BT1 to BT5 and BTD1, research `bt0-ai-data.md` |
 | The binding of a tree to a creature (stage BT2): the binding file and the order of its keys, the server tree of a slice, the subtrees of the default tree, the refusal of a tree that names an action that the slice does not have, the tree command, the tree in the tab "Creatures"; the corrections of the review of BT1 | This document, section "Behavior trees" below, `apps/backend/behavior/bindings.jsonc` and `bindings.schema.json`, `world/tree_binding.h`, `world/behavior.h` (`bind`, `fits`, `set_tree`), `tools/gamedata/creature_behavior.py` (`read_server_trees`), `tools/world creature tree ID --set NAME`, test cases BTB1 to BTB6, RBT1 to RBT7, BT5 |
+| The boss nodes and the first boss trees (stage BT3): action, phase, tags, health_below, has_status, cooldown, weighted_random, a sequence with memory, once, timer, the target policy, the arena, the event of a tree, the reset at the end of a fight; the tree actions of the data and their tag state; the trees of Thorpe and of Isabella; the corrections of the review of BT2 | This document, section "Behavior trees, stage BT3" below, `apps/backend/behavior/boss-thorpe.jsonc`, `boss-isabella.jsonc`, `world/behavior_tree.h`, `world/behavior.h` (`start_named`, `start_tree_action`, `choose_target`, `reset_fight`, `sends_event`), `gamedata/creature_data.h` (`CreatureTreeAction`), `tools/gamedata/creature_behavior.py` (`read_tree_actions`), [Encounters](encounters.md) (the events of a boss tree), test cases BT3A to BT3L, BT3H, BT3I, BT3T, BT2R1 to BT2R3 |
 | The status actions of a creature (stage 3.4f-D): its heal at low health, its buff, the marks and their cancels, the repeat; the place rule of the client for a cast (at the caster, at the target, at the aim point) | Protocol notes 4.40, `world/behavior.h` (`behavior_rules::kStatusRepeat`, `Behavior::think_status`, `wants`, `start_status_action`, `status_mark`, `command_status_action`, `place_rule`, `area_range`), `gamedata/creature_data.h` (`CreatureStatusAction`, `StatusMark`, `CreatureSlice::lowHealth`), [Creatures](creatures.md), `tools/world creature status-action`, test cases CRH1 to CRH5 |
 
 ## Rules
@@ -409,6 +410,90 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   memory of the world, with the character id as its key (`Behavior::set_ignored`), which
   stays when its session ends, until the backend stops.
 
+- Behavior trees, stage BT3 (the plan `behavior-tree-plan.md`, row BT3; research BT0 section 4, the node set). The default tree does not
+  change (BTD1 and its stored trace pass). The rules and the source of each one:
+  - The nodes (BT0 section 4; the names and the forms are decisions of an agent; `tree.schema.json` has each one):
+    - `action` (`action`: a name, `pause`: 1.5 s with no member): an action of the slice by its name. The behavior binds the name to an attack,
+      a status action, an area attack, or a tree action of the slice (in this order); a slice with none of this name refuses the tree for
+      that creature (the rule of BT2). An attack starts in the reach of its first contact with a free line, after the pause of the last
+      action; in its reach in the pause the node is `running` and the creature turns to its target (a combo keeps its place). A status action
+      starts when its repeat time is over, an area attack in the range of its spell with a free line, a tree action at once. No action starts
+      while an action plays.
+    - `phase` (`health_below`, `key`, `to`, one child): when the int key is below `to` and the health is `health_below` percent of the maximum
+      or less (the compare LessThanOrEqual of IfHealthPercentage, game data), the key gets `to`, the phase starts (the timer `since phase`),
+      and the child (the transition) runs. One time in a fight: the key stays. While the action that the child started plays, a hit plays no
+      reaction, no additive reaction, and no push (`Creature::reactionsOffUntil`; game data: SetReactionFragment with the empty reaction table
+      of the action Intermission of the commander of the damned).
+    - `tag_set` (`tag`, `value`: true with no member) and `tag_is` (`tag`): the tags of the creature (a bit of `CreatureBrain::tags`; 64 tags
+      in a tree). `health_below` (`percent`). `has_status` (`status`: the id of a status row; the row of the ability data, found at the bind; no
+      row: the node fails).
+    - `cooldown` (`seconds`, one child): the node fails for `seconds` after its child succeeded. `once` (one child): it runs until its child
+      succeeded one time in the fight. `timer` (`seconds`, `since`: fight or phase): success when the time passed since the start of the fight
+      (the time the creature took its target from rest) or of the last phase.
+    - `weighted_random` (each child has `weight`, 64 children at most): the children in a random order by their weights (the one random
+      source of the world, `World::random_unit`) until one does not fail. A child that is `running` (a combo) runs first in the next step.
+    - `sequence` with `memory: true` (a combo of separate actions): the step that starts an action ends there (`running`); the next step goes
+      on at the next child. A child that fails starts the combo again.
+    - `target` (`policy`: nearest, random, threat; `range` 30 m, `every` 1 s with no member): each `every` seconds the creature takes, among the
+      characters of its space in `range` and in the height of its vision with a free line (a character in its shelter time only when it hurt the
+      creature) and its target, the nearest one, a random one, or the one with the most damage to the creature (`CreditEntry::damage`, the
+      credit of the kill; the target wins a tie). Research BT0: the slices re-evaluate their tree each 1 s; the targeting profiles of the client
+      are not read [agent].
+    - `keep_target` with `arena` (meters): a circle around the home of the creature replaces the leash of the slice and `lose_distance`: the
+      creature keeps a target in it and loses a target out of it ("the target left the arena"), and it loses its target when it is out of it
+      ("the creature left its arena") [agent].
+    - `event` (`event`): a named event of the creature for its encounter. The behavior queues it after its step (no stage end inside a step),
+      and the runner gives it to the stages of the instance of the member ([Encounters](encounters.md), "The events of a boss tree").
+  - The state of these nodes is in the creature (rule MP-1): `CreatureBrain::states` (one slot for each node with a state: a cooldown end, the
+    next choice of a target, the place of a combo, a once node), `tags`, `fightAt`, `phaseAt`, `fightStatuses`. The end of a fight (the arrival
+    at the anchor after the way back, with the full health) gives each one its first value, ends the statuses that a tree action gave for the
+    fight, and clears the reaction stop (`Behavior::reset_fight`) [agent: the reset of the data, ResetAI, is a status of a server script].
+  - The tree actions (game data; the list `treeActions` of `tools/gamedata/creature_slices.json`, each with its live check): an action of the
+    table of a slice that a tree plays by its name and that is not an attack (`Phase_Transition_1_to_2`). `creatures.json` has its length (the
+    end of the selected variant of its fragment), the statuses of its start and of its exit (the ModifyStatusEffects of its definition that are
+    not in a condition), and its tag state. The action plays as the action of a shot (no step, no turn, no other attack in it). A status of
+    its start that its exit removes lasts the action; a different one lasts the fight (24 h, the reset removes it) [agent: the rows have no
+    duration]. At its end the statuses of its exit go.
+  - The tag state of a tree action (live checks L2 and L3): the bits of the weapon tags and of the default tags of the slice (`m_defaultTags`),
+    the tags of the selection of its variant. The client does not add the default tags of its slice: with the weapon tags only
+    (`080100000000000000000000`) the transition of Thorpe showed no animation for 11.5 s; with the bit `thorpe` (`080101000000000000000000`) it
+    played the summon of darkness (intro, loop, end). The other records of a creature keep the weapon tags (the attack data of the tool was
+    selected with them; an open problem of stage BT3: the idle of Thorpe has no variant with them).
+  - The ABS parts of the effects of a creature (game data: the statuses of the transition, ABSSlash 0.6 and 0.1): the damage of a hit on a
+    creature of a type is times 1 minus the sum of the ABS<type> of its effects (times their stacks, 0 to 1), the rule of the statuses of a
+    character ([Combat and health](combat-and-health.md)).
+  - The first mini boss (a decision of the orchestrator after two picks that the data does not support): Commander Thorpe
+    (`worldevent_ai_thorpe_msq`, Named_Solo+, level 49, slice `damned_commander_thorpe`, the wave 5 "Kill Thorpe" of the main story event), tree
+    `boss/thorpe` by his kind. Lord Commander Attalus (`evil_knight_commander_firevariant`) has no Flamekeeper transition in his action table
+    (the grid of his slice maps 8 actions of the shared list `Evil_Knights_Combat`: shots, grenades, mines, dodges); Legatus General Patrick
+    (`damned_longswordsman_commander`) has `Phase_Transition_1_to_2` in his table but no variant of its fragment for his tags (each variant needs
+    a tag `thorpe`, `ftue_thorpe`, or `lost_thorpe`). The tree of Thorpe, rule by rule:
+    - the target checks of BT1 (`lose_distance` 60, the leash of his slice 150 m) [agent]; the target with the most damage to him, each 1 s, in
+      30 m [agent];
+    - the phase 2 at 60 percent, one time in a fight [data: the action Intermission of `thorpe_reaction.actionlist`: IfHealthPercentage
+      LessThanOrEqual 0.6, the fragment Phase_Transition_1_to_2, SetReactionFragment with the empty table, the tag Phase_2 at its exit]: the
+      tree action `Phase_Transition_1_to_2` [data: 11.53 s; the statuses AI_Thorpe_Phase_1_to_2_Transition (a heal of 2 percent each 0.1 s, ABS
+      0.6) and AI_Thorpe_Phase_2 (ABS 0.1, model scale +10 percent); the exit removes the transition and AI_Thorpe_Phase_1_MinHealth], then the
+      tag Phase_2;
+    - the attacks by weights 3, 3, 2, 1, 2, 1, 1, 2 [agent]: the combos SwipeL_01 then SwipeR_01, Stab_01 then Stab_02, SwipeL_02 then SwipeR_02
+      [data: each attack of `thorpe_combat.actionlist` sets the tag ChainAttack; agent: the pairs], the charge Shoulder_Charge_Loop then _Outro
+      (cooldown 20 s) [data: the actions; the intro has no damage event], Overhead_Slash (8 s), Double_Spin (12 s), Flurry (15 s), and in the
+      phase 2 Core_Explosion (18 s) [agent: the data gates no attack by Phase_2 for this slice];
+    - then the default melee (the way, the crowd) [BT2].
+    Not in the tree: SetAggressionLevel at 30 percent (the tag Frenzy: no action of the slice reads it), the min health of the phase 1
+    (AI_Thorpe_Phase_1_MinHealth: no giver in the client data).
+  - The tree of Isabella (`boss/isabella`, kind `isabella_msq2` of the level set of QuestIsabella): the events of the stages of her recipe
+    [data] at the health 75 (Transform_Winged), 60 (Water_1), 45 (Water_2), 30 (Water_3), 10 percent (Defeat), Intro_Complete at the start of the
+    fight, Winged_Ready 6 s after Transform_Winged, the arena 60 m [agent]; the attacks of the default fight. Her phase actions
+    (Phase_2_Transition, Phase_3_Transition, Phase_3_Transform) are not tree actions of the data yet (open problem).
+  - The corrections of the code review of BT2: a folder file that makes a cycle with a tree of the program is refused, and the trees of the
+    program stay (BTR2-R1, case BT2R1); the limit of the rounds of the recovery comes from the files at the start, and a set that does not
+    compile keeps the trees of the program (BTR2-R2, BT2R2); a creature whose slice fits neither the tree of its binding nor the tree default of
+    a folder has the tree default of the program (BTR2-R3, BT2R3); BT5 and BTB5 decode the action records of the attacks in each session
+    (BTR2-R4, `trees::action_records`).
+  - The cost (case BT3L, the load world of BT4 with the boss tree): 400 creatures, half of them with a transition, 1,000 ticks: the steps of the
+    behavior 16 ms, the ticks 44 ms (limits 2 s and 4 s).
+
 ### Instances (stage DG1)
 
 - Stage DG1 ([Instances](instances.md)): the vision, the roam selection, the crowd rule, and the rule "observed" use the space of the
@@ -428,6 +513,8 @@ tools/world creature status-action 5e Howl            # the creature starts its 
 tools/world creature tree 5e                          # the behavior tree of the creature: its last step, each node, the blackboard (stage BT1)
 tools/world creature tree reload                      # the trees and the binding file again from the program and SOULWARDEN_BEHAVIOR_DIR
 tools/world creature tree 5e --set test/still         # the creature gets the tree test/still now (stage BT2; default: the default tree)
+                                                      # stage BT3: the view has the node states, the tags, the times of the fight and
+                                                      # of the phase, the statuses of the fight, the tree action that plays, the reaction stop
 tools/test-soulwarden-backend.sh --write-trace BTD1   # the stored trace of the decisions again: only for an intended change of the behavior
 ```
 
@@ -458,6 +545,19 @@ tools/test-soulwarden-backend.sh --write-trace BTD1   # the stored trace of the 
   example a ledge).
 
 ## Traps
+
+- Stage BT3: check the action table of a slice (`creatures.json`, member `actions`) before a boss tree names an action: an action list file
+  can have actions that the slice does not have. The table has an action only when the alias map of its list in the grid file of the slice
+  names it (protocol notes 4.14). Research BT0 section 4 read the list file `Evil_Knights_Combat.actionlist` and named the Flamekeeper
+  transitions as the phases of Lord Commander Attalus; his grid maps 8 actions of that list, none of them a transition.
+- Stage BT3: also check the variants of the fragment of the action for the tags of the slice (the weapon tags and the default tags,
+  `m_defaultTags`). Each variant of `Phase_Transition_1_to_2` needs a Thorpe tag: Legatus General Patrick has the action and no variant. The
+  creature tool writes a tree action only with a variant with a length (count "no tree action, the fragment of the slice has no variant with
+  a length").
+- Stage BT3: a tree action shows its animation only with the tag state of the tree action (the default tags of the slice too). A test with
+  `tools/world creature action ID NAME SECONDS --tags HEX` shows the variant of a tag state.
+- Stage BT3: a boss tree that names an action of the data refuses itself with an older `creatures.json` (no member `treeActions`): the boss
+  has the tree default, and the log has one line `behavior tree refused for creature`.
 
 - A tree file with a trailing comma is refused (the vendored JSON library reads comments, not trailing commas): the log line names the
   byte. The keys of a blackboard are in the sequence of their names, not of the file.

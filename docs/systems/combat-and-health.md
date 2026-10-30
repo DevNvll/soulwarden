@@ -373,6 +373,13 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   test case QGR5C1B]. The navigation data has false walls (the top of the Perseus ruin): there a hit can be refused [live L2 of stage
   QG5c2].
 
+- Stage BT3: the ABS<type> parts of the effects of a creature that takes a hit (game data: the statuses of a phase transition, ABSSlash 0.6
+  of AI_Thorpe_Phase_1_to_2_Transition, 0.1 of AI_Thorpe_Phase_2): the damage of each part of the hit (its type, and the type of a gem
+  conversion) is times 1 minus the sum of the ABS of that type of the effects of the creature, times their stacks, from 0 to 1
+  (`Creature::absorb_part`, `HitModifiers::target`); a damage over time too (`Combat::strike_amount`). The rule of the statuses of a character
+  (`Statuses::values`, the ABS part of the type of the hit). Live L4 of stage BT3: a hit of 489 did 146 in the transition (ABS 0.7) and 440 in
+  the phase 2 (ABS 0.1). Case BT3C.
+
 ### Instances (stage DG1)
 
 - Stage DG1 ([Instances](instances.md)): a respawn in an instance is at the start of its map, in its space (the travel places are places

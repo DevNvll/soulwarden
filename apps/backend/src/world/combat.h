@@ -246,6 +246,9 @@ struct HitModifiers {
      * stage 3.3b-S5): the mitigation times (1 - this part). A rule of this project.
      */
     float penetration{0.0F};
+    /** Stage BT3: the creature that takes the hit and the time of the hit: the ABS<type> parts of its effects (Creature::absorb_part). Null: none. */
+    const Creature* target{nullptr};
+    WorldClock::time_point now{};
 };
 
 /** The flags of the damage number (type 2071), low byte first (client reader at image RVA 0x694A7F0; live check L6 of stage 3.3b-S5). */

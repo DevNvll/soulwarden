@@ -897,6 +897,11 @@ class Behavior:
         # and the causes of a listed action of a slice that is not a status action of the file.
         self.status_actions = status_actions
         self.status_left_out: dict[str, int] = {}
+        # Stage BT3: the tree actions of the list treeActions of creature_slices.json (lower-case action name to its live check; creature_data
+        # sets it after the construction), the tree actions of the file, and the causes of a listed action that is not one.
+        self.tree_actions: dict | None = None
+        self.tree_found = 0
+        self.tree_left_out: dict[str, int] = {}
         # User test 2 (UT2-7): the source of the length of each attack (its end blend, the length of its animation, or the last contact plus
         # TIME_AFTER_CONTACT), and the reaction fragments with a length and with none.
         self.attack_lengths = {"endBlend": 0, "animation": 0, "guess": 0}
@@ -1063,7 +1068,7 @@ class Behavior:
         return self._tags[path]
 
     def read(self, roots: list, controller_path: str, actions: list[list], slice_path: str = "", markers: dict | None = None,
-             reactions: dict | None = None) -> dict:
+             reactions: dict | None = None, effects: dict | None = None) -> dict:
         """@return The members of a slice for its behavior: "behavior" (when the slice has the values), "tags" (when
         the slice has a tag), "attacks", and "noAttack" (the cause, for a slice with no attack: not a member of
         the file). `actions` is the action table of the slice. `reactions` (stage U3, creature_data.read_reactions): the fragment list,
@@ -1199,6 +1204,17 @@ class Behavior:
                           if self.status_actions is not None else [])
         if status_actions:
             result["statusActions"] = status_actions
+        # Stage BT3: the tag state of a tree action: the tags of the weapons and the default tags of the slice (the tags of the selection of
+        # its variant). The client does not add the default tags of its slice (live checks L2 and L3 of stage BT3: with the weapon tags only
+        # the transition of Thorpe showed no animation; with the bit "thorpe" it played the variant of the summon of darkness).
+        tree_state = None
+        if bits is not None and getattr(self, "tree_actions", None):
+            defaults = [name for name in sorted(read_default_tags(roots)) if name not in tags]
+            tree_state, _ = bits.state(names + defaults)
+        tree_actions = (self.read_tree_actions(actions, databases, ranged_tags, effects or {}, tree_state)
+                        if getattr(self, "tree_actions", None) else [])
+        if tree_actions:
+            result["treeActions"] = tree_actions
         if not attacks and not ranged and not areas:
             result["noAttack"] = "; ".join(sorted(causes)) or "no action of its action table has a damage event"
         return result
@@ -1371,6 +1387,33 @@ class Behavior:
             last = marks[-1][0]
             length = end if end is not None and end > last else last + TIME_AFTER_CONTACT
             found.append([index, rounded(min(length, LONGEST_ATTACK)), marks])
+        return found
+
+    def read_tree_actions(self, actions: list[list], databases: list[str], tags: set[str], effects: dict,
+                          state: str | None = None) -> list[list]:
+        """@return The tree actions of a slice (stage BT3): [action, length, [status on enter, ...], [status removed at the exit, ...],
+        tag state] for each action of the list treeActions that has a fragment: the length of the selected variant of its fragment (its end
+        blend, else the end of its animation: Animations.fragment_length), the statuses of its ModifyStatusEffects that are not in a
+        condition (`effects`: the action name to the two lists, creature_data.direct_statuses), and the tag state of the selection (`state`:
+        the bits of the weapon tags and the default tags of the slice, 24 hexadecimal digits; empty: no tag definition). A listed action
+        whose variant has no length is not in the file (a count of its cause)."""
+        found = []
+        for index, (name, fragment, fragment_index, _) in enumerate(actions):
+            if fragment_index < 0 or name.lower() not in self.tree_actions:
+                continue
+            variant = None
+            for database in databases:
+                variant = select(self.animations.variants(database).get(fragment.lower(), []), tags, False)
+                if variant is not None:
+                    break
+            length = self.animations.fragment_length(variant)
+            if length is None or length <= 0.0:
+                self.tree_left_out["the fragment of the slice has no variant with a length"] = (
+                    self.tree_left_out.get("the fragment of the slice has no variant with a length", 0) + 1)
+                continue
+            enter, removed = effects.get(name, ([], []))
+            found.append([index, rounded(min(length, LONGEST_ATTACK)), sorted(set(enter)), sorted(set(removed)), state or ""])
+            self.tree_found += 1
         return found
 
     def count_status(self, cause: str) -> None:

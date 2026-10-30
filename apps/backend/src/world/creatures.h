@@ -224,6 +224,8 @@ struct CreatureCounts {
     std::uint64_t reactions{0};
     std::uint64_t reactionsOfPower{0};
     std::uint64_t hitsWithNoReaction{0};
+    /** Stage BT3: hits that played no reaction because a phase transition of a boss tree holds the empty reaction table. */
+    std::uint64_t reactionsOff{0};
     std::uint64_t hitStuns{0};
     std::uint64_t reactionLimits{0};
     std::uint64_t idleRecords{0};
@@ -568,9 +570,11 @@ public:
      * Starts an action of the action table of the slice of a creature, and marks its movement
      * state. No effect for an index that the table does not have, or for an action with no fragment.
      * @param length The time of an action that has an end. No value: the action stays.
+     * @param tags Stage BT3: the tag state of the record (a tree action: the tags of its variant). No value: the tags of the slice.
      * @return True when the action started.
      */
-    bool start_action(Entity& entity, std::uint32_t action, std::optional<std::chrono::milliseconds> length = std::nullopt);
+    bool start_action(Entity& entity, std::uint32_t action, std::optional<std::chrono::milliseconds> length = std::nullopt,
+                      const std::optional<gamedata::FragmentTags>& tags = std::nullopt);
     /**
      * Puts a creature at a different place: the position index of the world follows it, and
      * each session that observes the creature gets its movement state.

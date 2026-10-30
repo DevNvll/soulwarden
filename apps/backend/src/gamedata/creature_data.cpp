@@ -281,6 +281,45 @@ bool read_status_action(const json& row, CreatureStatusAction& action) {
     return true;
 }
 
+/** Reads 24 hexadecimal digits of a tag state. @return False for a different text. */
+bool read_tag_state(const json& value, FragmentTags& tags) {
+    const std::string digits = value.is_string() ? value.get<std::string>() : std::string();
+    if (digits.size() != 2 * kFragmentTagBytes || digits.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+        return false;
+    }
+    for (std::size_t index = 0; index < tags.size(); ++index) {
+        tags[index] = static_cast<std::uint8_t>(std::strtoul(digits.substr(index * 2, 2).c_str(), nullptr, 16));
+    }
+    return true;
+}
+
+/**
+ * Reads one tree action of a slice (stage BT3): [action, length, [status, ...], [status, ...], tag state]. The tag state is 24 hexadecimal
+ * digits, or empty (the tags of the slice); the first form of the member has no tag state.
+ */
+bool read_tree_action(const json& row, CreatureTreeAction& action) {
+    if (!row.is_array() || (row.size() != 4 && row.size() != 5) || !read_number(row[0], action.action) || !read_real(row[1], action.length)
+        || !row[2].is_array() || !row[3].is_array()) {
+        return false;
+    }
+    if (row.size() == 5 && !(row[4].is_string() && row[4].get<std::string>().empty())) {
+        FragmentTags tags{};
+        if (!read_tag_state(row[4], tags)) {
+            return false;
+        }
+        action.tags = tags;
+    }
+    for (std::size_t list = 2; list <= 3; ++list) {
+        for (const json& status : row[list]) {
+            if (!status.is_string() || status.get<std::string>().empty()) {
+                return false;
+            }
+            (list == 2 ? action.enter : action.removed).push_back(status.get<std::string>());
+        }
+    }
+    return true;
+}
+
 /** Reads a flag of the tool: 0 or 1. */
 bool read_flag(const json& value, bool& flag) {
     std::uint32_t number = 0;
@@ -555,14 +594,8 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
     }
     // The members of the behavior (format 2). Each one is a member of a slice that has it: a
     // member with a wrong form is a fault of the file.
-    if (entry.contains("tags")) {
-        const std::string digits = entry["tags"].is_string() ? entry["tags"].get<std::string>() : std::string();
-        if (digits.size() != 2 * kFragmentTagBytes || digits.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
-            return false;
-        }
-        for (std::size_t index = 0; index < slice.tags.size(); ++index) {
-            slice.tags[index] = static_cast<std::uint8_t>(std::strtoul(digits.substr(index * 2, 2).c_str(), nullptr, 16));
-        }
+    if (entry.contains("tags") && !read_tag_state(entry["tags"], slice.tags)) {
+        return false;
     }
     if (entry.contains("behavior")) {
         const json& values = entry["behavior"];
@@ -683,6 +716,17 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
         }
         for (const json& row : entry["statusActions"]) {
             if (!read_status_action(row, slice.statusActions.emplace_back())) {
+                return false;
+            }
+        }
+    }
+    // The tree actions (stage BT3). A file of an older tool has no member.
+    if (entry.contains("treeActions")) {
+        if (!entry["treeActions"].is_array()) {
+            return false;
+        }
+        for (const json& row : entry["treeActions"]) {
+            if (!read_tree_action(row, slice.treeActions.emplace_back())) {
                 return false;
             }
         }
@@ -1383,6 +1427,14 @@ bool CreatureData::check() {
             }
             if (!correct) {
                 m_error = "slice " + std::to_string(index) + " has a status action whose action, time, or marks do not fit together";
+                return false;
+            }
+        }
+        // The tree actions (stage BT3): the action has a fragment, and its length is the length of an action.
+        for (const CreatureTreeAction& action : slice.treeActions) {
+            if (!(action.action < slice.actions.size() && slice.actions[action.action].fragmentIndex >= 0 && std::isfinite(action.length)
+                  && action.length >= kMinAttackTime && action.length <= kMaxAttackTime)) {
+                m_error = "slice " + std::to_string(index) + " has a tree action whose action or length does not fit";
                 return false;
             }
         }

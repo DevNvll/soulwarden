@@ -1,0 +1,128 @@
+// The tree of Commander Thorpe (stage BT3, the first mini boss: the kind worldevent_ai_thorpe_msq of the main story event "Kill Thorpe",
+// slice damned_commander_thorpe). The server tree of the original (damned/damned_commander_basebehavior) is not in the client: this tree is a
+// rule of this project. The source of each rule is at the rule: [data] the game data, [agent] a decision of the agent of stage BT3
+// (docs/systems/creature-behavior.md, section "Behavior trees, stage BT3"). Times in seconds, distances in meters, health in percent.
+{
+  "$schema": "./tree.schema.json",
+  "format": 1,
+  "tree": "boss/thorpe",
+  // The phase of the fight: 1, then 2 after the transition [agent: the key; data: the two phases of the action list].
+  "blackboard": { "phase": { "type": "int", "default": 1 } },
+  "root": {
+    "node": "selector",
+    "children": [
+      {
+        "node": "sequence",
+        "name": "fight",
+        "children": [
+          { "node": "in_fight" },
+          // The target checks of the default tree (the leash of the slice: 150 m) [agent: the values of BT1].
+          { "node": "keep_target", "lose_distance": 60 },
+          // The target with the most damage to Thorpe, each 1 s, among the characters in 30 m with a free line [agent; data: the slice
+          // re-evaluates its tree each 1 s, m_autoEvaluationFrequency; its targeting profile default_melee is not read].
+          { "node": "target", "policy": "threat", "range": 30, "every": 1 },
+          {
+            "node": "selector",
+            "children": [
+              // The transition to the phase 2 at 60 % health, one time in a fight [data: the action Intermission of
+              // thorpe_reaction.actionlist plays the fragment Phase_Transition_1_to_2 at IfHealthPercentage LessThanOrEqual 0.6, with the
+              // empty reaction table, and sets the tag Phase_2 at its exit; the tree action Phase_Transition_1_to_2 of the slice: 11.53 s,
+              // the statuses AI_Thorpe_Phase_1_to_2_Transition (a heal of 2 % each 0.1 s, absorb 60 %) and AI_Thorpe_Phase_2 (absorb 10 %,
+              // model scale +10 %)].
+              {
+                "node": "phase",
+                "name": "phase 2",
+                "health_below": 60,
+                "key": "phase",
+                "to": 2,
+                "child": {
+                  "node": "sequence",
+                  "children": [
+                    { "node": "action", "action": "Phase_Transition_1_to_2", "pause": 0.5 },
+                    { "node": "tag_set", "tag": "Phase_2" }
+                  ]
+                }
+              },
+              // The attacks in the reach: one choice by weight [agent: the weights and the cooldowns; data: the 13 melee attacks of the
+              // slice]. A choice that cannot start (its cooldown, the reach, the pause after the last attack) fails, and an other one runs.
+              {
+                "node": "weighted_random",
+                "name": "attacks",
+                "children": [
+                  // The combos: two separate actions (a sequence with memory) [data: each attack of thorpe_combat.actionlist sets the tag
+                  // ChainAttack, so the next attack chains; agent: the pairs by the names _01 and _02, and the pause 0.3 s between them].
+                  {
+                    "weight": 3,
+                    "node": "sequence",
+                    "name": "combo swipe",
+                    "memory": true,
+                    "children": [
+                      { "node": "action", "action": "Attack_SwipeL_01", "pause": 0.3 },
+                      { "node": "action", "action": "Attack_SwipeR_01" }
+                    ]
+                  },
+                  {
+                    "weight": 3,
+                    "node": "sequence",
+                    "name": "combo stab",
+                    "memory": true,
+                    "children": [
+                      { "node": "action", "action": "Attack_Stab_01", "pause": 0.3 },
+                      { "node": "action", "action": "Attack_Stab_02" }
+                    ]
+                  },
+                  {
+                    "weight": 2,
+                    "node": "sequence",
+                    "name": "combo swipe 2",
+                    "memory": true,
+                    "children": [
+                      { "node": "action", "action": "Attack_SwipeL_02", "pause": 0.3 },
+                      { "node": "action", "action": "Attack_SwipeR_02" }
+                    ]
+                  },
+                  // The charge: the loop, then the outro [data: the actions Attack_Shoulder_Charge_Loop and _Outro of the slice; the intro
+                  // Attack_Shoulder_Charge_Start has no damage event, so the tree cannot name it; agent: the cooldown].
+                  {
+                    "weight": 1,
+                    "node": "cooldown",
+                    "seconds": 20,
+                    "child": {
+                      "node": "sequence",
+                      "name": "charge",
+                      "memory": true,
+                      "children": [
+                        { "node": "action", "action": "Attack_Shoulder_Charge_Loop", "pause": 0 },
+                        { "node": "action", "action": "Attack_Shoulder_Charge_Outro", "pause": 2.5 }
+                      ]
+                    }
+                  },
+                  // The heavy attacks with a cooldown [agent: the cooldowns; data: the attacks; the pause 2.5 s of a heavy attack of BT1].
+                  { "weight": 2, "node": "cooldown", "seconds": 8, "child": { "node": "action", "action": "Attack_Overhead_Slash", "pause": 2.5 } },
+                  { "weight": 1, "node": "cooldown", "seconds": 12, "child": { "node": "action", "action": "Attack_Double_Spin", "pause": 2.5 } },
+                  { "weight": 1, "node": "cooldown", "seconds": 15, "child": { "node": "action", "action": "Attack_Flurry", "pause": 2.5 } },
+                  // Only in the phase 2: the explosion of the core [agent: the data does not gate an attack by the tag Phase_2 for this
+                  // slice; the tag of the transition is the data].
+                  {
+                    "weight": 2,
+                    "node": "sequence",
+                    "name": "phase 2 explosion",
+                    "children": [
+                      { "node": "tag_is", "tag": "Phase_2" },
+                      { "node": "cooldown", "seconds": 18, "child": { "node": "action", "action": "Attack_Core_Explosion", "pause": 2.5 } }
+                    ]
+                  }
+                ]
+              },
+              // The way to the target, and the attacks of the default tree when no choice above can start [agent: the subtree of BT2].
+              { "node": "subtree", "tree": "default/melee" },
+              { "node": "turn_to_target" }
+            ]
+          }
+        ]
+      },
+      // At rest: the roam of the default tree.
+      { "node": "subtree", "tree": "default/rest" }
+    ]
+  }
+}

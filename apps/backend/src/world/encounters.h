@@ -85,6 +85,11 @@ class World;
 struct WorldCapsule;
 
 namespace encounter_rules {
+/**
+ * Stage BT3: the start of the cause of the tool for an instance recipe in which no stage ends by the act of a player (encounters.player_ends of
+ * tools/gamedata/encounter_recipes.py). The runner takes such a recipe when the tree of a member sends the event of each event stage.
+ */
+inline constexpr std::string_view kNoPlayerEnds = "no stage of the encounter ends by the act of a player";
 /** The interval of the placement rule and of the participant rule on the world clock. */
 inline constexpr std::chrono::milliseconds kScanInterval{500};
 /** The distances of the placement rule (the spawn points of the creatures, a rule of this project; WorldOptions). */
@@ -247,6 +252,11 @@ struct EncounterInstance {
     WorldClock::time_point made{};
     /** Stage QG9b: the user waves (EncounterStage::userIndex) that ended: the end of a WaveEnded boss phase. */
     std::set<std::int32_t> wavesEnded;
+    /**
+     * Stage BT3: the events that the trees of its creature members sent (lower case): a stage that starts later and waits for one of them
+     * is met at its start (the tree of the boss can send it before that stage).
+     */
+    std::set<std::string> events;
 };
 
 /** One placement of a recipe, taken or refused. */
@@ -360,6 +370,14 @@ struct EncounterCounts {
     std::uint64_t placementsLooked{0};
     std::uint64_t entitiesLooked{0};
     std::uint64_t dueTaken{0};
+    /**
+     * Stage BT3: the events of the trees of the creatures (each one that came, the ones that met a stage, the ones with no instance), and the
+     * event stages that waited for the tree of a member (not met at their start).
+     */
+    std::uint64_t treeEvents{0};
+    std::uint64_t treeEventsMet{0};
+    std::uint64_t treeEventsLost{0};
+    std::uint64_t eventStagesWaited{0};
 };
 
 /** A view of an instance for the development routes and the tests. */
@@ -405,6 +423,12 @@ public:
     void entity_removed(const Entity& entity);
     /** A character left the world: it is no participant, and its link goes with its entity. */
     void character_left(const Entity& character);
+    /**
+     * Stage BT3 (the one event path of a boss tree, docs/systems/encounters.md): an `event` node of the tree of a creature sent a named
+     * event. The instance of the member keeps it, and each stage of that instance that runs and waits for the event (an
+     * EncounterEventObjective with its name; the letter case is not significant) is met. The behavior queues it after its step.
+     */
+    void creature_event(EntityId creature, const std::string& event);
 
     // Stage QG9a (docs/systems/instances.md): the instance recipes, the encounters of the mode root slice of a game mode. They run only in
     // the space of an instance of their mode, never at a placement of the main world.
@@ -636,6 +660,10 @@ private:
     }
     /** Stage QG5c4: one more count of the objective `index` of a stage; the stage meets its count when each objective is met. */
     void count_objective(EncounterInstance& instance, std::uint32_t stage, std::size_t index, std::uint32_t added);
+    /** Stage BT3: the event objective of a stage is met (its start rule, or the event of a tree); the stage ends by its child stages. */
+    void meet_event(EncounterInstance& instance, std::uint32_t stage);
+    /** Stage BT3: @return True when the tree of a creature member of the recipe of a placement sends the event (Behavior::sends_event). */
+    [[nodiscard]] bool tree_sends(const EncounterPlacement& placement, const std::string& event) const;
     [[nodiscard]] EncounterInstance* instance_of(std::uint32_t placement, std::uint64_t generation);
     [[nodiscard]] static std::int64_t cell_of(float value);
     void schedule(WorldClock::time_point at, const Due& due);

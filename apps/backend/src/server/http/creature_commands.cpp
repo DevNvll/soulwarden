@@ -634,15 +634,28 @@ WorldCommand creature_tree(const std::string& character, const Arguments& argume
                                            ? json(tree.keys[static_cast<std::size_t>(value)].name)
                                        : (name == "action" && static_cast<std::size_t>(value) < tree.actions.size())
                                            ? json(tree.actions[static_cast<std::size_t>(value)].name)
+                                       // Stage BT3: the names of a tag, a named status, and a named event.
+                                       : (name == "tag" && static_cast<std::size_t>(value) < tree.tags.size())
+                                           ? json(tree.tags[static_cast<std::size_t>(value)])
+                                       : (name == "status" && static_cast<std::size_t>(value) < tree.statuses.size())
+                                           ? json(tree.statuses[static_cast<std::size_t>(value)])
+                                       : (name == "event" && static_cast<std::size_t>(value) < tree.events.size())
+                                           ? json(tree.events[static_cast<std::size_t>(value)])
                                            : json(value);
                 }
                 const auto status = static_cast<world::tree::Status>(index < brain.last.size() ? brain.last[index] : 0);
-                nodes.push_back({{"index", index},
-                                 {"depth", node.depth},
-                                 {"node", world::tree::kind_name(node.kind)},
-                                 {"name", node.label},
-                                 {"status", world::tree::status_name(status)},
-                                 {"parameters", parameters}});
+                json row{{"index", index},
+                         {"depth", node.depth},
+                         {"node", world::tree::kind_name(node.kind)},
+                         {"name", node.label},
+                         {"status", world::tree::status_name(status)},
+                         {"parameters", parameters}};
+                // Stage BT3: the state of a node with a state (a cooldown end or a next choice in seconds from now, a count).
+                if (node.state != world::tree::kNoState && node.state < brain.states.size()) {
+                    const world::CreatureBrain::NodeState& state = brain.states[node.state];
+                    row["state"] = {{"in", state.at.time_since_epoch().count() != 0 ? seconds_to(state.at, now) : 0.0}, {"count", state.index}};
+                }
+                nodes.push_back(std::move(row));
             }
             reply["nodes"] = nodes;
             json keys = json::object();
@@ -650,6 +663,26 @@ WorldCommand creature_tree(const std::string& character, const Arguments& argume
                 keys[tree.keys[slot].name] = brain.board[slot];
             }
             reply["blackboard"]["keys"] = keys;
+            // Stage BT3: the tags of the creature, the times of the fight and of the phase, the statuses of the fight.
+            json tags = json::array();
+            for (std::size_t bit = 0; bit < tree.tags.size(); ++bit) {
+                if ((brain.tags & (std::uint64_t{1} << bit)) != 0) {
+                    tags.push_back(tree.tags[bit]);
+                }
+            }
+            reply["blackboard"]["tags"] = tags;
+            if (mind.mode == world::CreatureMode::fight) {
+                reply["blackboard"]["fightSeconds"] = std::chrono::duration<double>(now - brain.fightAt).count();
+                reply["blackboard"]["phaseSeconds"] = std::chrono::duration<double>(now - brain.phaseAt).count();
+            }
+            reply["blackboard"]["fightStatuses"] = brain.fightStatuses;
+        }
+        if (mind.treeAction && *mind.treeAction < creature->creature.body->treeActions.size()) {
+            const std::uint32_t action = creature->creature.body->treeActions[*mind.treeAction].action;
+            reply["treeAction"] = creature->creature.body->actions[action].name;
+        }
+        if (creature->creature.reactionsOffUntil && now < *creature->creature.reactionsOffUntil) {
+            reply["reactionsOffFor"] = seconds_to(*creature->creature.reactionsOffUntil, now);
         }
         // The facts of the creature that the leaves use (the names of the auto-evaluated keys of the client where the meaning is the same:
         // Has_Target, Target_Vitals_State; research BT0, section 2).

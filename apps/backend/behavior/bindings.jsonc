@@ -5,12 +5,16 @@
 // upper and lower case. The narrowest key that matches selects the tree; the place of a binding in the file does not. A value in two
 // bindings of one key is an error of the file. Format: docs/systems/creature-behavior.md, section "Behavior trees".
 //
-// Stage BT2 has no tree other than the default tree: each creature has it. A tree that names an action that the slice of a creature does not
-// have is refused for that creature (one log line), and the creature has the tree default.
+// A tree that names an action that the slice of a creature does not have is refused for that creature (one log line), and the creature has
+// the tree default.
 {
   "$schema": "./bindings.schema.json",
   "format": 1,
   "bindings": [
+    // Stage BT3, the first mini boss (a decision of the orchestrator): Commander Thorpe of the main story event (wave 5 "Kill Thorpe").
+    { "kind": "worldevent_ai_thorpe_msq", "tree": "boss/thorpe" },
+    // Stage BT3, part C: Isabella De Leon of the story mode QuestIsabella (the events of the stages of its recipe).
+    { "kind": "isabella_msq2", "tree": "boss/isabella" },
     { "tree": "default" }
   ]
 }

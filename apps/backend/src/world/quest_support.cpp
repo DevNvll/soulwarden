@@ -984,7 +984,10 @@ void QuestSupport::build() {
     // and the game event of its start object (its gatherer gets it). A refused recipe gives its cause to the events that only it gives.
     // Stage QG5c3: the event of a new participant (m_participantAddedGameEventId) and the event of a proximity object (each character that
     // finds it: no gate but its quest tag) are free; finding QG5C2R-R5: the event of a gather start object has the gates of its gathering row.
-    if (const gamedata::EncounterData* encounters = m_world.encounters().data(); encounters != nullptr) {
+    {
+        // Code review of stage QG9e, finding QG9ER-R1: the recipes that the runner took count also with no main encounter file (the recipes of
+        // the level sets that the world read); the instance objects below are of the main file.
+        const gamedata::EncounterData* encounters = m_world.encounters().data();
         for (const EncounterPlacement& placement : m_world.encounters().loaded_placements()) {
             const gamedata::EncounterRecipe& recipe = *placement.recipe;
             // Stage QG9a: an instance recipe produces its events only in an instance of a mode that the backend runs.
@@ -1030,7 +1033,7 @@ void QuestSupport::build() {
         // Stage QG9d: the quest objects of the mode roots of the modes that the backend runs (the heartgems of QuestCaerDun: the instance
         // system makes each one while a member has the task of its event, Instances::look_quest_objects): their gathering rows.
         const gamedata::InteractionData* catalog = m_world.interactions().data();
-        for (const gamedata::InstanceObject& object : encounters->instance_objects()) {
+        for (const gamedata::InstanceObject& object : encounters != nullptr ? encounters->instance_objects() : std::vector<gamedata::InstanceObject>{}) {
             const std::optional<std::uint32_t> templateIndex = catalog != nullptr ? catalog->instance_object(object.slice) : std::nullopt;
             const std::optional<gamedata::GatheringLink> link = gathering != nullptr ? gathering->encounter_object(object.slice) : std::nullopt;
             if (templateIndex && link && catalog->templates()[*templateIndex].kind == gamedata::InteractionKind::gathering

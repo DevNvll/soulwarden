@@ -57,9 +57,11 @@ void default_tree(const Options& options) {
     for (const char* name : {"default/rest", "default/fight", "default/status", "default/area", "default/shot", "default/cast", "default/melee"}) {
         subtrees = subtrees && set.find(name) != nullptr;
     }
-    check(files.size() == 9 && loaded && report.refused.empty() && set.trees().size() == 8 && subtrees,
-          "the program has the nine files of apps/backend/behavior (the tree default, its subtrees rest, fight, status, area, shot, cast, "
-          "melee, and bindings.jsonc); the eight trees load and compile");
+    // Stage BT3: and the tree boss/thorpe of the first mini boss.
+    check(files.size() == 11 && loaded && report.refused.empty() && set.trees().size() == 10 && subtrees && set.find("boss/thorpe") != nullptr
+              && set.find("boss/isabella") != nullptr,
+          "the program has the eleven files of apps/backend/behavior (the tree default, its subtrees rest, fight, status, area, shot, cast, "
+          "melee, the trees boss/thorpe and boss/isabella of stage BT3, and bindings.jsonc); the ten trees load and compile");
     const std::shared_ptr<const tree::CompiledTree> root = set.default_tree();
     std::string kinds;
     for (const tree::Node& node : root->nodes) {
@@ -779,6 +781,15 @@ void two_sessions(const Options&) {
           "each session decodes the records of the movement state of both fights (A: fighter " + std::to_string(aFighter) + ", archer "
               + std::to_string(aArcher) + "; B: fighter " + std::to_string(bFighter) + ", archer " + std::to_string(bArcher)
               + "; one path: the encoders of the creatures; a tree has no state in a session)");
+    // Code review of stage BT2, finding BTR2-R4: the records have the actions of the attacks (the scope record of the movement state), not
+    // only a movement fragment: the bash of the fighter and the shot of the archer in each session.
+    const std::size_t aBash = action_records(arena, arena.a, 1, *fighter, aFrom, range::kBash);
+    const std::size_t bBash = action_records(arena, arena.b, 2, *fighter, bFrom, range::kBash);
+    const std::size_t aShot = action_records(arena, arena.a, 1, *archer, aFrom, range::kFireBow);
+    const std::size_t bShot = action_records(arena, arena.b, 2, *archer, bFrom, range::kFireBow);
+    check(aBash >= 2 && bBash >= 2 && aShot >= 1 && bShot >= 1,
+          "each session decodes the action records of the attacks (A: bash " + std::to_string(aBash) + ", shot " + std::to_string(aShot)
+              + "; B: bash " + std::to_string(bBash) + ", shot " + std::to_string(bShot) + ")");
     const std::uint32_t bFighterInterest = range::interest_in(arena.host, 2, fighter->id);
     const std::uint32_t bArcherInterest = range::interest_in(arena.host, 2, archer->id);
     // B goes 200 m away: only the archer loses its target and goes back; the fighter fights A on.
@@ -799,8 +810,10 @@ void two_sessions(const Options&) {
     arena.until([&] { return fighter->creature.mind.attacks > attacks; }, 200);
     arena.step(3);
     check(range::stops_of(arena.b, bFighterInterest, bLater) >= 1 && range::stops_of(arena.b, bArcherInterest, bLater) >= 1
-              && fighter->creature.mind.attacks > attacks && movement_records(arena, arena.a, 1, *fighter, aLater) >= 1,
-          "after the travel of B: B decodes the stops of both creatures, and A decodes the record of the next attack of the fighter");
+              && fighter->creature.mind.attacks > attacks && movement_records(arena, arena.a, 1, *fighter, aLater) >= 1
+              && action_records(arena, arena.a, 1, *fighter, aLater, range::kBash) >= 1,
+          "after the travel of B: B decodes the stops of both creatures, and A decodes the record of the next attack of the fighter (its "
+          "action record: code review of stage BT2, finding BTR2-R4)");
 }
 
 } // namespace

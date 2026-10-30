@@ -481,6 +481,15 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
   Abomination, Plaguegeist, level 25), their attacks (Plague Nova 1,217.6 Nature damage), and a fight of a Scavenger whose path goes around
   the wall of a corridor.
 
+### The tree actions and the reaction stop (stage BT3)
+
+- A tree action of a slice (`CreatureSlice::treeActions`, game data; [Creature behavior](creature-behavior.md), "Behavior trees, stage BT3")
+  plays as an action of the server with its length and the tag state of its variant (`Creatures::start_action` with `tags`: the weapon tags
+  and the default tags of the slice). The default tags are not in the other records of a creature (open problem of stage BT3).
+- The reaction stop of a phase transition (`Creature::reactionsOffUntil`, game data: SetReactionFragment with the empty table
+  BaseAI_EmptyReactionTableHarness): until its end a hit plays no reaction, no additive reaction, and no push; the damage counts (count
+  `reactionsOff`). The end of the fight clears it.
+
 ### The death of a slice with no reaction action (stage QG9c)
 
 The sources: the live runs A1 to A7, F1 to F4, and M1 of stage QG9c (the register and memory reads of the client, the probes 0x4873284,

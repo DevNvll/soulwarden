@@ -56,7 +56,8 @@ const std::vector<KindSpec>& specs() {
         {NodeKind::in_fight, "in_fight", Children::none, {}},
         {NodeKind::target_is, "target_is", Children::none, {}},
         {NodeKind::check, "check", Children::none, {}},
-        {NodeKind::keep_target, "keep_target", Children::none, {{"lose_distance", 1.0F, 1000.0F}}},
+        // Stage BT3: `arena` (optional): the radius of the arena of a boss around its home (0: none, the leash of the slice).
+        {NodeKind::keep_target, "keep_target", Children::none, {{"lose_distance", 1.0F, 1000.0F}, {"arena", 0.0F, 1000.0F, false, true, 0.0F}}},
         {NodeKind::status_action, "status_action", Children::none, {{"repeat", 0.0F, kLongestTime}, {"pause", 0.0F, kLongestPause}}},
         {NodeKind::area_attack,
          "area_attack",
@@ -75,6 +76,22 @@ const std::vector<KindSpec>& specs() {
           {"wait_longest", 0.0F, kLongestTime, false, true, param::kDefaultWaitLongest},
           {"no_way_pause", 0.0F, kLongestPause, false, true, param::kDefaultNoWayPause}}},
         {NodeKind::set, "set", Children::none, {}},
+        // Stage BT3: the boss nodes (the order of NodeKind).
+        {NodeKind::action, "action", Children::none, {{"pause", 0.0F, kLongestPause, false, true, param::kDefaultActionPause}}},
+        {NodeKind::phase, "phase", Children::one, {{"health_below", 0.0F, 100.0F}}},
+        {NodeKind::tag_set, "tag_set", Children::none, {}},
+        {NodeKind::tag_is, "tag_is", Children::none, {}},
+        {NodeKind::health_below, "health_below", Children::none, {{"percent", 0.0F, 100.0F}}},
+        {NodeKind::has_status, "has_status", Children::none, {}},
+        {NodeKind::cooldown, "cooldown", Children::one, {{"seconds", 0.0F, kLongestTime}}},
+        {NodeKind::weighted_random, "weighted_random", Children::list, {}},
+        {NodeKind::once, "once", Children::one, {}},
+        {NodeKind::timer, "timer", Children::none, {{"seconds", 0.0F, kLongestTime}}},
+        {NodeKind::target,
+         "target",
+         Children::none,
+         {{"range", 1.0F, kFarthest, false, true, param::kDefaultTargetRange}, {"every", 0.0F, kLongestPause, false, true, param::kDefaultTargetEvery}}},
+        {NodeKind::event, "event", Children::none, {}},
     };
     return table;
 }
@@ -118,7 +135,7 @@ class Checker {
 public:
     Checker(const std::vector<Key>& keys) : m_keys(keys) {}
 
-    bool node(const json& value, const std::string& at, std::size_t depth) {
+    bool node(const json& value, const std::string& at, std::size_t depth, bool weighted = false) {
         if (depth >= kMaxDepth) {
             return fail(at, "the tree is deeper than " + std::to_string(kMaxDepth) + " levels");
         }
@@ -150,6 +167,28 @@ public:
         case Children::none:
             break;
         }
+        if (weighted) {
+            allowed.emplace_back("weight"); // Stage BT3: a child of a weighted_random node.
+        }
+        if (spec->kind == NodeKind::sequence) {
+            allowed.emplace_back("memory");
+        } else if (spec->kind == NodeKind::action) {
+            allowed.emplace_back("action");
+        } else if (spec->kind == NodeKind::phase) {
+            allowed.insert(allowed.end(), {"key", "to"});
+        } else if (spec->kind == NodeKind::tag_set) {
+            allowed.insert(allowed.end(), {"tag", "value"});
+        } else if (spec->kind == NodeKind::tag_is) {
+            allowed.emplace_back("tag");
+        } else if (spec->kind == NodeKind::has_status) {
+            allowed.emplace_back("status");
+        } else if (spec->kind == NodeKind::timer) {
+            allowed.emplace_back("since");
+        } else if (spec->kind == NodeKind::target) {
+            allowed.emplace_back("policy");
+        } else if (spec->kind == NodeKind::event) {
+            allowed.emplace_back("event");
+        }
         if (spec->kind == NodeKind::basic_shot) {
             allowed.insert(allowed.end(), {"archer", "caster", "retreat_pause", "pause"});
         } else if (spec->kind == NodeKind::status_action || spec->kind == NodeKind::area_attack) {
@@ -173,6 +212,9 @@ public:
             if (!numberOf(value, number, at)) {
                 return false;
             }
+        }
+        if (weighted && !numberOf(value, NumberSpec{"weight", 0.001F, 1000.0F}, at)) {
+            return false; // Stage BT3: each child of a weighted_random node has a weight above 0.
         }
         switch (spec->kind) {
         case NodeKind::basic_shot: {
@@ -219,6 +261,62 @@ public:
             if (const auto action = value.find("action");
                 action != value.end() && (!action->is_string() || !valid_name(action->get<std::string>(), false))) {
                 return fail(at + "/action", "the action must be the name of an action of the slice (letters, digits, and '_', 64 characters at most)");
+            }
+            break;
+        case NodeKind::sequence:
+            if (const auto memory = value.find("memory"); memory != value.end() && !memory->is_boolean()) {
+                return fail(at + "/memory", "the member memory of a sequence must be true or false");
+            }
+            break;
+        case NodeKind::action:
+            if (!nameOf(value, "action", at, "the node action must have \"action\": the name of an action of the slice")) {
+                return false;
+            }
+            break;
+        case NodeKind::phase: {
+            const Key* key = keyOf(value, at);
+            if (key == nullptr) {
+                return false;
+            }
+            if (key->type != KeyType::integer) {
+                return fail(at + "/key", "the key of a phase must be a key of the type int");
+            }
+            const auto to = value.find("to");
+            if (to == value.end() || !to->is_number_integer() || std::fabs(to->get<double>()) > kLargestExactInteger) {
+                return fail(at + "/to", "the node phase must have \"to\": the int value of its key in the phase");
+            }
+            break;
+        }
+        case NodeKind::tag_set:
+        case NodeKind::tag_is:
+            if (!nameOf(value, "tag", at, "the node must have \"tag\": the name of a tag (letters, digits, and '_')")) {
+                return false;
+            }
+            if (const auto set = value.find("value"); spec->kind == NodeKind::tag_set && set != value.end() && !set->is_boolean()) {
+                return fail(at + "/value", "the value of a tag must be true or false");
+            }
+            break;
+        case NodeKind::has_status:
+            if (!nameOf(value, "status", at, "the node has_status must have \"status\": the id of a status row")) {
+                return false;
+            }
+            break;
+        case NodeKind::timer:
+            if (const auto since = value.find("since");
+                since != value.end() && (!since->is_string() || (*since != "fight" && *since != "phase"))) {
+                return fail(at + "/since", "the member since of a timer must be \"fight\" or \"phase\"");
+            }
+            break;
+        case NodeKind::target: {
+            const auto policy = value.find("policy");
+            if (policy == value.end() || !policy->is_string() || (*policy != "nearest" && *policy != "random" && *policy != "threat")) {
+                return fail(at + "/policy", "the node target must have \"policy\": nearest, random, or threat");
+            }
+            break;
+        }
+        case NodeKind::event:
+            if (!nameOf(value, "event", at, "the node event must have \"event\": the name of an encounter event")) {
+                return false;
             }
             break;
         case NodeKind::roam:
@@ -273,8 +371,11 @@ public:
             if (found == value.end() || !found->is_array() || found->empty()) {
                 return fail(at, std::string("the node ") + spec->name + " must have \"children\" (a list of one node or more)");
             }
+            if (spec->kind == NodeKind::weighted_random && found->size() > 64) {
+                return fail(at + "/children", "the node weighted_random has 64 children at most");
+            }
             for (std::size_t index = 0; index < found->size(); ++index) {
-                if (!node((*found)[index], at + "/children/" + std::to_string(index), depth + 1)) {
+                if (!node((*found)[index], at + "/children/" + std::to_string(index), depth + 1, spec->kind == NodeKind::weighted_random)) {
                     return false;
                 }
             }
@@ -306,6 +407,14 @@ public:
     }
 
 private:
+    /** Stage BT3: a member that names something (an action, a tag, a status, an event): letters, digits, and '_', 64 characters at most. */
+    bool nameOf(const json& value, const char* member, const std::string& at, const char* cause) {
+        const auto found = value.find(member);
+        if (found == value.end() || !found->is_string() || !valid_name(found->get<std::string>(), false)) {
+            return fail(at + "/" + member, cause);
+        }
+        return true;
+    }
     bool numberOf(const json& value, const NumberSpec& spec, const std::string& at) {
         const auto found = value.find(spec.name);
         if (found == value.end() && spec.optional) {
@@ -410,7 +519,7 @@ public:
     }
 
 private:
-    bool node(const json& value, std::size_t depth) {
+    bool node(const json& value, std::size_t depth, bool weighted = false) {
         if (depth >= kMaxDepth) {
             return fail("the tree is deeper than " + std::to_string(kMaxDepth) + " levels (with its subtrees)");
         }
@@ -425,6 +534,18 @@ private:
         node.param = static_cast<std::uint32_t>(m_out.params.size());
         if (const auto label = value.find("name"); label != value.end()) {
             node.label = label->get<std::string>();
+        }
+        if (weighted) {
+            node.weight = value.at("weight").get<float>();
+        }
+        // Stage BT3: the nodes with a state of their own in the creature (CreatureBrain::states).
+        const bool memory = spec.kind == NodeKind::sequence && value.value("memory", false);
+        if (memory || spec.kind == NodeKind::cooldown || spec.kind == NodeKind::once || spec.kind == NodeKind::target
+            || spec.kind == NodeKind::weighted_random) {
+            if (m_out.states >= kNoState - 1) {
+                return fail("the tree has too many nodes with a state");
+            }
+            node.state = m_out.states++;
         }
         for (const NumberSpec& number : spec.numbers) {
             const auto found = value.find(number.name);
@@ -462,6 +583,54 @@ private:
         case NodeKind::subtree:
             node.label = value.at("tree").get<std::string>();
             break;
+        // Stage BT3.
+        case NodeKind::sequence:
+            m_out.params.push_back(memory ? 1.0F : 0.0F);
+            break;
+        case NodeKind::action:
+            m_out.params.push_back(static_cast<float>(m_out.actions.size()));
+            m_out.actions.push_back(NamedAction{static_cast<std::uint32_t>(index), spec.kind, value.at("action").get<std::string>()});
+            break;
+        case NodeKind::phase: {
+            const std::string key = value.at("key").get<std::string>();
+            const std::vector<Key>& names = *m_keyNames.back();
+            const auto found = std::find_if(names.begin(), names.end(), [&](const Key& item) { return item.name == key; });
+            m_out.params.push_back(static_cast<float>(m_slots.back()[static_cast<std::size_t>(found - names.begin())]));
+            m_out.params.push_back(value.at("to").get<float>());
+            break;
+        }
+        case NodeKind::tag_set:
+        case NodeKind::tag_is: {
+            const std::int32_t bit = named(m_out.tags, value.at("tag").get<std::string>(), kMaxTags, "tags");
+            if (bit < 0) {
+                return false;
+            }
+            m_out.params.push_back(static_cast<float>(bit));
+            if (spec.kind == NodeKind::tag_set) {
+                m_out.params.push_back(value.value("value", true) ? 1.0F : 0.0F);
+            }
+            break;
+        }
+        case NodeKind::has_status:
+        case NodeKind::event: {
+            const bool status = spec.kind == NodeKind::has_status;
+            const std::int32_t slot = named(status ? m_out.statuses : m_out.events, value.at(status ? "status" : "event").get<std::string>(),
+                                            kMaxNamed, status ? "named statuses" : "named events");
+            if (slot < 0) {
+                return false;
+            }
+            m_out.params.push_back(static_cast<float>(slot));
+            break;
+        }
+        case NodeKind::timer:
+            m_out.params.push_back(value.value("since", std::string("fight")) == "phase" ? static_cast<float>(Since::phase)
+                                                                                           : static_cast<float>(Since::fight));
+            break;
+        case NodeKind::target: {
+            const std::string policy = value.at("policy").get<std::string>();
+            m_out.params.push_back(static_cast<float>(policy == "random" ? Policy::random : policy == "threat" ? Policy::threat : Policy::nearest));
+            break;
+        }
         case NodeKind::status_action:
         case NodeKind::area_attack:
             if (const auto action = value.find("action"); action != value.end()) {
@@ -489,7 +658,7 @@ private:
             break;
         case Children::list:
             for (const json& child : value.at("children")) {
-                if (!(done = this->node(child, depth + 1))) {
+                if (!(done = this->node(child, depth + 1, spec.kind == NodeKind::weighted_random))) {
                     break;
                 }
             }
@@ -511,6 +680,20 @@ private:
         }
         m_out.nodes[index].end = static_cast<std::uint16_t>(m_out.nodes.size());
         return true;
+    }
+
+    /** Stage BT3: @return The place of a name in a list of the compiled tree (it adds the name), or -1 with an error above `limit`. */
+    std::int32_t named(std::vector<std::string>& list, const std::string& name, std::size_t limit, const char* what) {
+        const auto found = std::find(list.begin(), list.end(), name);
+        if (found != list.end()) {
+            return static_cast<std::int32_t>(found - list.begin());
+        }
+        if (list.size() >= limit) {
+            fail("the tree has more than " + std::to_string(limit) + " " + what);
+            return -1;
+        }
+        list.push_back(name);
+        return static_cast<std::int32_t>(list.size() - 1);
     }
 
     std::string chain() const {
@@ -596,10 +779,47 @@ std::vector<std::pair<std::string, float>> parameters(const CompiledTree& tree, 
             out.emplace_back("action", values[place]);
         }
         break;
+    // Stage BT3: the place of a name in the lists of the tree, the key of a phase, the policy and the since of a timer as numbers.
+    case NodeKind::sequence:
+        out.emplace_back("memory", values[param::kMemory]);
+        break;
+    case NodeKind::action:
+        out.emplace_back("action", values[param::kActionSlot]);
+        break;
+    case NodeKind::phase:
+        out.emplace_back("key", values[param::kPhaseKey]);
+        out.emplace_back("to", values[param::kPhaseTo]);
+        break;
+    case NodeKind::tag_set:
+        out.emplace_back("tag", values[param::kTagBit]);
+        out.emplace_back("value", values[param::kTagValue]);
+        break;
+    case NodeKind::tag_is:
+        out.emplace_back("tag", values[param::kTagBit]);
+        break;
+    case NodeKind::has_status:
+        out.emplace_back("status", values[param::kStatusSlot]);
+        break;
+    case NodeKind::event:
+        out.emplace_back("event", values[param::kEventSlot]);
+        break;
+    case NodeKind::timer:
+        out.emplace_back("since", values[param::kTimerSince]);
+        break;
+    case NodeKind::target:
+        out.emplace_back("policy", values[param::kTargetPolicy]);
+        break;
     default:
         break;
     }
+    if (node.weight > 0.0F) {
+        out.emplace_back("weight", node.weight);
+    }
     return out;
+}
+
+bool CompiledTree::sends(std::string_view event) const {
+    return std::find(events.begin(), events.end(), event) != events.end();
 }
 
 bool load_tree_file(std::string_view text, const std::string& source, TreeFile& out, std::string& error) {
@@ -805,8 +1025,16 @@ bool TreeSet::load(const std::string& folder, LoadReport& report) {
         }
     }
     // The compile. A tree that does not compile by a fault of its own file (not by a subtree that does not compile) is refused: the tree
-    // of the program of its name comes back (or no tree), and the set compiles again. A cycle of trees that each fail refuses each one.
-    for (std::size_t round = 0; round <= 2 * files.size() + 1; ++round) {
+    // of the program of its name comes back (or no tree), and the set compiles again. Each round refuses one file or more.
+    // Code review of stage BT2, finding BTR2-R2: the number of rounds comes from the files at the start (each round removes a file, so a
+    // limit of the files that are left stopped a long chain before its end).
+    const std::size_t rounds = 2 * files.size() + 1;
+    const auto fromFolder = [&](const std::string& name, const TreeFile& file) {
+        const auto original = program.find(name);
+        return original == program.end() || original->second.source != file.source;
+    };
+    bool done = false;
+    for (std::size_t round = 0; round <= rounds; ++round) {
         std::map<std::string, std::shared_ptr<const CompiledTree>, std::less<>> compiled;
         std::map<std::string, std::string, std::less<>> failed;
         for (const auto& [name, file] : files) {
@@ -820,6 +1048,7 @@ bool TreeSet::load(const std::string& folder, LoadReport& report) {
         if (failed.empty()) {
             m_files = std::move(files);
             m_compiled = std::move(compiled);
+            done = true;
             break;
         }
         std::vector<std::string> own;
@@ -830,8 +1059,18 @@ bool TreeSet::load(const std::string& folder, LoadReport& report) {
             }
         }
         if (own.empty()) {
+            // A cycle of trees that each fail. Code review of stage BT2, finding BTR2-R1: the trees of the files of the folder in it are
+            // refused first (the tree of the program of each name comes back); a tree of the program is refused only for a cycle of trees of
+            // the program (a fault of the build). Before, the default tree of the program went with a cycle that a folder file made.
             for (const auto& [name, cause] : failed) {
-                own.push_back(name);
+                if (fromFolder(name, files.at(name))) {
+                    own.push_back(name);
+                }
+            }
+            if (own.empty()) {
+                for (const auto& [name, cause] : failed) {
+                    own.push_back(name);
+                }
             }
         }
         for (const std::string& name : own) {
@@ -843,6 +1082,15 @@ bool TreeSet::load(const std::string& folder, LoadReport& report) {
             } else {
                 files.erase(name);
             }
+        }
+    }
+    if (!done) {
+        // Code review of stage BT2, finding BTR2-R2: the refusals did not give a set that compiles: the trees of the program stay.
+        std::map<std::string, std::shared_ptr<const CompiledTree>, std::less<>> compiled;
+        report.refused.push_back("the folder: the set does not compile after " + std::to_string(rounds) + " rounds; the trees of the program stay");
+        if (compile_all(program, compiled, error)) {
+            m_files = std::move(program);
+            m_compiled = std::move(compiled);
         }
     }
     for (const auto& [name, tree] : m_compiled) {

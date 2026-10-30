@@ -608,6 +608,17 @@ backend. The tool of each system is also in the document of that system.
   run can give a folder of tree files (`SOULWARDEN_BEHAVIOR_DIR`, only with `--dev-commands`) whose trees replace the trees of the program
   with the same name, and whose `bindings.jsonc` replaces the binding file of the program; a file that is not correct is refused with one
   log line, and the file of the program stays.
+- Stage BT3, the tree actions (`tools/gamedata/creatures.sh`, [Creature behavior](../systems/creature-behavior.md), "Behavior trees, stage
+  BT3"): the list `treeActions` of `tools/gamedata/creature_slices.json` (an action name to its live check) names the actions of a table that a
+  boss tree plays by name and that are not an attack (`Phase_Transition_1_to_2`). A slice with such an action that has a variant with a
+  length gets the member `treeActions`: `[[action, length, [status on enter, ...], [status removed at the exit, ...], tag state], ...]` (the
+  index in `actions`, the end of the selected variant of its fragment, the ModifyStatusEffects of the definition that are not in a
+  condition, and the 24 hexadecimal digits of the bits of the weapon tags and the default tags of the slice; empty: no tag definition). The
+  tool selects the variant with the weapon tags and the default tags (`m_defaultTags`). The backend reads a member of 4 elements too (no tag
+  state: the tags of the slice). A file with no member: no tree action, and a tree that names one is refused for the creature. The file of
+  stage BT3 differs from the file of stage QG9e only in this member and its counts (`slicesWithTreeActions`, `treeActions`,
+  `treeActionsLeftOut`): 1 slice (`damned_commander_thorpe`), 1 left out (`damned_longswordsman_commander`: no variant with a length). The
+  release needs the new `creatures.json` of the common folder.
 
 - `mission-data.json` (stage QG6a, `tools/gamedata/missions.sh`, [Mission boards](../systems/mission-boards.md)): the mission rows
   of the boards (each table of the type MissionData: the town project missions, 13,248 rows, and the open world missions, 3,046 rows;

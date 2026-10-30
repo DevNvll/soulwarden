@@ -8,6 +8,9 @@
 #include "core/logging/log.h"
 #include "gamedata/loot_tables.h"
 #include "gamedata/quest_data.h"
+#include "world/behavior.h"
+#include "world/creatures.h"
+#include "world/data_rules.h"
 #include "world/projectiles.h"
 #include "world/world.h"
 
@@ -283,6 +286,14 @@ void Encounters::resolve(EncounterPlacement& placement) {
             }
         }
     }
+    // Stage BT3 (the events of a boss tree): the tool refuses an instance recipe in which no stage ends by the act of a player
+    // (encounters.player_ends: each stage ends at an event of the boss tree, a time, a cutscene, a spawn, or a wait). A stage that waits for an
+    // event that the tree of a creature member sends ends in the fight with that member (the tree sends it at a health threshold) [agent]:
+    // the runner takes such a recipe when the tree of a member sends the event of each event stage (QuestIsabella and its tree boss/isabella).
+    // The kinds of the members come below; the check is at the end of this function.
+    const bool noPlayer = std::any_of(placement.refused.begin(), placement.refused.end(), [](const std::string& cause) {
+        return cause.rfind(encounter_rules::kNoPlayerEnds, 0) == 0;
+    });
     // Stage QG9b, the setting of the mode QuestMedusa (encounter_rules::kQuestMedusaRuns; a pick of the orchestrator): off, its recipes are
     // refused with one cause.
     if (const std::string_view off = encounter_rules::mode_off(recipe.mode, m_world.options().questMedusaRuns); !off.empty()) {
@@ -701,6 +712,29 @@ void Encounters::resolve(EncounterPlacement& placement) {
             }
         }
     }
+    // Stage BT3: the check of the rule above (the events of a boss tree end the stages of a recipe that the tool refused for no act of a
+    // player): each event stage has an event that the tree of a creature member sends.
+    if (noPlayer && !recipe.mode.empty()) {
+        bool any = false;
+        bool all = true;
+        for (const gamedata::EncounterStage& stage : recipe.stages) {
+            for (std::size_t index = 0; index <= stage.more.size(); ++index) {
+                const gamedata::EncounterObjective& objective = objective_of(stage, index);
+                if (objective.kind == gamedata::EncounterObjectiveKind::event) {
+                    any = true;
+                    all = all && tree_sends(placement, objective.eventId);
+                }
+            }
+        }
+        if (any && all) {
+            placement.refused.erase(std::remove_if(placement.refused.begin(), placement.refused.end(),
+                                                   [](const std::string& cause) { return cause.rfind(encounter_rules::kNoPlayerEnds, 0) == 0; }),
+                                    placement.refused.end());
+            log::write("world: encounters: the recipe %s: the tree of its member sends the event of each event stage (stage BT3): the fight ends "
+                       "its stages",
+                       recipe.key.c_str());
+        }
+    }
 }
 
 bool Encounters::counts_toward(const gamedata::EncounterData& data, const gamedata::EncounterObjective& objective,
@@ -774,7 +808,10 @@ void Encounters::tick() {
         }
         load();
     }
-    if (data() == nullptr || (m_counts.taken == 0 && m_payouts.empty())) {
+    // Code review of stage QG9e, finding QG9ER-R1 (one rule with the events of the boss trees of stage BT3, which come through the due list):
+    // the tick runs from the recipes that the runner took and the payouts that wait, also with no main encounter file (the recipes of a level
+    // set). The first read of the main file stays the lazy read above.
+    if (m_counts.taken == 0 && m_payouts.empty()) {
         return;
     }
     take_events();
@@ -1351,9 +1388,17 @@ void Encounters::start_stage(EncounterInstance& instance, std::uint32_t index) {
         }
     }
     // Stage QG9a: an EncounterEventObjective of an instance recipe (Intro_Complete) is met at the start of its stage [agent: no slice or table
-    // of the client sends the event; the IGC stage before it is the intro] (a due entry: the end does not run inside this start).
+    // of the client sends the event; the IGC stage before it is the intro] (a due entry: the end does not run inside this start). Stage BT3:
+    // a stage whose event the tree of a creature member of the recipe sends waits for that event (Encounters::creature_event), unless the
+    // instance has it already [agent: the boss trees of this project are the sender].
     if (stage.objective.kind == gamedata::EncounterObjectiveKind::event) {
-        schedule(now, Due{DueKind::eventMet, instance.placement, instance.generation, index, 0, 0});
+        if (instance.events.count(gamedata::lower_text(stage.objective.eventId)) == 0 && tree_sends(m_placements[instance.placement], stage.objective.eventId)) {
+            ++m_counts.eventStagesWaited;
+            log::write("world: encounters: the encounter %s: the stage %s waits for the event %s of the tree of its member", recipe.key.c_str(),
+                       stage.name.c_str(), stage.objective.eventId.c_str());
+        } else {
+            schedule(now, Due{DueKind::eventMet, instance.placement, instance.generation, index, 0, 0});
+        }
     }
     // Stage QG9b: the end rules of an instance recipe after the last spawn of the timeline of the stage (then the child stages:
     // objective_met). A stage with no objective [client 0x26EDAA0, 0x26F71E0: its counters are equal; static read F of stage QG9b, F5]; an
@@ -1923,23 +1968,14 @@ void Encounters::take_due() {
             break;
         case DueKind::eventMet:
             if (instance->phase == EncounterPhase::running && instance->stages[entry.stage].started && !instance->stages[entry.stage].ended) {
-                log::write("world: encounters: the encounter %s: the event %s of the stage %s is met at its start (no sender of the data)",
+                log::write("world: encounters: the encounter %s: the event %s of the stage %s is met at its start (%s)",
                            m_placements[entry.placement].recipe->key.c_str(),
                            m_placements[entry.placement].recipe->stages[entry.stage].objective.eventId.c_str(),
-                           m_placements[entry.placement].recipe->stages[entry.stage].name.c_str());
-                // Code review of stage QG9b, finding QG9BR-R2: the met event is the count of the stage; the stage ends by the rule of its
-                // required child stages (objective_met), as the end rule does. A direct end cut the timed wait of the QuestWolf intro and
-                // never started its user wave 1. Code review of stage QG9c, finding QG9CR-R4: only the event objective is met; an other
-                // objective of the stage (a destroyed objective of `more`) keeps its count, and the stage ends when each one is met (the
-                // rule of count_objective).
-                EncounterStageRun& run = instance->stages[entry.stage];
-                if (!run.met.empty()) {
-                    run.met[0] = true;
-                }
-                publish_objectives(*instance);
-                if (std::all_of(run.met.begin(), run.met.end(), [](bool value) { return value; })) {
-                    objective_met(*instance, entry.stage);
-                }
+                           m_placements[entry.placement].recipe->stages[entry.stage].name.c_str(),
+                           instance->events.count(gamedata::lower_text(m_placements[entry.placement].recipe->stages[entry.stage].objective.eventId)) != 0
+                               ? "the tree of a member sent it before"
+                               : "no sender of the data");
+                meet_event(*instance, entry.stage);
             }
             break;
         case DueKind::endRule:
@@ -1969,6 +2005,77 @@ void Encounters::take_due() {
         case DueKind::payout:
             break;
         }
+    }
+}
+
+void Encounters::meet_event(EncounterInstance& instance, std::uint32_t index) {
+    // Code review of stage QG9b, finding QG9BR-R2: the met event is the count of the stage; the stage ends by the rule of its required child
+    // stages (objective_met), as the end rule does. A direct end cut the timed wait of the QuestWolf intro and never started its user wave 1.
+    // Code review of stage QG9c, finding QG9CR-R4: only the event objective is met; an other objective of the stage (a destroyed objective of
+    // `more`) keeps its count, and the stage ends when each one is met (the rule of count_objective).
+    EncounterStageRun& run = instance.stages[index];
+    if (!run.met.empty()) {
+        run.met[0] = true;
+    }
+    publish_objectives(instance);
+    if (std::all_of(run.met.begin(), run.met.end(), [](bool value) { return value; })) {
+        objective_met(instance, index);
+    }
+}
+
+bool Encounters::tree_sends(const EncounterPlacement& placement, const std::string& event) const {
+    if (placement.creatures == nullptr || !placement.creatures->loaded()) {
+        return false;
+    }
+    const Behavior& behavior = m_world.creatures().behavior();
+    const std::vector<gamedata::CreatureSlice>& slices = placement.creatures->slices();
+    const auto sends = [&](const gamedata::CreatureKind* kind) {
+        return kind != nullptr && std::any_of(kind->bodies.begin(), kind->bodies.end(), [&](const gamedata::CreatureBody& body) {
+                   return body.slice < slices.size() && behavior.sends_event(*kind, slices[body.slice], event);
+               });
+    };
+    return std::any_of(placement.kinds.begin(), placement.kinds.end(), sends)
+           || std::any_of(placement.partKinds.begin(), placement.partKinds.end(),
+                          [&](const std::vector<const gamedata::CreatureKind*>& parts) { return std::any_of(parts.begin(), parts.end(), sends); });
+}
+
+void Encounters::creature_event(EntityId creature, const std::string& event) {
+    ++m_counts.treeEvents;
+    const Entity* entity = m_world.find(creature);
+    EncounterInstance* instance = entity != nullptr && entity->kind == EntityKind::creature && entity->creature.encounter
+                                      ? instance_of(entity->creature.encounter->first, entity->creature.encounter->second)
+                                      : nullptr;
+    if (instance == nullptr || instance->phase != EncounterPhase::running) {
+        ++m_counts.treeEventsLost;
+        log::write("world: encounters: the event %s of creature %016llx has no running encounter", event.c_str(),
+                   static_cast<unsigned long long>(creature));
+        return;
+    }
+    instance->events.insert(gamedata::lower_text(event));
+    const gamedata::EncounterRecipe& recipe = *m_placements[instance->placement].recipe;
+    const std::uint32_t placement = instance->placement;
+    const std::uint64_t generation = instance->generation;
+    bool met = false;
+    for (std::uint32_t index = 0; index < recipe.stages.size(); ++index) {
+        EncounterInstance* current = instance_of(placement, generation);
+        if (current == nullptr || current->phase != EncounterPhase::running) {
+            break;
+        }
+        const gamedata::EncounterStage& stage = recipe.stages[index];
+        const EncounterStageRun& run = current->stages[index];
+        if (stage.objective.kind != gamedata::EncounterObjectiveKind::event || !run.started || run.ended
+            || !data_rules::same_text(stage.objective.eventId, event) || run.met.empty() || run.met[0]) {
+            continue;
+        }
+        met = true;
+        ++m_counts.treeEventsMet;
+        log::write("world: encounters: the encounter %s: the event %s of the tree of creature %016llx meets the stage %s", recipe.key.c_str(),
+                   event.c_str(), static_cast<unsigned long long>(creature), stage.name.c_str());
+        meet_event(*current, index);
+    }
+    if (!met) {
+        log::write("world: encounters: the encounter %s keeps the event %s of creature %016llx (no stage waits for it now)", recipe.key.c_str(),
+                   event.c_str(), static_cast<unsigned long long>(creature));
     }
 }
 

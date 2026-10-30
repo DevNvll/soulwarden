@@ -467,7 +467,7 @@ def check_review_ranged(work: Path) -> int:
             self.tables = type("Tables", (), {"types": {"Thrust": (5, "Physical")},
                                               "ammo": {"test_arrow": {"id": "Test_Arrow", "slice": REVIEW_ARROW}}})()
 
-        def read(self, roots, controller, actions, slice_path="", markers=None, reactions=None) -> dict:
+        def read(self, roots, controller, actions, slice_path="", markers=None, reactions=None, effects=None) -> dict:
             rows = {} if state["case"] in ("review-missing-row", "review-other-action") else {
                 "test_row": {"ordinal": 0, "table": "TestBowDamageTable", "id": "Test_Row", "type": "Thrust", "factor": 0.35,
                              "added": 0.0, "charge": 0.0}}
@@ -579,6 +579,43 @@ def check_status_actions() -> int:
     found = behavior.read_status_actions(actions, ["animations/test/cleric.adb"], {"staff"}, {}, "slices/test/cleric.dynamicslice")
     report("status-action-no-mark", found == [] and sum(behavior.status_left_out.values()) == 1,
            f"{found}, left out {behavior.status_left_out} (a listed action with no status at a mark of its action list)")
+
+    # Stage BT3: the statuses of an action that are not in a condition (creature_data.direct_statuses), and the tree action of a listed
+    # action (creature_behavior.Behavior.read_tree_actions): its length (the end blend of the selected variant), its statuses, its tag state.
+    direct = cd.direct_statuses(action)
+    report("tree-direct-statuses", direct == ([], ["Test_Removed"]),
+           f"{direct} (only the ModifyStatusEffects of the activities, not the ones of a mark; the removal at the exit)")
+    transition = ElementTree.fromstring(
+        '<Action Name="Phase_Transition_1_to_2" FragmentName="Phase_Transition_1_to_2"><Activities><ModifyStatusEffects><Default>'
+        '<EffectsToApplyOnEnter><EffectId EffectId="Test_Transition"/><EffectId EffectId="Test_Phase_2"/></EffectsToApplyOnEnter>'
+        '<EffectsToRemoveOnExit><EffectId EffectId="Test_Transition"/><EffectId EffectId="Test_Floor"/></EffectsToRemoveOnExit></Default>'
+        '</ModifyStatusEffects></Activities></Action>')
+
+    class TreeSources:
+        def read(self, path):
+            if path != "animations/test/commander.adb":
+                return None
+            return ('<AnimDB><FragmentList><Phase_Transition_1_to_2><Fragment Tags="1H_Melee+Sword+Thorpe"><AnimLayer><Blend ExitTime="0"/>'
+                    '<Animation name="summon"/><Blend ExitTime="11.5333"/><Animation/></AnimLayer></Fragment></Phase_Transition_1_to_2></FragmentList>'
+                    '</AnimDB>').encode()
+
+        def has(self, path):
+            return True
+
+    tree_behavior = cb.Behavior.__new__(cb.Behavior)
+    tree_behavior.animations = cb.Animations(TreeSources())
+    tree_behavior.tree_actions = {"phase_transition_1_to_2": "a check"}
+    tree_behavior.tree_found = 0
+    tree_behavior.tree_left_out = {}
+    table = [["Phase_Transition_1_to_2", "Phase_Transition_1_to_2", 90, False]]
+    effects = {"Phase_Transition_1_to_2": cd.direct_statuses(transition)}
+    found = tree_behavior.read_tree_actions(table, ["animations/test/commander.adb"], {"1h_melee", "sword", "thorpe"}, effects,
+                                            "080101000000000000000000")
+    report("tree-action", found == [[0, 11.5333, ["Test_Phase_2", "Test_Transition"], ["Test_Floor", "Test_Transition"], "080101000000000000000000"]],
+           f"{found} (the length of the variant of the default tag thorpe, the statuses of the start and of the exit, the tag state)")
+    found = tree_behavior.read_tree_actions(table, ["animations/test/commander.adb"], {"1h_melee", "sword", "1h_swordsman"}, effects, "")
+    report("tree-action-no-variant", found == [] and sum(tree_behavior.tree_left_out.values()) == 1,
+           f"{found}, left out {tree_behavior.tree_left_out} (the slice of Patrick: no variant for its tags)")
 
     def roots(value: bytes) -> list:
         transform = node(children=[node(cd.LOCAL_TRANSFORM_FIELD, b""), node(cd.PARENT_FIELD, cd.NO_ENTITY.to_bytes(8, "big"))])
@@ -834,7 +871,7 @@ def check_review_areas(work: Path) -> int:
             self.ranged_left_out = {}
             self.tables = type("Tables", (), {"types": {"Lightning": (9, "Elemental")}})()
 
-        def read(self, roots, controller, actions, slice_path="", markers=None, reactions=None) -> dict:
+        def read(self, roots, controller, actions, slice_path="", markers=None, reactions=None, effects=None) -> dict:
             rows = {} if state["case"] == "review-area-missing-row" else {
                 "test_strike": {"ordinal": 0, "table": "TestShamanTable", "id": "Test_Strike", "type": "Lightning", "factor": 0.85,
                                 "added": 0.0, "charge": 0.0}}
@@ -947,7 +984,7 @@ def check_review_support(work: Path) -> int:
             self.ranged_left_out = {}
             self.tables = type("Tables", (), {"types": {"Lightning": (9, "Elemental")}})()
 
-        def read(self, roots, controller, actions, slice_path="", markers=None, reactions=None) -> dict:
+        def read(self, roots, controller, actions, slice_path="", markers=None, reactions=None, effects=None) -> dict:
             rows = {"test_strike": {"ordinal": 0, "table": "TestShamanTable", "id": "Test_Strike", "type": "Lightning", "factor": 0.85,
                                     "added": 0.0, "charge": 0.0}}
             result = Behavior.read(self)

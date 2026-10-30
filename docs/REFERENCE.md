@@ -855,6 +855,14 @@ button on "Confirm").
   default tree. The tab "Creatures" of the tool window shows the tree of each creature (the column "Tree"). In a development run
   `tools/world creature tree CREATURE --set NAME` (route `POST /v1/dev/creatures/tree/set`, harness gate) gives a creature a tree now
   (`default`: the default tree), and a file `bindings.jsonc` in `SOULWARDEN_BEHAVIOR_DIR` replaces the binding file of the program.
+- The boss nodes and the first boss trees (stage BT3, [Creature behavior](systems/creature-behavior.md)). A tree can name an action of the
+  slice, start a phase at a health threshold one time in a fight (with its transition: no reaction to a hit in it), set and test tags, test
+  the health and a status, give a child a cooldown or one run in a fight, choose a child by weight, run a combo of actions, wait for a time of
+  the fight or of the phase, choose its target (nearest, random, the most damage), keep an arena around its home, and send an event to its
+  encounter. The end of a fight (the boss at its anchor again) starts the tree again. The program binds `boss/thorpe` to Commander Thorpe
+  (his transition at 60 percent plays the summon of darkness) and `boss/isabella` to Isabella De Leon (her events end the stages of
+  QuestIsabella, which now runs). `tools/world creature tree CREATURE` shows the node states, the tags, the times of the fight and of the
+  phase, and the tree action that plays. The release needs the new `creatures.json` (the member `treeActions` of the slices).
 - Interactions (stage 2.5a). The client shows the prompt of an object and executes its option
   at the key; the backend checks the request with the interaction data of the game and
   replies. A lore page: E (Read) opens the journal on the page, T (Add To Journal) adds it, and

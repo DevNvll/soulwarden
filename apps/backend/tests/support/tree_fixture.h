@@ -129,4 +129,32 @@ inline std::size_t movement_records(Arena& arena, const FakeClient& client, std:
     return count;
 }
 
+/**
+ * @return The number of the records of the movement state of a creature that a session decoded from the message `from` on whose scope record
+ * has this action (code review of stage BT2, finding BTR2-R4: a movement fragment with no action record passed the cases of two sessions).
+ * The wire has the index of the action plus 1 in the scope info (field 33 of the movement state).
+ */
+inline std::size_t action_records(Arena& arena, const FakeClient& client, std::uint32_t session, const world::Entity& creature, std::size_t from,
+                                  std::uint32_t action) {
+    constexpr unsigned kFieldScopeInfo = 33;
+    const std::uint32_t interest = range::interest_in(arena.host, session, creature.id);
+    if (interest == 0) {
+        return 0;
+    }
+    std::size_t count = 0;
+    for (const Fragment& fragment : range::fragments_for(client, interest, from)) {
+        if (fragment.slot != creature.creature.body->movementSlot || fragment.fields.count({0, kFieldScopeInfo}) == 0) {
+            continue;
+        }
+        server::hub::Reader reader(fragment.fields.at({0, kFieldScopeInfo}));
+        if (reader.size() == 0) {
+            continue; // The scope fields with no record.
+        }
+        reader.u16();
+        reader.size();
+        count += reader.size() == action + 1 ? 1 : 0;
+    }
+    return count;
+}
+
 } // namespace soulwarden::backend::tests::trees

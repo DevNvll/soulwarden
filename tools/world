@@ -1065,10 +1065,21 @@ def show_tree(document: dict) -> None:
         name = f" \"{node['name']}\"" if node["name"] else ""
         values = " ".join(f"{key}={value:g}" if isinstance(value, (int, float)) else f"{key}={value}"
                           for key, value in node["parameters"].items())
-        print(f"  {marks.get(node['status'], '?')} {'  ' * node['depth']}{node['node']}{name}{' ' + values if values else ''}")
+        # Stage BT3: the state of a node with a state (a cooldown, a once node, a sequence with memory, a weighted choice, a target).
+        state = node.get("state")
+        held = f" [state: in {state['in']:.1f} s, count {state['count']}]" if state else ""
+        print(f"  {marks.get(node['status'], '?')} {'  ' * node['depth']}{node['node']}{name}{' ' + values if values else ''}{held}")
     board = document["blackboard"]
     keys = ", ".join(f"{key} {value:g}" for key, value in board.get("keys", {}).items())
     print(f"blackboard keys: {keys or '(none)'}")
+    # Stage BT3: the tags, the times of the fight and of the phase, the statuses of the fight, the tree action that plays, no reaction.
+    if "tags" in board:
+        times = (f", the fight {board['fightSeconds']:.1f} s, the phase {board['phaseSeconds']:.1f} s" if "fightSeconds" in board else "")
+        print(f"tags: {', '.join(board['tags']) or '(none)'}{times}; statuses of the fight: {', '.join(board.get('fightStatuses', [])) or '(none)'}")
+    if document.get("treeAction"):
+        print(f"the tree action {document['treeAction']} plays")
+    if "reactionsOffFor" in document:
+        print(f"no reaction to a hit for {document['reactionsOffFor']:.1f} s (a phase transition)")
     facts = ", ".join(f"{key} {value:g}" if isinstance(value, float) else f"{key} {value}" for key, value in board["facts"].items())
     print(f"facts: {facts}")
 

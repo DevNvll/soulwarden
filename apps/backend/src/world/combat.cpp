@@ -766,12 +766,18 @@ Damage Combat::damage(const Entity& attacker,
             }
         }
     }
+    // Stage BT3: the ABS<type> parts of the effects of a creature that takes the hit (the phase transition of a boss tree).
+    const auto absorbed = [&](const std::string& name) {
+        return modifiers != nullptr && modifiers->target != nullptr ? std::max(1.0F - modifiers->target->absorb_part(modifiers->now, name), 0.0F) : 1.0F;
+    };
     // The defense of the target (a rule of this project), for each part with its type.
-    const float mainDealt = (damage.raw - convertedRaw) * std::max(1.0F + typePart(type.name), 0.0F) * defense_factor(row.type, defense, armor, penetration);
+    const float mainDealt = (damage.raw - convertedRaw) * std::max(1.0F + typePart(type.name), 0.0F) * defense_factor(row.type, defense, armor, penetration)
+                            * absorbed(type.name);
     float convertedDealt = 0.0F;
     if (convertedIndex) {
         const gamedata::DamageType& converted = m_tables->damage_type(*convertedIndex);
-        convertedDealt = convertedRaw * std::max(1.0F + typePart(converted.name), 0.0F) * defense_factor(*convertedIndex, defense, armor, penetration);
+        convertedDealt = convertedRaw * std::max(1.0F + typePart(converted.name), 0.0F) * defense_factor(*convertedIndex, defense, armor, penetration)
+                         * absorbed(converted.name);
         damage.convertedType = converted.wire;
     }
     if (!std::isfinite(convertedDealt) || convertedDealt < 0.0F) {
@@ -1168,6 +1174,8 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     modifiers.typeParts = &attacker.gear.damage;
     modifiers.armor = target.creature.armor_part(m_world.clock().now());
     modifiers.penetration = bonus.penetration;
+    modifiers.target = &target.creature;
+    modifiers.now = m_world.clock().now();
     result.damage = damage(attacker, weapon, gearScore, row, m_tables->defense_of(target.creature.kind->vitals), &modifiers);
     if (factor != 1.0F) {
         result.damage.dealt *= std::max(factor, 0.0F);
@@ -1310,7 +1318,8 @@ HitResult Combat::strike_amount(Entity& attacker, Entity& target, float amount, 
     damage.type = m_tables->damage_type(*typeIndex).wire;
     damage.raw = amount;
     damage.dealt = amount * defense_factor(*typeIndex, m_tables->defense_of(target.creature.kind->vitals),
-                                           target.creature.armor_part(m_world.clock().now()));
+                                           target.creature.armor_part(m_world.clock().now()))
+                   * std::max(1.0F - target.creature.absorb_part(m_world.clock().now(), typeName), 0.0F); // Stage BT3: the ABS parts.
     if (!std::isfinite(damage.dealt) || damage.dealt < 0.0F) {
         damage.dealt = 0.0F;
     }

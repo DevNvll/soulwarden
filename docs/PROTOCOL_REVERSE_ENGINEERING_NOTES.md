@@ -3120,6 +3120,18 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
 - The creature data file has the action table of each slice (`actions`: name, fragment name,
   fragment index, the mark `ServerStarted`). `tools/research/creature_actions.py` reads the
   table of the live client and compares it with the file.
+- **The default tags of a slice are not added by the client** (stage BT3, evidence: live,
+  checks L2 and L3; no client code read). The variant of a fragment comes from the tag state of
+  the record (`globalFragTags`). Commander Thorpe (slice `damned_commander_thorpe`, default tags
+  `1h_swordsman` and `thorpe` in `m_defaultTags`; controller
+  `commander_controllerdefs.xml`): the action `Phase_Transition_1_to_2` (index 41) with the tag
+  state of his weapons `08 01 00 ...` showed no animation for 11.5 s (each variant of the
+  fragment needs a tag `thorpe`, `ftue_thorpe`, or `lost_thorpe`); with `08 01 01 ...` (the bit of
+  `thorpe`) the client played the variant `thorpe` (the clips champ_summondarkness intro, loop,
+  end). A record of a tree action has the tag state of the weapon tags and the default tags of
+  the slice (`creatures.json`, the last element of a member `treeActions`). The other records
+  keep the weapon tags (`tags` of the slice): with them the idle of Thorpe has no variant (a fixed
+  pose; open problem of stage BT3).
 - The values of the Grey Wolf (`wolf_grey_5`), read in the live client:
 
   | Purpose | Action | Action index | Fragment | Fragment index | `ServerStarted` |

@@ -334,8 +334,8 @@ void world_bindings(const Options& options) {
     const bool reloaded = behavior.reload_trees(broken.string(), again);
     check(reloaded && again.refused.size() == 1 && again.refused[0].find("bindings.jsonc: bindings/1/kind: \"test_fighter\" is in the binding 1 too") == 0
               && log_count("world: behavior tree refused: bindings.jsonc: bindings/1/kind") == 1
-              && again.bindings == "embedded:bindings.jsonc, 1 binding(s)" && fighter->creature.mind.brain.tree->name == "default"
-              && fighter->creature.mind.brain.binding == "each creature (binding 1)",
+              && again.bindings == "embedded:bindings.jsonc, 3 binding(s)" && fighter->creature.mind.brain.tree->name == "default"
+              && fighter->creature.mind.brain.binding == "each creature (binding 3)",
           "a binding file with a tie is refused with one log line; the binding file of the program is used, and the reload binds each "
           "creature again (" + (again.refused.empty() ? std::string() : again.refused[0]) + ")");
 }
@@ -453,7 +453,7 @@ void tree_command(const Options& options) {
           "tree/set test/still: the fighter fights with no attack for 5 s; tree/set default: it attacks again (the binding: a command)");
     tree::LoadReport again;
     (void)arena.behavior().reload_trees(folder.string(), again);
-    check(fighter->creature.mind.brain.binding == "each creature (binding 1)",
+    check(fighter->creature.mind.brain.binding == "each creature (binding 3)",
           "a reload binds each creature to the tree of its binding again (the command tree ends)");
     const crafting::HarnessGate off(false);
     const service::HttpResponse gated = routes.send("POST", "/v1/dev/creatures/tree/set", query + "&tree=test/still");
@@ -497,6 +497,11 @@ void two_sessions(const Options& options) {
     check(aFighter >= 1 && bFighter >= 1 && aArcher >= 2 && bArcher >= 2,
           "each session decodes the movement records of both creatures (A: fighter " + std::to_string(aFighter) + ", archer "
               + std::to_string(aArcher) + "; B: fighter " + std::to_string(bFighter) + ", archer " + std::to_string(bArcher) + ")");
+    // Code review of stage BT2, finding BTR2-R4: the records of the archer have the action of its shot in each session.
+    const std::size_t aShot = action_records(arena, arena.a, 1, *archer, fromA, range::kFireBow);
+    const std::size_t bShot = action_records(arena, arena.b, 2, *archer, fromB, range::kFireBow);
+    check(aShot >= 2 && bShot >= 2, "each session decodes the action records of the shots of the archer (A " + std::to_string(aShot) + ", B "
+                                        + std::to_string(bShot) + ")");
 }
 
 // ---- BTB6: the subtrees ----------------------------------------------------------------------------------------------------------------

@@ -288,6 +288,16 @@ struct BehaviorCounts {
      */
     std::uint64_t treeRefusals{0};
     std::uint64_t treeCommands{0};
+    /**
+     * Stage BT3: the phases that started (a `phase` node), the actions of an `action` node that started, the tree actions among them, the
+     * target changes of a `target` node, the events of an `event` node, and the ends of a fight (the reset of the state of a tree).
+     */
+    std::uint64_t phases{0};
+    std::uint64_t namedActions{0};
+    std::uint64_t treeActions{0};
+    std::uint64_t targetChanges{0};
+    std::uint64_t events{0};
+    std::uint64_t fightResets{0};
 };
 
 /** Where the client puts the spell of a cast of an AI (stage 3.4f-D, client code 0x679DBB0; Behavior::place_rule). */
@@ -439,6 +449,12 @@ public:
      * keeps its tree. The binding of the file is not used for it (CreatureBrain::binding: "a command").
      */
     TreeCommand set_tree(Entity& creature, std::string_view name, std::string& cause);
+    /**
+     * Stage BT3 (the event path of a boss tree, world/encounters.h): @return True when a creature of this kind and slice gets a tree whose
+     * `event` node sends the event (the binding of the creature, the tree default for a slice that does not fit the tree of its binding).
+     * The encounter runner asks it at the start of a stage that waits for an event: such a stage waits for the event of its member.
+     */
+    [[nodiscard]] bool sends_event(const gamedata::CreatureKind& kind, const gamedata::CreatureSlice& body, std::string_view event) const;
     /** A hit of a character did not hurt a creature on its way back (the combat system): for the counts. */
     void immune_hit() {
         ++m_counts.immuneHits;
@@ -546,7 +562,7 @@ private:
     /** @return The target of a fight of the creature of the tree that runs (fightable), one look-up in a step. */
     Entity* step_target(const Entity& creature);
     /** The leaves (stage BT1): each one is a rule of the behavior before the trees, with the parameters of its node. */
-    bool keep_target(Entity& creature, float loseDistance);
+    bool keep_target(Entity& creature, float loseDistance, float arena = 0.0F);
     void melee(Entity& creature, Entity& target, float seconds, const MeleeValues& values);
     /**
      * Binds a creature to the tree of its binding (stage BT2, world/tree_binding.h), or to the tree default when its slice does not fit the
@@ -578,6 +594,22 @@ private:
     [[nodiscard]] static std::int32_t named_action(const Entity& creature, const float* values, std::size_t place);
     /** @return The light attacks before a heavy one of the tree of a creature (the melee rule of a shot), or of the default tree. */
     [[nodiscard]] std::uint32_t cadence_of(const Entity& creature) const;
+    /** Stage BT3: the results of the leaf `action`: the action started; an attack in its reach waits for the pause after the last action. */
+    enum class Named : std::uint8_t { failed, waits, started };
+    /**
+     * Stage BT3: the leaf `action`: the creature starts the named action of its slice now (an attack in its reach, a status action, an area
+     * attack in its range, a tree action). An attack in its reach in the pause after the last action waits (`running`: a combo keeps its place,
+     * and the creature turns to its target).
+     */
+    Named start_named(Entity& creature, std::int32_t named, std::chrono::milliseconds pause);
+    /** Stage BT3: starts a tree action of the slice (CreatureSlice::treeActions): its action, its statuses of the start. */
+    bool start_tree_action(Entity& creature, std::uint32_t index, std::chrono::milliseconds pause);
+    /** Stage BT3: the end of a tree action (the end of its action, or a different action): its statuses of the exit go. */
+    void end_tree_action(Entity& creature);
+    /** Stage BT3: the leaf `target`: the target policy. @return True when the creature has a target after the choice. */
+    bool choose_target(Entity& creature, const float* values, CreatureBrain::NodeState& state);
+    /** Stage BT3: the end of a fight (the reset at the anchor): the state of the tree of the creature starts again. */
+    void reset_fight(Entity& creature);
     /**
      * @return True while the hit stun of the last hit holds the creature (Creature::hitStunUntil, user test 2): no step, no turn, no attack.
      *         The fight, the way back, and the roam check it (code review of user test 2, finding U2-R5). An ended hit stun goes.
@@ -694,6 +726,11 @@ private:
     /** The trees of the creatures (stage BT1), and the default tree of each creature. */
     tree::TreeSet m_trees;
     std::shared_ptr<const tree::CompiledTree> m_default;
+    /**
+     * Code review of stage BT2, finding BTR2-R3: the tree default of the program (the embedded files only): the tree of a creature whose
+     * slice fits neither the tree of its binding nor the tree default of the set (a default of a folder that names an action).
+     */
+    std::shared_ptr<const tree::CompiledTree> m_programDefault;
     /** The binding file (stage BT2), and the refusals that have a log line (tree name and slice path: one line for each pair). */
     tree::BindingSet m_bindings;
     std::set<std::pair<std::string, std::string>> m_refusalsLogged;

@@ -328,7 +328,7 @@ The sources: the static reads AXES and AZOTH and the live runs P1 and P2 of stag
 | QuestSeraphim | ExitDungeon at the portal of the level data | the leave to the return place |
 | QuestMedea | the detector at the new center (axes) | starts in the new sphere only |
 | QuestHeartforge | the end cutscene, the trace of the cinematic | the white screen is `FTUE_Rit` with no sound |
-| QuestYonas | the boss stage | open (BT3) |
+| QuestYonas | the boss stage | open (stage BT3: the navigation data has no floor in the cave of Yonas, so he does not walk; the detector of the recipe is 43 m from him) |
 
 ### The level data of an own level (stage DG2)
 
@@ -516,13 +516,18 @@ The sources: the data of the mode roots and of the encounter slices of the 11 so
   tree (met at its start: the rule of stage QG9a), a time, a cutscene, a spawn, or a wait, so the encounter would succeed at its start with no
   fight, and its success event would complete the quest task of the fight (QuestIsabella, QuestLiang). A stage that a player ends: a
   destroyed objective with something to count, an entity-state objective with a trigger, a boss phase of a health phase.
+- Stage BT3 ([Encounters](encounters.md), "The events of a boss tree"): the runner takes such a recipe when the tree of a creature member
+  sends the event of each event stage (the fight ends the stages). QuestIsabella runs (the tree `boss/isabella`); QuestLiang and QuestNihilo
+  have no such tree (the talismans; the parts of the leviathan). Live (stage BT3, run L7): the entry by the development command (the bubble
+  of the church refuses its gather: open problem), the seven events of the tree at the health thresholds, the success
+  `99G_MSQ_SM_Isabella_Encounter_Victory`, and the next task of `99G_MSQ_SM_DestroyEnemy` ("Prodigal Daughter: Tell Grace what happened").
 
 | Mode (level) | Runs | Bosses | Cause of a refusal (the input of a later stage) |
 | --- | --- | --- | --- |
 | QuestAdiana (`nw_ori_fl_questadiana`) | Yes | Artemis (the vitals row FL_AI_Adiana_Bow, level 65) | |
 | QuestDracula (`nw_trial_dw_dracula`) | Yes | Alecksi (level 70), the shadow of Cecilia | |
 | QuestLiang (`nw_ori_er_questliang`) | No | | each stage waits for an event of the boss tree (Phase1_started to Phase4_started, NHSpawnTalismans): the talismans of the fight (BT3) |
-| QuestIsabella (`nw_ori_sm_questisabella`) | No | | each stage waits for an event of the boss tree (Transform_Winged, Winged_Ready, Water_1 to Water_3, Defeat) (BT3) |
+| QuestIsabella (`nw_ori_sm_questisabella`) | Yes (stage BT3) | Isabella De Leon (the kind isabella_msq2, level 60; the tree `boss/isabella` sends the seven events of the stages) | |
 | QuestMotherwell (`nw_ori_eg_questmotherwell`) | No | | a failure objective of the barrier of the mode root (a target that is not a player) |
 | QuestNihilo (`nw_ori_gc_questnihilo`) | No | | a background activation, an objective that is not counted, boss phases of the parts of the leviathan (BT3) |
 | TrialSeason02Q12 (`nw_trial_season_02`) | No | | waits of the trial controller with no time, a fight stage that tracks a slice that no stage spawns |

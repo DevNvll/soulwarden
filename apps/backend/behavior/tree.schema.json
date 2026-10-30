@@ -37,7 +37,10 @@
     "pause": { "type": "number", "minimum": 0, "maximum": 60 },
     "distance": { "type": "number", "minimum": 0, "maximum": 200 },
     "name": { "type": "string", "maxLength": 64, "description": "A name of the node for the view of tools/world creature tree." },
-    "action": {
+    "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000,
+                "description": "Stage BT3: the weight of a child of a weighted_random node (required there, not allowed elsewhere: the loader checks it)." },
+    "label": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,64}$" },
+    "action_name": {
       "description": "Stage BT2: the name of an action of the slice that the node uses (no member: each one of the slice). The behavior refuses the tree for a creature whose slice does not have it (the creature has the tree default).",
       "type": "string", "pattern": "^[A-Za-z0-9_]{1,64}$"
     },
@@ -60,107 +63,187 @@
       "properties": {
         "node": {
           "enum": ["selector", "sequence", "invert", "subtree", "in_fight", "target_is", "check", "keep_target", "status_action",
-                   "area_attack", "basic_shot", "melee", "turn_to_target", "roam", "set"]
+                   "area_attack", "basic_shot", "melee", "turn_to_target", "roam", "set", "action", "phase", "tag_set", "tag_is",
+                   "health_below", "has_status", "cooldown", "weighted_random", "once", "timer", "target", "event"]
         }
       },
       "oneOf": [
         { "$ref": "#/$defs/selector" }, { "$ref": "#/$defs/sequence" }, { "$ref": "#/$defs/invert" }, { "$ref": "#/$defs/subtree" },
         { "$ref": "#/$defs/in_fight" }, { "$ref": "#/$defs/target_is" }, { "$ref": "#/$defs/check" }, { "$ref": "#/$defs/keep_target" },
         { "$ref": "#/$defs/status_action" }, { "$ref": "#/$defs/area_attack" }, { "$ref": "#/$defs/basic_shot" }, { "$ref": "#/$defs/melee" },
-        { "$ref": "#/$defs/turn_to_target" }, { "$ref": "#/$defs/roam" }, { "$ref": "#/$defs/set" }
+        { "$ref": "#/$defs/turn_to_target" }, { "$ref": "#/$defs/roam" }, { "$ref": "#/$defs/set" }, { "$ref": "#/$defs/action" },
+        { "$ref": "#/$defs/phase" }, { "$ref": "#/$defs/tag_set" }, { "$ref": "#/$defs/tag_is" }, { "$ref": "#/$defs/health_below" },
+        { "$ref": "#/$defs/has_status" }, { "$ref": "#/$defs/cooldown" }, { "$ref": "#/$defs/weighted_random" }, { "$ref": "#/$defs/once" },
+        { "$ref": "#/$defs/timer" }, { "$ref": "#/$defs/target" }, { "$ref": "#/$defs/event" }
       ]
     },
     "selector": {
       "description": "The children in turn until one succeeds. Success: a child succeeded; failure: each child failed.",
       "type": "object", "additionalProperties": false, "required": ["node", "children"],
-      "properties": { "node": { "const": "selector" }, "name": { "$ref": "#/$defs/name" },
+      "properties": { "node": { "const": "selector" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
                       "children": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/node" } } }
     },
     "sequence": {
       "description": "The children in turn until one fails. Success: each child succeeded.",
       "type": "object", "additionalProperties": false, "required": ["node", "children"],
-      "properties": { "node": { "const": "sequence" }, "name": { "$ref": "#/$defs/name" },
+      "properties": { "node": { "const": "sequence" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "memory": { "type": "boolean", "description": "Stage BT3: a combo of separate actions: the step that starts an action ends there, and the next step goes on at the next child." },
                       "children": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/node" } } }
     },
     "invert": {
       "description": "One child: success and failure change places.",
       "type": "object", "additionalProperties": false, "required": ["node", "child"],
-      "properties": { "node": { "const": "invert" }, "name": { "$ref": "#/$defs/name" }, "child": { "$ref": "#/$defs/node" } }
+      "properties": { "node": { "const": "invert" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" }, "child": { "$ref": "#/$defs/node" } }
     },
     "subtree": {
       "description": "The root of a different tree of the set (no cycle).",
       "type": "object", "additionalProperties": false, "required": ["node", "tree"],
-      "properties": { "node": { "const": "subtree" }, "name": { "$ref": "#/$defs/name" },
+      "properties": { "node": { "const": "subtree" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
                       "tree": { "type": "string", "pattern": "^[A-Za-z0-9_]+(/[A-Za-z0-9_]+)*$", "maxLength": 64 } }
     },
     "in_fight": {
       "description": "Success: the creature has a target of a fight.",
       "type": "object", "additionalProperties": false, "required": ["node"],
-      "properties": { "node": { "const": "in_fight" }, "name": { "$ref": "#/$defs/name" } }
+      "properties": { "node": { "const": "in_fight" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" } }
     },
     "target_is": {
       "description": "Success: the target is a character (player) or a summon (summon).",
       "type": "object", "additionalProperties": false, "required": ["node", "kind"],
-      "properties": { "node": { "const": "target_is" }, "name": { "$ref": "#/$defs/name" }, "kind": { "enum": ["player", "summon"] } }
+      "properties": { "node": { "const": "target_is" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" }, "kind": { "enum": ["player", "summon"] } }
     },
     "check": {
       "description": "Success: the key of the blackboard compares with the value.",
       "type": "object", "additionalProperties": false, "required": ["node", "key", "op", "value"],
-      "properties": { "node": { "const": "check" }, "name": { "$ref": "#/$defs/name" }, "key": { "type": "string" },
+      "properties": { "node": { "const": "check" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" }, "key": { "type": "string" },
                       "op": { "enum": ["eq", "ne", "lt", "le", "gt", "ge"] }, "value": { "type": ["number", "boolean"] } }
     },
     "set": {
       "description": "The key of the blackboard gets the value. Always success.",
       "type": "object", "additionalProperties": false, "required": ["node", "key", "value"],
-      "properties": { "node": { "const": "set" }, "name": { "$ref": "#/$defs/name" }, "key": { "type": "string" },
+      "properties": { "node": { "const": "set" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" }, "key": { "type": "string" },
                       "value": { "type": ["number", "boolean"] } }
     },
     "keep_target": {
       "description": "The target checks: a target that is gone, the end of the leash, a target farther than lose_distance. Failure: the creature lost its target (it goes back).",
       "type": "object", "additionalProperties": false, "required": ["node", "lose_distance"],
-      "properties": { "node": { "const": "keep_target" }, "name": { "$ref": "#/$defs/name" },
-                      "lose_distance": { "type": "number", "minimum": 1, "maximum": 1000 } }
+      "properties": { "node": { "const": "keep_target" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "lose_distance": { "type": "number", "minimum": 1, "maximum": 1000 },
+                      "arena": { "type": "number", "minimum": 0, "maximum": 1000, "description": "Stage BT3: the radius of the arena around the home of the creature: it replaces the leash of the slice and lose_distance (0 or no member: no arena)." } }
     },
     "status_action": {
       "description": "A status action of the slice (its heal at low health, its buff), or only the status action of the member action. Failure: the slice has none, or it is not ready or not wanted.",
       "type": "object", "additionalProperties": false, "required": ["node", "repeat", "pause"],
-      "properties": { "node": { "const": "status_action" }, "name": { "$ref": "#/$defs/name" },
-                      "repeat": { "$ref": "#/$defs/seconds" }, "pause": { "$ref": "#/$defs/pause" }, "action": { "$ref": "#/$defs/action" } }
+      "properties": { "node": { "const": "status_action" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "repeat": { "$ref": "#/$defs/seconds" }, "pause": { "$ref": "#/$defs/pause" }, "action": { "$ref": "#/$defs/action_name" } }
     },
     "area_attack": {
       "description": "An area attack of the slice at a character, or only the area attack of the member action. Failure: the slice has none, or a different attack decides.",
       "type": "object", "additionalProperties": false, "required": ["node", "repeat", "repeat_area_only", "hold_margin", "pause"],
-      "properties": { "node": { "const": "area_attack" }, "name": { "$ref": "#/$defs/name" },
+      "properties": { "node": { "const": "area_attack" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
                       "repeat": { "$ref": "#/$defs/seconds" }, "repeat_area_only": { "$ref": "#/$defs/seconds" },
                       "hold_margin": { "type": "number", "minimum": 0, "maximum": 50 }, "pause": { "$ref": "#/$defs/pause" },
-                      "action": { "$ref": "#/$defs/action" } }
+                      "action": { "$ref": "#/$defs/action_name" } }
     },
     "basic_shot": {
       "description": "The basic shot of an archer or a caster at a character. A node has the band of an archer, of a caster, or both (stage BT2). Failure: the slice has no shot, the node has no band of the slice, or the target is in the reach of its next melee attack.",
       "type": "object", "additionalProperties": false, "required": ["node", "retreat_pause", "pause"],
       "anyOf": [ { "required": ["archer"] }, { "required": ["caster"] } ],
-      "properties": { "node": { "const": "basic_shot" }, "name": { "$ref": "#/$defs/name" },
+      "properties": { "node": { "const": "basic_shot" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
                       "archer": { "$ref": "#/$defs/band" }, "caster": { "$ref": "#/$defs/band" },
                       "retreat_pause": { "$ref": "#/$defs/seconds" }, "pause": { "$ref": "#/$defs/pause" } }
     },
     "melee": {
       "description": "The melee attacks of the slice and the way to the target. Failure: the slice has no melee attack.",
       "type": "object", "additionalProperties": false, "required": ["node", "light_before_heavy", "pause", "heavy_pause"],
-      "properties": { "node": { "const": "melee" }, "name": { "$ref": "#/$defs/name" },
+      "properties": { "node": { "const": "melee" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
                       "light_before_heavy": { "type": "integer", "minimum": 1, "maximum": 20 },
                       "pause": { "$ref": "#/$defs/pause" }, "heavy_pause": { "$ref": "#/$defs/pause" } }
     },
     "turn_to_target": {
       "description": "The creature turns to its target. Always success.",
       "type": "object", "additionalProperties": false, "required": ["node"],
-      "properties": { "node": { "const": "turn_to_target" }, "name": { "$ref": "#/$defs/name" } }
+      "properties": { "node": { "const": "turn_to_target" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" } }
     },
     "roam": {
       "description": "The patrol or the wander of a creature at rest. Failure: the creature is not at rest. Stage BT2: the wait after a walk of the wander (a random time from wait_shortest to wait_longest) and the pause after a goal with no way; a parameter that the node does not have: 4, 12, and 3 s (the values of stage 3.4e).",
       "type": "object", "additionalProperties": false, "required": ["node"],
-      "properties": { "node": { "const": "roam" }, "name": { "$ref": "#/$defs/name" },
+      "properties": { "node": { "const": "roam" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
                       "wait_shortest": { "$ref": "#/$defs/seconds" }, "wait_longest": { "$ref": "#/$defs/seconds" },
                       "no_way_pause": { "$ref": "#/$defs/pause" } }
+    },
+    "action": {
+      "description": "Stage BT3: the node action: an action of the slice by its name (an attack in its reach, a status action, an area attack in its range, a tree action of the data). Failure: an action plays, or the action cannot start now. The behavior refuses the tree for a creature whose slice has no such action. pause: the pause after it (1.5 s with no member).",
+      "type": "object", "additionalProperties": false, "required": ["node", "action"],
+      "properties": { "node": { "const": "action" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "action": { "$ref": "#/$defs/action_name" }, "pause": { "$ref": "#/$defs/pause" } }
+    },
+    "phase": {
+      "description": "Stage BT3: a health threshold that fires one time in a fight: when the int key is below to and the health is health_below percent or less, the key gets to and the child (the transition) runs; no reaction to a hit while the action of the transition plays. Success: the phase started.",
+      "type": "object", "additionalProperties": false, "required": ["node", "health_below", "key", "to", "child"],
+      "properties": { "node": { "const": "phase" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "health_below": { "type": "number", "minimum": 0, "maximum": 100 }, "key": { "type": "string" }, "to": { "type": "integer" },
+                      "child": { "$ref": "#/$defs/node" } }
+    },
+    "tag_set": {
+      "description": "Stage BT3: a tag of the creature gets the value (true with no member). Always success. The end of the fight clears the tags.",
+      "type": "object", "additionalProperties": false, "required": ["node", "tag"],
+      "properties": { "node": { "const": "tag_set" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "tag": { "$ref": "#/$defs/label" }, "value": { "type": "boolean" } }
+    },
+    "tag_is": {
+      "description": "Stage BT3: success when the creature has the tag.",
+      "type": "object", "additionalProperties": false, "required": ["node", "tag"],
+      "properties": { "node": { "const": "tag_is" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "tag": { "$ref": "#/$defs/label" } }
+    },
+    "health_below": {
+      "description": "Stage BT3: success when the health of the creature is percent of its maximum or less.",
+      "type": "object", "additionalProperties": false, "required": ["node", "percent"],
+      "properties": { "node": { "const": "health_below" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "percent": { "type": "number", "minimum": 0, "maximum": 100 } }
+    },
+    "has_status": {
+      "description": "Stage BT3: success when the creature has an effect of the status row (its id in the ability data).",
+      "type": "object", "additionalProperties": false, "required": ["node", "status"],
+      "properties": { "node": { "const": "has_status" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "status": { "$ref": "#/$defs/label" } }
+    },
+    "cooldown": {
+      "description": "Stage BT3: one child: failure for seconds after the child succeeded.",
+      "type": "object", "additionalProperties": false, "required": ["node", "seconds", "child"],
+      "properties": { "node": { "const": "cooldown" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "seconds": { "$ref": "#/$defs/seconds" }, "child": { "$ref": "#/$defs/node" } }
+    },
+    "weighted_random": {
+      "description": "Stage BT3: the children in a random order by their weight (each child has weight), until one does not fail. 64 children at most.",
+      "type": "object", "additionalProperties": false, "required": ["node", "children"],
+      "properties": { "node": { "const": "weighted_random" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "children": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/node" } } }
+    },
+    "once": {
+      "description": "Stage BT3: one child: it runs until the child succeeded one time in the fight; then failure until the end of the fight.",
+      "type": "object", "additionalProperties": false, "required": ["node", "child"],
+      "properties": { "node": { "const": "once" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "child": { "$ref": "#/$defs/node" } }
+    },
+    "timer": {
+      "description": "Stage BT3: success when seconds passed since the start of the fight (since fight, no member) or of the last phase (since phase).",
+      "type": "object", "additionalProperties": false, "required": ["node", "seconds"],
+      "properties": { "node": { "const": "timer" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "seconds": { "$ref": "#/$defs/seconds" }, "since": { "enum": ["fight", "phase"] } }
+    },
+    "target": {
+      "description": "Stage BT3: the target policy: each every seconds (1 with no member) the creature takes the nearest character, a random one, or the one with the most damage to it (threat), in range meters (30 with no member), with a free line. Success: the creature has a target.",
+      "type": "object", "additionalProperties": false, "required": ["node", "policy"],
+      "properties": { "node": { "const": "target" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "policy": { "enum": ["nearest", "random", "threat"] }, "range": { "type": "number", "minimum": 1, "maximum": 200 },
+                      "every": { "$ref": "#/$defs/pause" } }
+    },
+    "event": {
+      "description": "Stage BT3: the creature sends a named event to its encounter (a stage that waits for an EncounterEventObjective of that name). Success.",
+      "type": "object", "additionalProperties": false, "required": ["node", "event"],
+      "properties": { "node": { "const": "event" }, "name": { "$ref": "#/$defs/name" }, "weight": { "$ref": "#/$defs/weight" },
+                      "event": { "$ref": "#/$defs/label" } }
     }
   }
 }
