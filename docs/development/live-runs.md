@@ -407,3 +407,13 @@ tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
   in that picture is the position of `tools/hx 'click X Y'` (the respawn button of "You died" at 1000 580).
 - A travel of the target ends the fight of a creature (stage DG2: "the target went to a different place"). For a fight with a path, let
   the creature see the character (its vision at rest is a cone), then move the character with the keys (`'keydown 0x57'`, `'keyup 0x57'`).
+- Stage DG3: the expedition window of an entrance (key E with a hold of 0.8 s at the door: `tools/hx 'key 0x45 800'`) has the button
+  "Enter With Group" at 1040 374. The respawn screen of an expedition lists the checkpoints; the button RESPAWN (1000 580) opens the
+  confirm "This will put this respawn position in cooldown", whose button Yes is at 714 397. The first row of the list is at 1000 219.
+- Stage DG3: a lore page shows its prompt only near it (about 2 m, with the crosshair on the page), not at the 5 m of its range. Walk to it
+  with short presses of W (`tools/hx 'key 0x57 500'`) and turn with `'look DX DY'` (400 units turn about 45 degrees).
+- Stage DG3: the key Escape opens the menu bar; the gear (972 22) opens the game menu with "Exit to Main Menu" (510 530; then Yes at
+  714 397). In an expedition the button below "Recall" has no text and sends nothing (the mode row has no QuitButtonTextId). After "Exit to
+  Main Menu", Play is at 1089 572.
+- Stage DG3: the compass of an own level keeps the name of the last place of the main world (for Amrine the door is in the area "The Amrine
+  Excavation": the name looks correct, but Garden of Genesis shows it too). Do not take the compass as a proof of the instance.

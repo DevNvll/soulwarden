@@ -322,7 +322,8 @@ std::shared_ptr<const NavTile> NavTile::decode(std::int32_t tileX,
         }
         if (number > kMaxFloors) {
             // The reader keeps no part of a cell (code review of stage 3.4d, finding F3).
-            return refuse("a run names more floors for one cell than the reader keeps (16)");
+            static_assert(kMaxFloors == 63, "the text of the refusal names the limit");
+            return refuse("a run names more floors for one cell than the reader keeps (63)");
         }
         for (std::size_t index = 0; index < length; ++index, ++cell) {
             const std::size_t first = tile->m_floors.size();

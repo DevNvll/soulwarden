@@ -63,9 +63,14 @@ struct TestTerrain final : gamedata::Terrain {
 struct TestLevels final : gamedata::LevelSource {
     gamedata::LevelFolder folder{""};
     mutable unsigned reads{0};
+    /** Stage DG3: the sets of a case in the memory (a level with a maker here is not read from the folder). */
+    std::map<std::string, std::function<std::unique_ptr<gamedata::LevelData>()>> made;
 
     [[nodiscard]] std::unique_ptr<gamedata::LevelData> open(const std::string& level) const override {
         ++reads;
+        if (const auto maker = made.find(level); maker != made.end()) {
+            return maker->second();
+        }
         return folder.open(level);
     }
 };

@@ -106,6 +106,8 @@ struct InteractionRequest {
     std::uint64_t optionEntity{0};
     std::uint32_t optionId{0};
     bool committed{false};
+    /** Stage DG3: the difficulty of an entry at the entrance of a game mode (record +0x70: 0 the normal mode, 1 to 3 a mutation tier). */
+    std::uint32_t difficulty{0};
     /** The input number of the step (the log). */
     std::uint16_t input{0};
 };
@@ -193,6 +195,20 @@ struct InteractionContext {
     std::uint64_t generation{0};
     /** True: an object that the data does not have (stage 3.6a: a natural node, a creature body); `instance` is its G. */
     bool external{false};
+    /**
+     * Stage DG3: the catalog of the rows of the object (its options and its achievements): the interaction data of the backend, or the
+     * interaction data of the level set of an own level (a level object of the space of the character). Null: the data of the backend.
+     */
+    const gamedata::InteractionData* catalog{nullptr};
+    /** Stage DG3: the difficulty of the request (InteractionRequest::difficulty). */
+    std::uint32_t difficulty{0};
+    /**
+     * Stage DG3 (one rule for the state of a level object in a space; code review of stage DG2, findings DG2R-R2 and DG2R-R3): the space of
+     * the state of a level object that a character uses in a space that is not the main world (an object of the level set of an own level,
+     * an object of the main world level in a story instance, an exit portal of a mode root). kMainSpace: the shared state of the main world,
+     * or an object that is not a level object. `external` is then true and `instance` is the key of the object for that space.
+     */
+    SpaceId levelSpace{kMainSpace};
 };
 
 /**
@@ -376,6 +392,13 @@ struct InteractionCounts {
     std::uint64_t referenceLookups{0};
     /** Stage DG2: the requests in an instance of the main world level for a level object that a task of the mode names (Interactions::check). */
     std::uint64_t modeLevelObjects{0};
+    /**
+     * Stage DG3: the objects of the level set of an own level that the system registered (one for each space and object at its first
+     * request), the accepted uses of such objects, and the objects that went with the end of their space.
+     */
+    std::uint64_t levelObjects{0};
+    std::uint64_t levelObjectUses{0};
+    std::uint64_t levelObjectsEnded{0};
     /** The work of the last scan of the spawn rule (case IT-LOAD). */
     gamedata::LookupWork scanWork;
 };
@@ -469,6 +492,20 @@ public:
     /** @return The external object of a G (registered by a request or by external_entity), or null. */
     [[nodiscard]] const ExternalObject* external(EntityId group) const;
     /**
+     * Stage DG3: @return The space of an object of the level set of an own level by the key of its use (InteractionContext::instance of a
+     * level object), or no value: the key is not such an object.
+     */
+    [[nodiscard]] std::optional<SpaceId> level_object_space(EntityId key) const;
+    /**
+     * Stage DG3: the instance system ended a space: the objects of the level set of that space go (a use of one of them ends: the source is
+     * gone). The level data stays (world/levels.h).
+     */
+    void space_ended(SpaceId space);
+    /** Stage DG3: @return The number of the objects of the level sets that the system has now (each space with a request). */
+    [[nodiscard]] std::size_t level_object_count() const {
+        return m_levelSites.size();
+    }
+    /**
      * The world calls it at the removal of a creature: the external object of its body goes (a use of it ends at the next check: the
      * source is gone). The entries of the bodies do not grow with the kills.
      */
@@ -546,7 +583,7 @@ public:
      * child, its bounds, its uses. It stays until remove_object. `key`: its durable key (the key of the bag).
      */
     SpawnedContainer spawn_container(std::uint32_t templateIndex, const state::WorldPosition& place, float yawDegrees, const std::string& key,
-                                     SpaceId space = kMainSpace);
+                                     SpaceId space = kMainSpace, const gamedata::InteractionData* catalog = nullptr);
 
     /** @return The interactions of a character and the objects that are `radius` or less from it (horizontal). */
     [[nodiscard]] InteractionsView view(const std::string& characterId, float radius) const;
@@ -647,12 +684,21 @@ private:
         std::uint32_t completions{0};
         /** The cells of the grid of the entities that have this child (its interest points). */
         std::vector<std::int64_t> cells;
+        /** Stage DG3: the catalog of its template (a checkpoint of a level set; null: the data of the backend). */
+        const gamedata::InteractionData* catalog{nullptr};
     };
-    /** An object that the data does not have (stage 3.6a): its object, its state, and the cells of its entity. */
+    /**
+     * An object that the data does not have (stage 3.6a): its object, its state, and the cells of its entity. Stage DG3: also an object of
+     * the level set of an own level in one space (its key is an id of the allocator, not its G: two instances of one level have one G for
+     * each object; it has no entity: the client makes it from its level data and gets no state of it).
+     */
     struct External {
         ExternalObject value;
         ObjectState state;
         std::vector<std::int64_t> cells;
+        /** Stage DG3: the catalog of its rows (the interaction data of its level set; null: the data of the backend), and its space. */
+        const gamedata::InteractionData* catalog{nullptr};
+        SpaceId space{kMainSpace};
     };
     /** A usable object: a level object of the data (instance 0), a server child, or an external object (stage 3.6a: its G). */
     struct Site {
@@ -661,7 +707,19 @@ private:
         EntityId instance{0};
         std::uint64_t generation{0};
         bool external{false};
+        /** Stage DG3: the catalog of the rows of the object (null: the data of the backend). */
+        const gamedata::InteractionData* catalog{nullptr};
     };
+    /** Stage DG3: @return The catalog of the rows of a site: its own one (a level object of an own level), or the data of the backend. */
+    [[nodiscard]] const gamedata::InteractionData* rows_of(const Site& site) const {
+        return site.catalog != nullptr ? site.catalog : data();
+    }
+    /**
+     * Stage DG3: @return The object of a level object for one space that is not the main world (made at the first request of that space for
+     * that object; one rule for the objects of a level set and the objects of the main world data that the space admits), with `catalog` the
+     * catalog of its rows (null: the data of the backend).
+     */
+    External& level_site(SpaceId space, const gamedata::InteractionData* catalog, std::uint32_t objectIndex);
 
     [[nodiscard]] InteractionVerdict check(Entity& character, const InteractionRequest& request, InteractionContext& context,
                                            InteractionHandler*& handler);
@@ -686,7 +744,7 @@ private:
     Entity* spawn(std::uint32_t templateIndex, const state::WorldPosition& place, const gamedata::Rotation& rotation,
                   const std::string& key, std::int64_t spawnedIndex, EntityId parent, const std::string& parentKey,
                   const std::array<std::uint8_t, 16>& parentActor, const std::string& region, int permissionRule, int depth,
-                  SpaceId space = kMainSpace);
+                  SpaceId space = kMainSpace, const gamedata::InteractionData* own = nullptr);
     /** The spawn rule: makes the children of the placements near the characters, removes the ones with no character near. */
     void scan();
     /** The timer of a timed use: the end of its Delay Time. */
@@ -715,6 +773,8 @@ private:
     std::map<EntityId, Instance> m_instances;
     /** The objects that the data does not have (stage 3.6a), by their G; the resolver of the gathering system. */
     std::map<EntityId, External> m_externals;
+    /** Stage DG3: the objects of the level sets by their space and their index in the level data, to their key in m_externals. */
+    std::map<std::pair<SpaceId, std::uint32_t>, EntityId> m_levelSites;
     ObjectResolver* m_resolver{nullptr};
     SpawnObserver* m_spawnObserver{nullptr};
     /** The object entities of the external objects (their G), for the interest of a session. */

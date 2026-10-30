@@ -338,8 +338,9 @@ std::optional<Gathering::Target> Gathering::target_of(const InteractionContext& 
         return std::nullopt;
     }
     Target target;
-    if (!context.external) {
-        if (context.instance != 0) {
+    // Stage DG3: a level object in a space that is not the main world (InteractionContext::levelSpace) is a capital node of that space.
+    if (!context.external || context.levelSpace != kMainSpace) {
+        if (context.instance != 0 && context.levelSpace == kMainSpace) {
             // Stage QG5c2: the start object of an encounter stage (a server child of the encounter system). Each other server child is no
             // node. Stage QG9d: also a quest object of the mode root of an instance (a server child of the instance system).
             const std::string* slice = m_world.encounters().start_object(context.instance);
@@ -367,7 +368,11 @@ std::optional<Gathering::Target> Gathering::target_of(const InteractionContext& 
         if (!link) {
             return std::nullopt;
         }
-        target.key = context.object->key;
+        // Stage DG3 (code review of stage DG2, finding DG2R-R3): the key of a node of a space has the space: a claim or a depletion of one
+        // space is not of an other space.
+        target.key = context.levelSpace == kMainSpace ? context.object->key
+                                                      : context.object->key + "/space/" + std::to_string(context.levelSpace);
+        target.space = context.levelSpace;
         target.kind = NodeKind::capital;
         target.row = link->row;
         target.templateIndex = link->templateIndex;
@@ -871,6 +876,7 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
         next.group = target->group;
         next.source = target->source;
         next.position = target->position;
+        next.space = target->space;
         next.generation = 0;
     }
     if (body != nullptr && body->kind == EntityKind::creature) {
@@ -899,7 +905,9 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
     written = written && !full && m_world.quests().write_drops(character, drops);
     // Stage QG5c5: a start object of an encounter (also one with an ordinary row: the Azoth Staff rows of the Darkness pylons and cores)
     // has no node row: the next instance makes a new object.
-    if (written && !full && target->kind != NodeKind::body && target->kind != NodeKind::encounter && !row.quest) {
+    // Stage DG3: a node of a space that is not the main world has no row either (the space ends with the backend).
+    if (written && !full && target->kind != NodeKind::body && target->kind != NodeKind::encounter && !row.quest
+        && target->space == kMainSpace) {
         state::GatheringNodeRow stored;
         stored.key = next.key;
         stored.source = next.source;
@@ -982,6 +990,8 @@ bool Gathering::complete(Entity& character, const InteractionContext& context) {
             gathered.actor = context.object->actor;
         }
         gathered.position = target->position;
+        // Stage DG3 (code review of stage DG2, finding DG2R-R3): the LootTracker entry is of the space of the gather.
+        gathered.space = character.space;
         gathered.generation = ++m_questGeneration;
         character.questGathers[target->key] = gathered;
         publish_quest_objects(character);
@@ -1080,6 +1090,7 @@ void Gathering::publish_quest_objects(Entity& character) {
         entry.state = quest_object_rules::kLooted;
         entry.kind = quest_object_rules::kEntryKind;
         entry.position = gathered.position;
+        entry.space = gathered.space;
         entries.push_back(entry);
     }
     if (entries != character.questGatherTracker) {
@@ -1116,6 +1127,10 @@ void Gathering::publish(GatherNode& node) {
     Entity* entity = nullptr;
     switch (node.kind) {
     case NodeKind::capital:
+        if (node.space != kMainSpace) {
+            // Stage DG3 (code review of stage DG2, finding DG2R-R2): no state of a node of a space goes to the entity of the main world.
+            return;
+        }
         entity = m_world.interactions().level_entity(node.objectIndex);
         break;
     case NodeKind::natural: {

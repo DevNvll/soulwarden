@@ -92,8 +92,12 @@ public:
     static constexpr std::int32_t kMeters = 64;
     static constexpr std::int32_t kCells = 256;
     static constexpr std::int32_t kSamples = kMeters + 1;
-    /** A cell has this number of floors at most: the reader refuses a tile with a cell that has more. */
-    static constexpr std::size_t kMaxFloors = 16;
+    /**
+     * A cell has this number of floors at most: the reader refuses a tile with a cell that has more. Stage DG3: 63 (before: 16; most own
+     * levels have a cell with 17 or 18 floors). The cell word has 6 bits for the number, and the key of a cell of a path search 6 bits for
+     * the floor (world/navigation.cpp). The file form does not change: its run code can name 251 floors.
+     */
+    static constexpr std::size_t kMaxFloors = 63;
 
     /** The tile in tiles of the world: the tile starts at x * 64 m, y * 64 m. */
     std::int32_t x{0};

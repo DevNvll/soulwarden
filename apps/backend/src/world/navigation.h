@@ -138,6 +138,8 @@ enum class Footing {
 
 /** Counts of the navigation, for the log, for the development tools, and for the tests. */
 struct NavigationCounts {
+    /** Code review of stage DG2, finding DG2R-R5: the periodic scans of the characters of the world (each kWantInterval of a tick). */
+    std::uint64_t wantScans{0};
     /** Tiles that the world has now, and their bytes. */
     std::size_t tilesHeld{0};
     std::size_t tileBytes{0};
@@ -304,6 +306,13 @@ public:
     /** @return The number of path searches that wait now. */
     [[nodiscard]] std::size_t queued() const {
         return m_queue.size();
+    }
+    /**
+     * Code review of stage DG2, finding DG2R-R5: @return True while the navigation has work of its tick: a tile (also a tile that loads), a
+     * route, or a search that waits. A level navigation with no space and no such work gets no tick (world/levels.cpp).
+     */
+    [[nodiscard]] bool busy() const {
+        return !m_tiles.empty() || !m_routes.empty() || !m_queue.empty();
     }
 
 private:

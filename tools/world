@@ -1463,6 +1463,10 @@ def instances_text(document: dict) -> str:
              f"{counts['exits']} returns, {counts['departures']} members that left the world, {counts['recovered']} rows of an earlier "
              f"start, {counts['refused']} refused, {counts.get('questObjectsMade', 0)} quest object(s) of a mode root made, "
              f"{counts.get('questObjectsGathered', 0)} gathered, {counts.get('questObjectsAgain', 0)} made again"
+             + (f"; stage DG3: {counts['entranceRequests']} entrance request(s) ({counts.get('entranceRefused', 0)} refused), "
+                f"{counts.get('rejoined', 0)} joined again, {counts.get('emptyEnded', 0)} ended empty, {counts.get('checkpointsMade', 0)} "
+                f"checkpoint(s) made, {counts.get('checkpointsActivated', 0)} activated, {counts.get('checkpointRespawns', 0)} respawn(s) at a "
+                f"checkpoint" if "entranceRequests" in counts else "")
              + ("" if document.get("data", True) else " (the backend has no game modes)")]
     for instance in document["instances"]:
         x, y, z = instance["start"]
@@ -1472,9 +1476,16 @@ def instances_text(document: dict) -> str:
         lines.append(f"  instance {instance['id']}  space {instance['space']}  map {instance['map']} ({instance['level']})  start "
                      f"{x:.2f} {y:.2f} {z:.2f}  {len(instance['members'])} of {instance['capacity']} member(s)  {instance['seconds']:.0f} s"
                      + level_points)
+        if "emptySeconds" in instance:
+            lines.append(f"    empty: it ends in {instance['emptySeconds']:.0f} s")
         for member in instance["members"]:
             rx, ry, rz = member["returnPlace"]
             lines.append(f"    member {member['character']}  return place {rx:.2f} {ry:.2f} {rz:.2f}  {member['seconds']:.0f} s")
+        # Stage DG3: the checkpoints of an expedition.
+        for checkpoint in instance.get("checkpoints", []):
+            cx, cy, cz = checkpoint["respawn"]
+            lines.append(f"    checkpoint {checkpoint['id']}  {'active' if checkpoint['active'] else 'not active'}  respawn place "
+                         f"{cx:.2f} {cy:.2f} {cz:.2f}  server child {checkpoint['entity']}")
     # Stage DG2: the own levels whose data set the backend read (at the first instance of each level).
     levels = document.get("levels") or {}
     level_counts = levels.get("counts") or {}

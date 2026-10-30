@@ -595,7 +595,7 @@ void spawn_points(const Options&) {
     check(at_point(0) == 0 && creatures.spawn_points()[0].waiting,
           "the player goes away and comes back: the body left the world, and the point that waits makes no new creature");
     // The place of the respawn time: a time of the world clock makes the point free again.
-    check(creatures.respawn_at(0, host.clock.now() + std::chrono::seconds(2)) && !creatures.respawn_at(99, host.clock.now()),
+    check(creatures.respawn_at(world::kMainSpace, 0, host.clock.now() + std::chrono::seconds(2)) && !creatures.respawn_at(world::kMainSpace, 99, host.clock.now()),
           "a point that waits gets a respawn time on the world clock");
     host.advance(std::chrono::milliseconds(1200));
     host.steps(1, {&a});
@@ -1114,7 +1114,7 @@ void respawn_with_body(const Options&) {
     const std::uint32_t firstNumber = interest_of(host, 1, first);
     check(first != 0 && firstNumber != 0, "the point 20 m from the player has its creature, and the session observes it");
     check(creatures.kill(first).error == CreatureError::none && waits() && at_point() == first
-              && creatures.respawn_at(0, host.clock.now() + std::chrono::seconds(2)),
+              && creatures.respawn_at(world::kMainSpace, 0, host.clock.now() + std::chrono::seconds(2)),
           "a kill: the body stays at its point, and the point waits with a respawn time 2 s after the death");
     host.advance(std::chrono::milliseconds(1200));
     host.steps(1, {&a});
@@ -1155,7 +1155,7 @@ void respawn_with_body(const Options&) {
     const world::EntityId player = host.world.find_character(kCharacterA)->id;
     const auto move = [&](float x) { host.world.set_position(player, state::WorldPosition{x, 1000.0F, kHeight}, false); };
     check(creatures.kill(second).error == CreatureError::none
-              && creatures.respawn_at(0, host.clock.now() + std::chrono::seconds(1)),
+              && creatures.respawn_at(world::kMainSpace, 0, host.clock.now() + std::chrono::seconds(1)),
           "the second creature is killed: the respawn time of its point is 1 s after the death");
     move(860.0F);
     host.advance(std::chrono::milliseconds(1500));

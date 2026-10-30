@@ -521,6 +521,27 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         reader.raw(56U * count);
         return reader.ok() ? static_cast<int>(reader.position()) : -1;
     }
+    case 3652: { // PlayerHome (stage DG3): field 0 the full list homePointList (research death-travel.md 4.2).
+        if (group != 0 || field != 0) {
+            return -1;
+        }
+        server::hub::Reader reader(rest);
+        if (reader.size() != 0 || reader.u8() != 0) {
+            return -1;
+        }
+        const std::uint32_t count = reader.size();
+        if (count > 64) {
+            return -1;
+        }
+        for (std::uint32_t index = 0; index < count && reader.ok(); ++index) {
+            reader.raw(16 + 8 + 8);
+            (void)reader.string();
+            reader.raw(12 + 8 + 8 + 4 + 1 + 1);
+            (void)reader.string();
+            reader.raw(4);
+        }
+        return reader.ok() ? static_cast<int>(reader.position()) : -1;
+    }
     case 1594: // BuildableController (stage 2.5b): currentState (one byte); the other fields are not sent.
         return group == 0 && field == 0 ? 1 : -1;
     case 3217: // Ownership (stage 2.5b): currentPermissionRule (field 4, one byte); the other fields are not sent.
@@ -609,6 +630,7 @@ inline unsigned group_count(std::uint32_t type) {
     case 3086:
     case 497:
     case 3312:
+    case 3652:
         return 1;
     case 3752:
     case 81:

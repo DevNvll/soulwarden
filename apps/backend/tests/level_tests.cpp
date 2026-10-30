@@ -288,9 +288,20 @@ void two_instances(const Options& options) {
     check(setA != nullptr && setB != nullptr && setA->waiting.size() == 1 && setB->waiting.empty() && host.world.find(kept) != nullptr
               && !host.world.find(kept)->creature.dead,
           "the point of A waits its respawn time; the point of B keeps its creature (each space its own states)");
-    check(host.world.instances().leave(kCharacterA).error == world::InstanceError::none && host.world.find(killed) == nullptr
-              && host.world.creatures().spawn_set(spaceA) == nullptr && host.world.creatures().spawn_set(spaceB) != nullptr
-              && host.world.find(kept) != nullptr,
+    // Stage DG3: an instance of an own level with creatures has content: it waits empty for TimerThresholdDefault of its mode (600 s).
+    const bool left = host.world.instances().leave(kCharacterA).error == world::InstanceError::none;
+    const world::Instance* waiting = host.world.instances().instance_of_space(spaceA);
+    check(left && waiting != nullptr && waiting->members.empty() && waiting->emptyUntil.has_value(),
+          "stage DG3: the instance of A waits empty for the time of its mode (its level set is content)");
+    // The two clients report each 10 s of the wait (a silent session ends): A at its return place, B in its instance.
+    for (std::uint16_t number = 40; number < 101; ++number) {
+        host.advance(std::chrono::seconds(10));
+        report(host, a, number, host.world.find_character(kCharacterA)->position);
+        report(host, b, number, kStart);
+        host.steps(2, {&a, &b});
+    }
+    check(host.world.find(killed) == nullptr && host.world.creatures().spawn_set(spaceA) == nullptr
+              && host.world.creatures().spawn_set(spaceB) != nullptr && host.world.find(kept) != nullptr,
           "the end of the instance of A removes its creature and its states; the instance of B keeps its own");
     check(host.world.instances().enter(kCharacterA, kMap).error == world::InstanceError::none && host.levels.reads == 1
               && host.world.levels().counts().spacesStarted == 3,

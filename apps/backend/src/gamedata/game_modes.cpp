@@ -60,6 +60,12 @@ bool read_map(const json& entry, GameMap& map) {
         || !entry.contains("starts") || !entry["starts"].is_array()) {
         return false;
     }
+    // Stage DG3: the entry rules of the mode. A member that is there must have its type; a file of before has none (no rule).
+    if ((entry.contains("mutable") && !read_flag(entry, "mutable", map.mutableMode))
+        || (entry.contains("entryConditional") && !read_text(entry, "entryConditional", map.entryConditional))
+        || (entry.contains("requiredItemClasses") && !read_text(entry, "requiredItemClasses", map.requiredItemClasses))) {
+        return false;
+    }
     for (const json& start : entry["starts"]) {
         if (!start.is_array() || start.size() != 4) {
             return false;

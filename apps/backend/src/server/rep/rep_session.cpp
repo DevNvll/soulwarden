@@ -1797,6 +1797,7 @@ void RepSession::observe_interaction(const InputStep& step) {
     request.optionEntity = block.optionEntity;
     request.optionId = block.optionId;
     request.committed = block.committed;
+    request.difficulty = block.difficulty;
     request.input = step.sequence;
     // The world finds the character from the session and checks the request (world/interactions.h).
     const world::InteractionVerdict verdict = m_world.interactions().request(m_id, request);
@@ -2073,7 +2074,8 @@ void RepSession::handle_request_respawn(std::span<const std::uint8_t> body) {
     // The world finds the character from the session. A dead character lives again at its
     // respawn place: the vitals state and the movement state with a new teleport number go out
     // with the next record, and the message "on player teleport" after it (the travel path).
-    const world::HealthResult result = m_world.health().respawn(m_id);
+    // Stage DG3: the id of the selected home point (a checkpoint of the instance of the character; random 0); the random row has none.
+    const world::HealthResult result = m_world.health().respawn(m_id, request->random ? std::string() : request->id);
     if (result.error == world::HealthError::none) {
         ++m_respawns;
         log::write("rep: respawn request (random %d, id \"%s\"): the character lives again", request->random ? 1 : 0,

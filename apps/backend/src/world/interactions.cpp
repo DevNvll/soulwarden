@@ -61,7 +61,8 @@ public:
     }
 
     [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context) override {
-        const gamedata::InteractionData* data = m_world.interactions().data();
+        // Stage DG3: a lore page of the level set of an own level has the achievement rows of its level (InteractionContext::catalog).
+        const gamedata::InteractionData* data = context.catalog != nullptr ? context.catalog : m_world.interactions().data();
         if (data == nullptr || context.bound->lore < 0) {
             return InteractionVerdict::unsupported; // A lore page with no achievement: nothing to keep (the tool marks it).
         }
@@ -290,6 +291,7 @@ Interactions::Site Interactions::site_of(std::uint32_t object, EntityId instance
             site.index = found->second.templateIndex;
             site.instance = instance;
             site.generation = generation;
+            site.catalog = found->second.catalog;
         }
         return site;
     }
@@ -298,11 +300,69 @@ Interactions::Site Interactions::site_of(std::uint32_t object, EntityId instance
     if (external != m_externals.end() && external->second.value.generation == generation
         && (m_resolver == nullptr || m_resolver->alive(external->second.value))) {
         site.object = &external->second.value.object;
+        site.index = external->second.space != kMainSpace ? object : 0;
         site.instance = instance;
         site.generation = generation;
         site.external = true;
+        site.catalog = external->second.catalog;
     }
     return site;
+}
+
+Interactions::External& Interactions::level_site(SpaceId space, const gamedata::InteractionData* catalog, std::uint32_t objectIndex) {
+    const auto known = m_levelSites.find({space, objectIndex});
+    if (known != m_levelSites.end()) {
+        return m_externals.at(known->second);
+    }
+    // Stage DG3 (docs/systems/interactions.md, "A level object in a space") [agent]: the first request of a space for a level object registers
+    // the object for that space: its state (the users, enabled) is of that space only, its key is an id of the allocator (two instances of
+    // one level have the same G for one object; the main world has the G of the object), and it has no entity: the client makes it from
+    // its level data, and no session of an other space gets a state of it (code review of stage DG2, finding DG2R-R2).
+    const gamedata::InteractionData& rows = catalog != nullptr ? *catalog : *data();
+    External external;
+    external.value.object = rows.objects()[objectIndex];
+    external.value.generation = ++m_generation;
+    external.state.bounds.resize(external.value.object.bounds.size());
+    external.catalog = catalog;
+    external.space = space;
+    const EntityId key = entity_group_id(m_world.reserve_actor());
+    m_levelSites[{space, objectIndex}] = key;
+    ++m_counts.levelObjects;
+    log::write("world: the level object %s (%s, %s) is an object of space %u now (its state is of that space)",
+               external.value.object.key.c_str(), gamedata::interaction_kind_text(external.value.object.kind),
+               catalog != nullptr ? "the level set of the space" : "the main world level", space);
+    return m_externals.insert_or_assign(key, std::move(external)).first->second;
+}
+
+std::optional<SpaceId> Interactions::level_object_space(EntityId key) const {
+    const auto found = m_externals.find(key);
+    if (found == m_externals.end() || found->second.space == kMainSpace) {
+        return std::nullopt;
+    }
+    return found->second.space;
+}
+
+void Interactions::space_ended(SpaceId space) {
+    for (auto site = m_levelSites.lower_bound({space, 0}); site != m_levelSites.end() && site->first.first == space;) {
+        const EntityId key = site->second;
+        const auto found = m_externals.find(key);
+        if (found != m_externals.end()) {
+            // A use of the object ends (the members left the space before its end; a probe of a command can stay).
+            std::vector<EntityId> users;
+            for (const BoundState& bound : found->second.state.bounds) {
+                users.insert(users.end(), bound.users.begin(), bound.users.end());
+            }
+            for (const EntityId user : users) {
+                Entity* character = find_entity(user);
+                if (character != nullptr && character->interaction && character->interaction->instance == key) {
+                    end(*character, InteractionEnd::sourceRemoved, true);
+                }
+            }
+            m_externals.erase(key);
+        }
+        ++m_counts.levelObjectsEnded;
+        site = m_levelSites.erase(site);
+    }
 }
 
 InteractionVerdict Interactions::check(Entity& character, const InteractionRequest& request, InteractionContext& context,
@@ -314,13 +374,27 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     if (character.life.dead) {
         return InteractionVerdict::dead;
     }
+    // Stage DG3 (one rule for a level object in a space; code review of stage DG2, findings DG2R-R2 and DG2R-R3): in a space that is not the
+    // main world a level object has the state of that space (level_site): an object of the level set of the own level of the space (a lore
+    // page, the exit stone of Amrine), or an object of the main world data that the space admits (the rules of stages QG9d and DG2 below).
+    External* levelSite = nullptr;
+    std::uint32_t levelObject = 0;
+    std::uint32_t levelBound = 0;
     if (character.space != kMainSpace) {
-        // Stage DG1: each level object of this system is an object of the main world: a character in an instance has no level object near it
-        // (the objects of an instance level are stage DG2). The request changes nothing (rule MP-5). Stage QG9a: a server child of the space
-        // of the character (the exit portal of its instance) is there.
+        const gamedata::LevelData* own = m_world.levels().data_of(character.space);
+        const std::optional<gamedata::BoundRef> ownRef = own != nullptr && own->interaction_part().loaded
+                                                             ? own->interactions().find(request.object.group, request.object.target)
+                                                             : std::nullopt;
         const auto child = m_instances.find(request.object.group);
         const Entity* entity = child != m_instances.end() ? find_entity(child->first) : nullptr;
-        if (entity == nullptr || entity->space != character.space) {
+        if (ownRef) {
+            levelSite = &level_site(character.space, &own->interactions(), ownRef->object);
+            levelObject = ownRef->object;
+            levelBound = ownRef->bound;
+        } else if (entity == nullptr || entity->space != character.space) {
+            // Stage DG1: each level object of the main world data is an object of the main world: a character in an instance has no such
+            // object near it. The request changes nothing (rule MP-5). Stage QG9a: a server child of the space of the character (the exit
+            // portal of its instance) is there (the server child path below).
             // Stage QG9d: the exit portal of a mode root that the client makes from the level data of the main world level (the portal of
             // QuestSeraphim; live check of stage QG9c: the client sent ExitDungeon to it in the instance) is there in an instance of its
             // mode.
@@ -330,8 +404,8 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
             // bound has the InteractTag of an active task of the character with the GameModeID of the mode of the instance (the statue of
             // Taurus of 09A_M12_SaveTaurus in QuestMedusa: the client makes it from the level data, and the task of the mode names it).
             const world::Instance* instance = level != nullptr && level->exitMode.empty() && m_world.main_level(character.space)
-                                           ? m_world.instances().instance_of_space(character.space)
-                                           : nullptr;
+                                                  ? m_world.instances().instance_of_space(character.space)
+                                                  : nullptr;
             const std::string& tag = level != nullptr ? level->bounds[ref->bound].tag : std::string();
             const bool modeObject = instance != nullptr && !tag.empty()
                                     && m_world.quests().mode_task_active(character, instance->mode, {"t:" + gamedata::lower_text(tag)});
@@ -340,6 +414,9 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
             } else if (level == nullptr || level->exitMode.empty() || !m_world.instances().in_mode(character, level->exitMode)) {
                 return InteractionVerdict::unknownObject;
             }
+            levelSite = &level_site(character.space, nullptr, ref->object);
+            levelObject = ref->object;
+            levelBound = ref->bound;
         }
     }
     // The reference: a bound of a level object (the reference map of the data), or of a server child (its G is its entity id).
@@ -347,7 +424,12 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     std::uint32_t boundIndex = 0;
     const BoundState* boundState = nullptr;
     ++m_counts.referenceLookups;
-    if (const std::optional<gamedata::BoundRef> ref = catalog->find(request.object.group, request.object.target)) {
+    if (levelSite != nullptr) {
+        site = Site{&levelSite->value.object, levelObject, m_levelSites.at({character.space, levelObject}), levelSite->value.generation, true,
+                    levelSite->catalog};
+        boundIndex = levelBound;
+        boundState = &levelSite->state.bounds[levelBound];
+    } else if (const std::optional<gamedata::BoundRef> ref = catalog->find(request.object.group, request.object.target)) {
         site.object = &catalog->objects()[ref->object];
         site.index = ref->object;
         boundIndex = ref->bound;
@@ -359,7 +441,7 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
         const Instance& instance = found->second;
         for (std::uint32_t index = 0; index < instance.object.bounds.size(); ++index) {
             if (instance.object.bounds[index].target == request.object.target) {
-                site = Site{&instance.object, instance.templateIndex, found->first, instance.generation};
+                site = Site{&instance.object, instance.templateIndex, found->first, instance.generation, false, instance.catalog};
                 boundIndex = index;
                 boundState = &instance.state.bounds[index];
                 break;
@@ -398,8 +480,10 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     const gamedata::InteractionObject& object = *site.object;
     const gamedata::InteractionBound& bound = object.bounds[boundIndex];
     const gamedata::InteractionOption* option = nullptr;
+    // Stage DG3: the rows of the object (an object of a level set has the option and achievement rows of its level).
+    const gamedata::InteractionData* rows = rows_of(site);
     for (const gamedata::BoundOption& item : bound.options) {
-        const gamedata::InteractionOption& row = catalog->options()[item.option];
+        const gamedata::InteractionOption& row = rows->options()[item.option];
         if (row.id == request.optionId && item.entity == request.optionEntity && row.action == request.action) {
             option = &row;
             break;
@@ -409,6 +493,9 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
         return InteractionVerdict::unknownOption;
     }
     context = InteractionContext{site.index, boundIndex, &object, &bound, option, site.instance, site.generation, site.external};
+    context.catalog = site.catalog;
+    context.difficulty = request.difficulty;
+    context.levelSpace = levelSite != nullptr ? character.space : kMainSpace;
     // A handler that owns the sight rule of its bounds checks it itself (stage 3.5b.1: a chest).
     InteractionHandler* const owner = handler_of(object.kind, option->id);
     const bool sightOwned = owner != nullptr && owner->owns_sight();
@@ -437,7 +524,7 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     }
     for (const std::int32_t required : {option->requiredAchievement, bound.requiredAchievement}) {
         if (required >= 0) {
-            const std::uint32_t bit = catalog->achievements()[static_cast<std::size_t>(required)].index;
+            const std::uint32_t bit = rows->achievements()[static_cast<std::size_t>(required)].index;
             if (!std::binary_search(character.achievements.begin(), character.achievements.end(), bit)) {
                 return InteractionVerdict::requirement;
             }
@@ -477,8 +564,12 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
     const log::Context logContext(mark);
     // The request of the committed interaction again: the client restored its record after a one-shot (client 0x49175F0), or
     // its block came back. It is not a new use: no reply, no begin (research Q4).
+    const Site activeSite = character->interaction
+                                ? site_of(character->interaction->object, character->interaction->instance, character->interaction->generation)
+                                : Site{};
     if (character->interaction && character->interaction->reference == request.object && character->interaction->action == request.action
-        && data() != nullptr && data()->options()[character->interaction->option].id == request.optionId) {
+        && activeSite.object != nullptr && rows_of(activeSite) != nullptr
+        && rows_of(activeSite)->options()[character->interaction->option].id == request.optionId) {
         ++m_counts.verdicts[static_cast<std::size_t>(InteractionVerdict::same)];
         return InteractionVerdict::same;
     }
@@ -507,12 +598,14 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
     }
     ++m_counts.verdicts[static_cast<std::size_t>(InteractionVerdict::accepted)];
     ++m_counts.begins;
+    m_counts.levelObjectUses += context.catalog != nullptr ? 1 : 0;
     const float distance = std::sqrt(distance_sq(character->position, context.bound->position));
     if (committed) {
         ActiveInteraction active;
         active.object = context.objectIndex;
         active.bound = context.boundIndex;
-        active.option = static_cast<std::uint32_t>(context.option - data()->options().data());
+        // Stage DG3: the index of the option in the rows of the object (the catalog of its level for a level object of an own level).
+        active.option = static_cast<std::uint32_t>(context.option - (context.catalog != nullptr ? context.catalog : data())->options().data());
         active.reference = request.object;
         active.action = request.action;
         active.started = m_world.clock().now();
@@ -532,7 +625,7 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
         }
         character->interaction = active;
         m_active.insert(character->id);
-        const Site used{context.object, context.objectIndex, context.instance, context.generation, context.external};
+        const Site used{context.object, context.objectIndex, context.instance, context.generation, context.external, context.catalog};
         if (ObjectState* state = state_of(used)) {
             state->bounds[context.boundIndex].users.push_back(character->id);
         }
@@ -654,12 +747,15 @@ void Interactions::damaged(Entity& character) {
     if (!character.interaction || data() == nullptr || character.life.dead) {
         return;
     }
-    const gamedata::InteractionOption& option = data()->options()[character.interaction->option];
     // The action InteractionAnimation ends at IfDamaged (game data); a timed use ends at damage (a decision of an agent: the
     // client continues it, live check L7); a handler whose use ends at damage (stage 3.5b.1: the open of a chest; the action Gather of
     // the client ends at IfDamagedByPowerLevel, game data).
     const Site site = site_of(character.interaction->object, character.interaction->instance, character.interaction->generation);
-    const InteractionHandler* handler = site.object != nullptr ? handler_of(site.object->kind, option.id) : nullptr;
+    if (site.object == nullptr) {
+        return;
+    }
+    const gamedata::InteractionOption& option = rows_of(site)->options()[character.interaction->option];
+    const InteractionHandler* handler = handler_of(site.object->kind, option.id);
     if (option.action == kPlayInteractionAnimation || option.delay > 0.0F || (handler != nullptr && handler->ends_at_damage())) {
         end(character, InteractionEnd::damage, true);
     }
@@ -729,8 +825,10 @@ void Interactions::end(Entity& character, InteractionEnd cause, bool notify) {
             users.erase(std::remove(users.begin(), users.end(), character.id), users.end());
             publish(site);
         }
-        InteractionContext context{site.index, active.bound, site.object, &site.object->bounds[active.bound], &catalog->options()[active.option],
+        InteractionContext context{site.index, active.bound, site.object, &site.object->bounds[active.bound], &rows_of(site)->options()[active.option],
                                    site.instance, site.generation, site.external};
+        context.catalog = site.catalog;
+        context.levelSpace = site.external ? level_object_space(site.instance).value_or(kMainSpace) : kMainSpace;
         if (InteractionHandler* handler = handler_of(site.object->kind, context.option->id)) {
             handler->end(character, context, cause);
         }
@@ -761,9 +859,11 @@ void Interactions::timed_due(const std::string& characterId, std::uint64_t seria
     ActiveInteraction& active = *character->interaction;
     active.completed = true;
     const Site site = site_of(active.object, active.instance, active.generation);
-    const gamedata::InteractionOption& option = data()->options()[active.option];
+    const gamedata::InteractionOption& option = rows_of(site)->options()[active.option];
     InteractionContext context{site.index, active.bound, site.object, &site.object->bounds[active.bound], &option, site.instance,
                                site.generation, site.external};
+    context.catalog = site.catalog;
+    context.levelSpace = site.external ? level_object_space(site.instance).value_or(kMainSpace) : kMainSpace;
     ++m_counts.completions;
     std::uint32_t completions = 0;
     if (site.instance != 0 && !site.external) {
@@ -1007,14 +1107,14 @@ void Interactions::body_removed(EntityId creature) {
 }
 
 Interactions::SpawnedContainer Interactions::spawn_container(std::uint32_t templateIndex, const state::WorldPosition& place, float yawDegrees,
-                                                            const std::string& key, SpaceId space) {
+                                                            const std::string& key, SpaceId space, const gamedata::InteractionData* catalog) {
     SpawnedContainer result;
     if (!std::isfinite(yawDegrees)) {
         return result;
     }
     const float half = yawDegrees * 3.14159265358979F / 360.0F;
     const gamedata::Rotation rotation{0.0F, 0.0F, std::sin(half), std::cos(half)};
-    result.entity = spawn(templateIndex, place, rotation, key, -1, 0, "", {}, "", -1, 0, space);
+    result.entity = spawn(templateIndex, place, rotation, key, -1, 0, "", {}, "", -1, 0, space, catalog);
     if (result.entity != nullptr) {
         result.generation = m_instances.at(result.entity->id).generation;
     }
@@ -1024,8 +1124,9 @@ Interactions::SpawnedContainer Interactions::spawn_container(std::uint32_t templ
 Entity* Interactions::spawn(std::uint32_t templateIndex, const state::WorldPosition& place, const gamedata::Rotation& rotation,
                             const std::string& key, std::int64_t spawnedIndex, EntityId parent, const std::string& parentKey,
                             const std::array<std::uint8_t, 16>& parentActor, const std::string& region, int permissionRule, int depth,
-                            SpaceId space) {
-    const gamedata::InteractionData* catalog = data();
+                            SpaceId space, const gamedata::InteractionData* own) {
+    // Stage DG3: a template of the level set of an own level (a checkpoint of its mode root) comes from the catalog of that level.
+    const gamedata::InteractionData* catalog = own != nullptr ? own : data();
     if (catalog == nullptr || templateIndex >= catalog->templates().size() || depth > kChildDepth || !valid_position(place)) {
         return nullptr;
     }
@@ -1054,6 +1155,7 @@ Entity* Interactions::spawn(std::uint32_t templateIndex, const state::WorldPosit
     Entity& entity = m_world.spawn_object(body, place, space);
     Instance instance;
     instance.templateIndex = templateIndex;
+    instance.catalog = own;
     instance.generation = ++m_generation;
     instance.spawned = spawnedIndex;
     instance.parent = parent;
@@ -1100,7 +1202,7 @@ Entity* Interactions::spawn(std::uint32_t templateIndex, const state::WorldPosit
         const state::WorldPosition childPlace = gamedata::transform_point(place, rotation, child.position);
         const gamedata::Rotation childRotation = gamedata::compose_rotation(rotation, child.rotation);
         Entity* made = spawn(child.templateIndex, childPlace, childRotation, key + "/" + std::to_string(++childNumber), -1, id, parentKey,
-                             parentActor, region, -1, depth + 1, space);
+                             parentActor, region, -1, depth + 1, space, own);
         if (made != nullptr) {
             m_instances.at(id).children.push_back(made->id);
         }
@@ -1391,7 +1493,7 @@ std::optional<StationContext> Interactions::station_of(const Site& site, std::ui
     station.group = object.group;
     station.interactTarget = reference.target;
     for (const gamedata::BoundOption& option : bound.options) {
-        const std::string& name = data()->options()[option.option].name;
+        const std::string& name = rows_of(site)->options()[option.option].name;
         if (name == kStationOptions[0] || name == kStationOptions[1]) {
             station.optionEntity = option.entity;
             break;

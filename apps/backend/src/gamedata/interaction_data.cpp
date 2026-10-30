@@ -903,6 +903,45 @@ bool InteractionData::load(const std::string& path) {
         }
     }
     m_instanceObjects = std::move(instanceObjects);
+    // Stage DG3: the dungeon checkpoints of the mode roots of an own level (only the file of a level has them; a file of before has none).
+    std::vector<ModeCheckpoint> checkpoints;
+    if (document.contains("checkpoints")) {
+        const json& list = document["checkpoints"];
+        if (!list.is_array()) {
+            *this = InteractionData{};
+            m_error = "the member checkpoints is not a list";
+            return false;
+        }
+        Reader reader;
+        for (const json& entry : list) {
+            ModeCheckpoint point;
+            std::uint64_t index = 0;
+            std::uint64_t type = 0;
+            const bool read = entry.is_object() && reader.text(entry, "mode", point.mode) && reader.text(entry, "map", point.map)
+                              && reader.text(entry, "spawner", point.spawner) && reader.text(entry, "slice", point.slice)
+                              && reader.unsigned_number(entry, "template", 0xFFFFFFFFULL, index)
+                              && reader.position(entry, "position", point.position) && reader.real(entry, "yaw", point.yaw)
+                              && reader.position(entry, "respawn", point.respawn)
+                              && reader.unsigned_number(entry, "type", 0xFFFFFFFFULL, type) && reader.real(entry, "cooldown", point.cooldown)
+                              && reader.text(entry, "name", point.name) && reader.hex64(entry, "homeEntity", point.homeEntity)
+                              && reader.hex64(entry, "homeComponent", point.homeComponent) && entry.contains("trigger")
+                              && reader.position(entry["trigger"], "center", point.triggerCenter)
+                              && reader.real(entry["trigger"], "radius", point.triggerRadius);
+            if (!read || index >= m_templates.size() || point.spawner.empty() || point.spawner.size() > 31 || point.cooldown < 0.0F
+                || !(point.triggerRadius > 0.0F)) {
+                const std::string cause = reader.error.empty() ? "a template that the file does not have, an id of more than 31 bytes, or a "
+                                                                 "volume with no radius"
+                                                               : reader.error;
+                *this = InteractionData{};
+                m_error = "a checkpoint is not correct: " + cause;
+                return false;
+            }
+            point.templateIndex = static_cast<std::uint32_t>(index);
+            point.type = static_cast<std::uint32_t>(type);
+            checkpoints.push_back(std::move(point));
+        }
+    }
+    m_checkpoints = std::move(checkpoints);
     return true;
 }
 

@@ -181,8 +181,10 @@ public:
      * character from the session (roadmap, rule MP-5). A dead character lives again with its
      * full health at its respawn place. A character that lives keeps its state: the result
      * has the error `alive`.
+     * Stage DG3: `point` is the id of the home point of the request (random 0): in an instance the active checkpoint of that id
+     * (Instances::use_checkpoint); with no such checkpoint, or with an empty id, the respawn place.
      */
-    HealthResult respawn(SessionId session);
+    HealthResult respawn(SessionId session, const std::string& point = {});
 
     /**
      * @return The place at which a character that is dead now lives again: the nearest travel place of the main world; stage DG1: in an

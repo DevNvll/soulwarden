@@ -18,9 +18,9 @@ Two findings of the code review of the corrections after user test 1:
   file that did not decode in its list `physicsFilesNotDecoded`, was used again by the
   corrected tool. Such a report, and a report of an earlier tool version (TOOL_VERSION of
   navigation_data.py), must not be used again.
-- F8: the tile writer of navcore.cpp wrote a cell with 17 floors, and the backend refuses
+- F8: the tile writer of navcore.cpp wrote a cell with 17 floors, and the backend refused
   such a tile. The writer must stop the region: no complete region with a tile that the
-  backend cannot use.
+  backend cannot use. Stage DG3: the limit of the backend and of the writer is 63 floors.
 
 Usage: check_navigation_tool.py WORK_FOLDER
 Status 0: each case has the expected result. The test program of the backend runs it (case RN10).
@@ -205,13 +205,13 @@ FLOOR_PROGRAM = r'''
 #undef main
 
 // The tile writer of navcore with one made-up grid: the first column has N floors, each other
-// column one floor of the terrain. Prints "N refused" or "N written" for 16 and 17 floors.
+// column one floor of the terrain. Prints "N refused" or "N written" for 63 and 64 floors (stage DG3).
 int main() {
     Scene scene;
     auto region = std::make_unique<Collision>();
     region->heights.assign(static_cast<size_t>(kRegionSize) * kRegionSize, 1600);
     scene.regions.emplace(std::make_pair(0, 0), std::move(region));
-    for (unsigned count : {16U, 17U}) {
+    for (unsigned count : {63U, 64U}) {
         Grid grid;
         grid.width = grid.height = 256;
         for (unsigned column = 0; column < 256U * 256U; ++column) {
@@ -260,7 +260,7 @@ def compile_program(root: Path, name: str, text: str) -> Path:
 
 
 def floor_limit(root: Path) -> dict[int, str]:
-    """@return For 16 and 17 floors in one cell: "refused" or "written" (the tile writer of navcore.cpp)."""
+    """@return For 63 and 64 floors in one cell: "refused" or "written" (the tile writer of navcore.cpp)."""
     result = subprocess.run([str(compile_program(root, "navcore-floors", FLOOR_PROGRAM))], capture_output=True, text=True,
                             check=True)
     answers = {}
@@ -338,9 +338,9 @@ def main() -> int:
     except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
         report(False, f"the tile writer of navcore.cpp compiles and runs: {error}")
         answers = {}
-    report(answers.get(16) == "written", f"control: the tile writer writes a cell with 16 floors ({answers.get(16)})")
-    report(answers.get(17) == "refused", f"the tile writer refuses a cell with 17 floors, which the backend refuses "
-           f"({answers.get(17)}) (F8)")
+    report(answers.get(63) == "written", f"control: the tile writer writes a cell with 63 floors ({answers.get(63)})")
+    report(answers.get(64) == "refused", f"the tile writer refuses a cell with 64 floors, which the backend refuses "
+           f"({answers.get(64)}) (F8; stage DG3: the limit 63)")
 
     import height_maps
     samples = array("H", [1000]) * (2048 * 2048)

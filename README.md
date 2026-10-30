@@ -155,6 +155,15 @@ This is an independent project with no connection to Amazon Games. The repositor
   enter`); the entrance of the game, the bosses, the doors, the chests, and the lore pages of an expedition come in later stages. In the
   Medusa instance the task "Unpetrify Taurus" now works: use the statue of Taurus. A quest that you reset gets its heartgems of Caer Dun
   again.
+- The entrance of an expedition (stage DG3): at the door of the Amrine Excavation (Windsward) press E, then "Enter With Group" in the
+  expedition window of the game. One player can enter (the window shows "Minimum Players: 3" with a check). The other expeditions whose
+  level data the release has enter in the same way (their creatures stand at their places; their bosses, doors, and encounters come in a
+  later stage). A mutation tier is refused ("not available" in the window). In the expedition the checkpoints work: when you come near the
+  entrance or a crystal, the respawn screen of a death lists it ("Expedition Entrance", "Shrine"); a respawn at a checkpoint starts its
+  cooldown of 30 s. The lore pages of Amrine go into the journal, and the exit stone near the start (hold E) takes you back to the door. If
+  you leave the expedition (or the game) before its end, it waits 10 minutes, and the door takes you back into it. Not yet: the bosses, the
+  doors, the light bridge, the chests, and the names of the rooms of an expedition (the compass keeps the name of the last place of the open
+  world).
 - Territory standing (stage QG1). The standing of a territory goes up to rank 300: the points above a rank go to the next rank, and each new rank gives character experience (for example 125 at rank 1 of Windsward) and one standing point ("token"). A quest gives its standing to the territory where you hand it in (the notice shows "+100 Windsward Standing"). Open the map (M), the second tab "Territories": a territory with a free token shows a badge; click it to "Claim your reward" and choose a card (Standing Gain, XP Gain, Gather, Station Fee, Trading Fee, Storage, House Ownership; the house card keeps the token). Standing Gain, XP Gain, and Gather act now while you are in that territory; the other cards are kept for their later systems. The standing, the tokens, and the cards stay after a restart. The Windsward main story goes on after "Feast to Famine" (Marcel Dupont, then Saatvik Agrawal).
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.

@@ -313,10 +313,33 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   range, the quest gate, the handler of its kind). Count `modeLevelObjects` [data; agent; live; case LV6].
 - Stage DG2: the interaction tool takes the capitals of an own level with `--level LEVEL` (`interactions.use_level`: the level from its map
   row; no list of the persons of the other worlds). Amrine has 4 objects: 3 lore pages (`lore_00_aeternum_title_14_01` to `_03`) and its
-  exit portal stone (kind dungeonExit). The backend reads the file of a level set (its count) and does not use its objects yet: one catalog
-  of the objects, the options, and the achievements, and the states of the objects by index (stage DG3) [agent].
+  exit portal stone (kind dungeonExit). Stage DG3: the backend uses these objects (the section below).
 - Stage DG2: the inner gate of the Mammoth trial is a teleporter of the main world (`InteractTeleporter`, action 82, a `TeleportDestination`
   entity) that this tool does not write (no kind of a teleporter) and that the backend does not handle in any space [data; agent].
+
+### A level object in a space (stage DG3)
+
+One rule for the state of a level object that a character uses in a space that is not the main world (stage DG3; the code review of stage
+DG2, findings DG2R-R2 and DG2R-R3) [agent]:
+
+- The level objects of a space: the objects of the level set of the own level of the space (`LevelData::interactions()`: a lore page and
+  the exit stone of Amrine), and the objects of the main world data that a space admits (an exit portal of a mode root with the member
+  `mode`, stage QG9d; a level object whose InteractTag an active task of the mode names, stage DG2 part 5). Each other object of the main
+  world data stays unknown in an instance (`unknownObject`).
+- At the first request of a space for such an object, the system registers the object for that space (`Interactions::level_site`): an
+  external object with its own state (the users and Enabled of its bounds), the catalog of its rows (the options and the achievements of its
+  level set, or of the data of the backend), and a key of the id allocator (two instances of one level have one G for each object; the main
+  world has the G of the object). It has no entity: the client makes it from its level data, and no session gets a state of it (an other
+  space, the main world). The context of a use has `levelSpace` (the space) and `catalog`.
+- The handlers take the rows of the catalog of the context: the lore page gives the achievement of its level set (the journal opens with the
+  page; live: "Simon's Excavation" of Amrine); the exit portal handler takes an exit object of the space of the instance of the character
+  (a `dungeonExit` of the level set, or an exit portal of the main world data with the mode of the instance).
+- The gathering takes a level object of a space as a capital node of that space (the key of the node has the space: `KEY/space/N`): its
+  depletion and the claim of a quest gather are of that space only; a node of a space has no row of the store and no entity (its node state
+  goes to no session). A quest gather of a space is a Looted entry of the LootTracker of the gatherer only while the gatherer is in that space
+  (`LootTrackerEntry::space`; the encoder keeps the guard of the quest objects of the main world).
+- The end of the space ends the objects of that space (`Interactions::space_ended`: a use of one ends, the source is gone). Counts
+  `levelObjects`, `levelObjectUses`, `levelObjectsEnded`; cases DG3L1, DG2R2, DG2R3.
 
 ## Commands
 

@@ -1293,10 +1293,12 @@ void remote_configuration(const Options&) {
     server::http::register_aws_routes(router, server::http::AwsOptions{});
     auto reply = get(router, host, path);
     check(reply.first.status == 200 && reply.first.contentType == "application/json"
-              && reply.first.body == R"({"javelin.enable-client-authoritative-melee":true})" && reply.first.body.size() == 50
-              && reply.second == "aws.s3_gameplay_configuration",
+              && reply.first.body
+                     == R"({"javelin.enable-client-authoritative-melee":true,"javelin.enable-dungeon-group-restriction":false})"
+              && reply.first.body.size() == 99 && reply.second == "aws.s3_gameplay_configuration",
           "the request of the client for the gameplay configuration document of the product gets the status 200 and the "
-          "document of 50 bytes: the one setting that turns the melee contact report on");
+          "document of 99 bytes: the setting that turns the melee contact report on, and (stage DG3) the setting that turns the "
+          "group size check of the entry screen of an expedition off");
     check(get(router, host, path).first.body == reply.first.body && get(router, "ags-javelin-remote-config.s3.amazonaws.com", path).first.status == 200,
           "each request for the document gets it (the client asks again when it goes back to the main menu), also with "
           "no port in the host");

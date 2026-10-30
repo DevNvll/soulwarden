@@ -658,6 +658,22 @@ backend. The tool of each system is also in the document of that system.
   and a part whose reader refuses it alone. Without the folder `levels` the backend starts and works (an instance of an own level has no
   content). `check_level_tool.py` is the check (case LV1). Amrine: 2.2 MB, 68 s with 8 processes (the creatures 199 KB, the navigation
   1.9 MB, the heights 42 KB, the interactions 67 KB); the list of the levels that the tools make is in the result of stage DG2.
+- Stage DG3 ([Instances](../systems/instances.md), "The expeditions"): the file `interaction-data.json` of a level set (still format 6) has two
+  more members (only a file of a level; a backend of before ignores them): `modeObjects` (each PrefabSpawner of the mode root slice of each
+  map of the level: its mode and map, the spawner, the child slice, the flags client, onInit, onTrigger, the place) and `checkpoints` (the
+  spawners whose slice has a HomeComponent with m_respawnType 10: the id text of the home point (the name of the spawner, 1 to 31 bytes),
+  the slice, a template of the file for its server child, the place, the rotation, the yaw, the respawn place (the entity of the
+  HomeComponent), the type, m_respawnCooldown, the name of the name entity, the entity and the component of the HomeComponent, and the
+  activation sphere `trigger` (the center and the radius of the detection volume of the server facet)). The mode roots of a level come from
+  the map rows of its level (`interactions.level_mode_roots`: SlicePath with no start "slices/" and no end, `slice_key`). The backend refuses
+  a file with a checkpoint that is not correct (no template, an id of more than 31 bytes, no radius) as a whole. Amrine: 43 spawners, 3
+  checkpoints, 2,241,476 bytes for the set.
+- Stage DG3: the navigation tool keeps 63 floors in one cell (before: 16; [Navigation](../systems/navigation.md), "The floors of a cell"):
+  16 of the 18 levels that stage DG2 could not make are made now. The tool makes each region of an output of a different level or of the
+  main world again (code review of stage DG2, finding DG2R-R4; `check_navigation_cache_tool.py`, case DG2R4). The asset ids of
+  `ASSETS_NOT_IN_GAME` of `interactions.py` have three more ids of own levels whose ids are in no byte of the asset catalog (two fences and
+  a torch of Glacial Tarn, the spawner GateArena of the trial Q13); the brazier of Monarch's Bluffs (`isleofnight_brazier_01`) has an id of
+  the catalog with an other sub id: the tool still stops for that level.
 
 ## Commands
 
@@ -702,6 +718,10 @@ tools/gamedata/level.sh DungeonAmrine  # stage DG2: the level data set of an own
 - Stage DG2: the scale of the terrain of a level (`mountainHeight` 256 m in most levels). A tool that reads a height map of a level must put
   its samples into the scale of 2048 m (`nav_terrain.to_main_scale`): with the scale of the main world the flat terrain of Amrine was 8 times
   too high (256 m above the mine, 32 m in the game).
+- Stage DG3 changes `game-modes.json` (still format 1: the members `mutable`, `entryConditional`, and `requiredItemClasses` of each map, the
+  entry rules of its mode; a backend of before ignores them, and the backend reads a file with no such member as a mode with no such rule),
+  and the folder `levels` (the sets of the stage: the members `modeObjects` and `checkpoints` of their interaction files, the levels with
+  cells of 17 to 19 floors). The files of the main world keep their bytes. `tools/release.sh` takes `game-modes.json` and the folder `levels`.
 - Stage DG2 changes no file of the common game data folder other than the new folder `levels` (the set of Amrine). `creatures.json` and the
   other files of the main world keep their bytes; a backend of before ignores the folder `levels`.
 

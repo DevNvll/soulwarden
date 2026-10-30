@@ -965,7 +965,9 @@ constexpr uint32_t kNavVersion = 3;
 constexpr int kTileSamples = kTileMeters + 1;
 constexpr uint8_t kNoSight = 255, kOpenSky = 255;
 constexpr int kCodeFloors = 4;   // the code of a run with n floors is kCodeFloors + n
-constexpr size_t kMaxCellFloors = 16;   // the floors of one cell that the reader of the backend keeps (NavTile::kMaxFloors)
+// The floors of one cell that the reader of the backend keeps (NavTile::kMaxFloors). Stage DG3: 63 (before: 16; the cell word of
+// the reader has 6 bits for the number). The run code can name 251 floors: the file form does not change.
+constexpr size_t kMaxCellFloors = 63;
 // Free floors of the analysis cells of one cell that are this near in height are one floor (meters).
 constexpr float kFloorJoin = 0.25f;
 // The sight interval of a floor starts at the floor when the solid of the cell ends less than this above it (meters).
@@ -1077,8 +1079,8 @@ TileData encode_tile(Scene& scene, const Grid& grid, int border, int tileCells, 
                 for (size_t a = 0; a < air.size(); ++a)
                     if (!claimed[a]) entries.push_back({air[a].first, kFloorBlocked, air[a].first, air[a].second, true});
                 std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.height < b.height; });
-                // The reader of the backend keeps 16 floors of one cell and refuses a tile with more
-                // (gamedata/navigation_data.h, NavTile::kMaxFloors): such a cell stops the region, so
+                // The reader of the backend keeps kMaxCellFloors floors of one cell and refuses a tile with
+                // more (gamedata/navigation_data.h, NavTile::kMaxFloors): such a cell stops the region, so
                 // that no complete region has a tile that the backend cannot use (code review of the
                 // corrections after user test 1, finding F8). The tool does not drop a floor.
                 if (entries.size() > kMaxCellFloors)

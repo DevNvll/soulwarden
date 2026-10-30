@@ -11,6 +11,7 @@
 #include "world/gathering.h"
 #include "world/position_index.h"
 #include "world/interactions.h"
+#include "world/levels.h"
 #include "world/quests.h"
 #include "world/world.h"
 
@@ -49,7 +50,7 @@ public:
             return InteractionVerdict::refused;
         }
         const gamedata::DungeonEntrance& entrance = *context.object->entrance;
-        const std::uint32_t result = m_world.instances().entrance_result(character, entrance);
+        const std::uint32_t result = m_world.instances().entrance_result(character, entrance, context.difficulty);
         if (result != dungeon_result::kSuccess) {
             m_world.dungeon_result(character.owner, entrance.target, context.object->group, result);
             return InteractionVerdict::refused;
@@ -85,11 +86,14 @@ public:
     [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context) override {
         const Instance* instance = m_world.instances().instance_of(character.characterId);
         // Stage QG9d: a portal of the instance (a server child that the instance system made), or the exit portal of the mode root of its
-        // mode that the client makes from the level data (InteractionObject::exitMode).
+        // mode that the client makes from the level data (InteractionObject::exitMode). Stage DG3: also the exit stone of the level set of an
+        // own level (Amrine: a capital of the level next to the start that the client makes). A level object in an instance has the state
+        // of the space of the instance (InteractionContext::levelSpace; one rule, docs/systems/interactions.md).
         const bool own = instance != nullptr
                          && std::find(instance->objects.begin(), instance->objects.end(), context.instance) != instance->objects.end();
-        const bool level = instance != nullptr && context.instance == 0 && context.object != nullptr && !context.object->exitMode.empty()
-                           && same_text(context.object->exitMode, instance->mode);
+        const bool level = instance != nullptr && context.levelSpace == instance->space && context.object != nullptr
+                           && (context.catalog != nullptr
+                               || (!context.object->exitMode.empty() && same_text(context.object->exitMode, instance->mode)));
         if (context.option->action != kExitDungeon || instance == nullptr || instance->space != character.space || (!own && !level)) {
             return InteractionVerdict::refused;
         }
@@ -202,14 +206,41 @@ void Instances::tick() {
         if (!instance.questObjects.empty()) {
             look_quest_objects(instance);
         }
+        // Stage DG3: the activation of the checkpoints (only the instances with checkpoints and their members: MP-8).
+        if (!instance.checkpoints.empty()) {
+            look_checkpoints(instance);
+        }
     }
 }
 
-std::uint32_t Instances::entrance_result(const Entity& character, const gamedata::DungeonEntrance& entrance) const {
+std::uint32_t Instances::group_size(const Entity& character) const {
+    (void)character;
+    // [agent] The backend has no group system (roadmap 6.3, stage DG6): the group of an entry is the character.
+    return 1;
+}
+
+bool Instances::mode_runs(std::string_view mode) const {
+    const gamedata::GameModes* modes = data();
+    const gamedata::GameMap* map = modes != nullptr ? modes->find(std::string(mode)) : nullptr;
+    if (map == nullptr || !same_text(map->mode, mode)) {
+        return false;
+    }
+    if (map->dungeon && map->level != kMainLevel) {
+        // Stage DG3 [orchestrator scope: the encounters of an expedition are stage DG5]: an expedition runs with the content of the data set
+        // of its level (its creatures, its navigation, its objects, its checkpoints).
+        return m_world.levels().available(map->level);
+    }
+    return m_world.encounters().runs_mode(std::string(mode));
+}
+
+std::uint32_t Instances::entrance_result(const Entity& character, const gamedata::DungeonEntrance& entrance, std::uint32_t difficulty) const {
+    // The checks of an entry, in this order (docs/systems/instances.md, "The entry at the entrance of an expedition"); a refusal changes
+    // nothing (rule MP-5). The result values: eDungeonActivateResponse (research dungeons.md 3.3).
     const gamedata::GameModes* modes = data();
     const gamedata::GameMap* map = modes != nullptr ? modes->find(entrance.mode) : nullptr;
     const char* cause = nullptr;
     std::uint32_t result = dungeon_result::kSuccess;
+    const std::uint32_t group = group_size(character);
     if (map == nullptr) {
         cause = "the game modes have no map of the mode (or more than one)";
         result = dungeon_result::kEntranceActivationFailure;
@@ -219,25 +250,48 @@ std::uint32_t Instances::entrance_result(const Entity& character, const gamedata
     } else if (character.space != kMainSpace || m_byCharacter.contains(character.characterId)) {
         cause = "the character is in an instance";
         result = dungeon_result::kGroupAlreadyInDungeon;
+    } else if (difficulty != 0) {
+        // Stage DG3 [data: IsMutable, the tiers 1 to 3 of DifficultyProgressionId; agent: the mutations are stage DG7]: the normal mode only.
+        cause = map->mutableMode ? "a mutation tier: the backend has no mutation (the tiers and their ranks are a later stage)"
+                                 : "a mutation tier of a mode that is not mutable (IsMutable 0)";
+        result = dungeon_result::kMutationDifficultyReq;
     } else if (character.progression.level < map->requiredLevel) {
         cause = "the level of the character is below RequiredLevel of the mode";
         result = dungeon_result::kEntranceActivationFailure;
+    } else if (!map->entryConditional.empty() && !m_world.quests().conditional(character, map->entryConditional)) {
+        // Stage DG3 [data: EntryAchievementConditional; the queue HUD of the client tests it too (CanEnterDungeon)].
+        cause = "the character does not have the achievements of EntryAchievementConditional of the mode";
+        result = dungeon_result::kEntranceActivationFailure;
+    } else if (!map->requiredItemClasses.empty()) {
+        // Stage DG3 [data: RequiredConsumableItemClasses; agent: no row of the supported build has one, and the backend has no check of an
+        // item class yet].
+        cause = "the mode needs an item of RequiredConsumableItemClasses (the backend has no check of an item class)";
+        result = dungeon_result::kMissingReqItem;
+    } else if (group < kMinimumGroupSize) {
+        cause = "the group is smaller than the minimum group size (decision D7: 1)";
+        result = dungeon_result::kNotEnoughMembers;
+    } else if (map->teamCapacity != 0 && group > map->teamCapacity) {
+        cause = "the group is larger than TeamCapacity of the mode";
+        result = dungeon_result::kTooManyMembers;
     } else if (const std::string_view off = encounter_rules::mode_off(entrance.mode, m_world.options().questMedusaRuns); !off.empty()) {
         // Stage QG9b: the setting of the mode (encounter_rules::kQuestMedusaRuns) turns it off; the reason is a literal (it ends with NUL).
         cause = off.data();
         result = dungeon_result::kEntranceActivationFailure;
-    } else if (!m_world.encounters().runs_mode(entrance.mode)) {
-        cause = "the backend does not run the content of the mode (docs/systems/instances.md)";
+    } else if (!mode_runs(entrance.mode)) {
+        cause = map->dungeon && map->level != kMainLevel
+                    ? "the backend has no accepted data set of the level of the expedition (tools/gamedata/level.sh)"
+                    : "the backend does not run the content of the mode (docs/systems/instances.md)";
         result = dungeon_result::kEntranceActivationFailure;
     }
     const_cast<InstanceCounts&>(m_counts).entranceRequests += 1;
     if (cause != nullptr) {
         const_cast<InstanceCounts&>(m_counts).entranceRefused += 1;
-        log::write("world: the entry of character %s at the entrance of the mode %s is refused: %s (result %u)", character.characterId.c_str(),
-                   entrance.mode.c_str(), cause, static_cast<unsigned>(result));
+        log::write("world: the entry of character %s at the entrance of the mode %s (difficulty %u) is refused: %s (result %u)",
+                   character.characterId.c_str(), entrance.mode.c_str(), static_cast<unsigned>(difficulty), cause,
+                   static_cast<unsigned>(result));
     } else {
-        log::write("world: the entry of character %s at the entrance of the mode %s is accepted (result 0, map %s)", character.characterId.c_str(),
-                   entrance.mode.c_str(), map->id.c_str());
+        log::write("world: the entry of character %s at the entrance of the mode %s is accepted (result 0, map %s, group %u)",
+                   character.characterId.c_str(), entrance.mode.c_str(), map->id.c_str(), static_cast<unsigned>(group));
     }
     return result;
 }
@@ -311,7 +365,152 @@ void Instances::membership_changed(const std::string& characterId) {
     if (character->gameModeKnown) {
         m_world.touch(character->id, ComponentKey::gameModeParticipant);
     }
+    // Stage DG3: the home point list (the checkpoints of the instance, or the empty list after the leave).
+    home_points_changed(characterId);
     m_world.quests().mode_changed(*character);
+}
+
+std::size_t Instances::make_checkpoints(Instance& instance) {
+    const gamedata::LevelData* level = m_world.levels().data_of(instance.space);
+    if (level == nullptr || !level->interaction_part().loaded) {
+        return 0;
+    }
+    const gamedata::InteractionData& rows = level->interactions();
+    for (std::uint32_t index = 0; index < rows.checkpoints().size(); ++index) {
+        const gamedata::ModeCheckpoint& data = rows.checkpoints()[index];
+        if (!same_text(data.mode, instance.mode) || !same_text(data.map, instance.map) || data.templateIndex >= rows.templates().size()) {
+            continue;
+        }
+        // The server child of the checkpoint (the crystal; the client shows it only after the record of the server: m_isClientAuthoratative
+        // false) [data; agent: the mode script that spawns it at the start of the instance is not in the client].
+        const Interactions::SpawnedContainer made = m_world.interactions().spawn_container(
+            data.templateIndex, data.position, data.yaw, data.spawner + "/instance/" + std::to_string(instance.id), instance.space, &rows);
+        InstanceCheckpoint checkpoint;
+        checkpoint.index = index;
+        checkpoint.center = data.triggerCenter;
+        checkpoint.radius = data.triggerRadius;
+        checkpoint.cooldown = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(data.cooldown));
+        HomePoint& point = checkpoint.point;
+        if (made.entity != nullptr) {
+            checkpoint.entity = made.entity->id;
+            instance.objects.push_back(made.entity->id);
+            // The reference of the point: the actor of the child, its G, and the facet target of its HomeComponent (K = root XOR G; the
+            // instance id of an entity of the slice is its id XOR K; the target is the instance id plus the component id: protocol notes 4.2).
+            point.actor = made.entity->actor.bytes;
+            point.group = made.entity->id;
+            point.facet = (data.homeEntity ^ (rows.templates()[data.templateIndex].root ^ made.entity->id)) + data.homeComponent;
+        }
+        point.name = data.name;
+        point.position = data.respawn;
+        point.cooldownNs = static_cast<std::uint64_t>(checkpoint.cooldown.count());
+        point.type = data.type;
+        point.id = data.spawner;
+        point.unique = index + 1;
+        instance.checkpoints.push_back(std::move(checkpoint));
+        ++m_counts.checkpointsMade;
+    }
+    return instance.checkpoints.size();
+}
+
+void Instances::look_checkpoints(Instance& instance) {
+    bool changed = false;
+    for (const auto& [characterId, member] : instance.members) {
+        const Entity* character = m_world.find_character(characterId);
+        if (character == nullptr || character->space != instance.space || character->life.dead) {
+            continue;
+        }
+        for (InstanceCheckpoint& checkpoint : instance.checkpoints) {
+            if (checkpoint.active) {
+                continue;
+            }
+            const float dx = character->position.x - checkpoint.center.x;
+            const float dy = character->position.y - checkpoint.center.y;
+            const float dz = character->position.z - checkpoint.center.z;
+            // [data: the sphere of the detection volume of the server facet of the HomeComponent (5 m for a crystal, 30 m for the entrance)]
+            if (dx * dx + dy * dy + dz * dz <= checkpoint.radius * checkpoint.radius) {
+                checkpoint.active = true;
+                changed = true;
+                ++m_counts.checkpointsActivated;
+                log::write("world: character %s activated the checkpoint %s of instance %llu (%s) at %.2f %.2f %.2f", characterId.c_str(),
+                           checkpoint.point.id.c_str(), static_cast<unsigned long long>(instance.id), instance.map.c_str(),
+                           static_cast<double>(checkpoint.center.x), static_cast<double>(checkpoint.center.y),
+                           static_cast<double>(checkpoint.center.z));
+            }
+        }
+    }
+    if (changed) {
+        // [agent] A checkpoint is of the instance: each member gets it (the group of a later stage shares it).
+        for (const auto& [characterId, member] : instance.members) {
+            home_points_changed(characterId);
+        }
+    }
+}
+
+void Instances::home_points_changed(const std::string& characterId) {
+    Entity* character = m_world.find_character(characterId);
+    if (character == nullptr) {
+        return;
+    }
+    std::vector<HomePoint> points;
+    const Instance* instance = instance_of(characterId);
+    if (instance != nullptr && character->space == instance->space) {
+        const InstanceMember& member = instance->members.at(characterId);
+        for (const InstanceCheckpoint& checkpoint : instance->checkpoints) {
+            if (!checkpoint.active) {
+                continue;
+            }
+            HomePoint point = checkpoint.point;
+            const auto used = member.checkpointCooldowns.find(point.id);
+            if (used != member.checkpointCooldowns.end() && used->second > m_world.clock().now()) {
+                point.cooldownEndNs = m_world.clock().wall_time_ns(used->second);
+            }
+            points.push_back(std::move(point));
+        }
+    }
+    // The first list of the world entry comes with the first checkpoint of an instance; a leave sends the empty list.
+    if (!character->homePointsKnown && points.empty() && (instance == nullptr || instance->checkpoints.empty())) {
+        return;
+    }
+    const bool same = character->homePointsKnown && points.size() == character->homePoints.size()
+                      && std::equal(points.begin(), points.end(), character->homePoints.begin(), [](const HomePoint& a, const HomePoint& b) {
+                             return a.id == b.id && a.group == b.group && a.cooldownEndNs == b.cooldownEndNs;
+                         });
+    if (same) {
+        return;
+    }
+    character->homePoints = std::move(points);
+    character->homePointsKnown = true;
+    m_world.touch(character->id, ComponentKey::playerHome);
+}
+
+std::optional<state::WorldPosition> Instances::use_checkpoint(const Entity& character, const std::string& id) {
+    const auto owned = m_byCharacter.find(character.characterId);
+    if (owned == m_byCharacter.end() || id.empty()) {
+        return std::nullopt;
+    }
+    Instance& instance = m_instances.at(owned->second);
+    if (character.space != instance.space) {
+        return std::nullopt;
+    }
+    InstanceMember& member = instance.members.at(character.characterId);
+    for (const InstanceCheckpoint& checkpoint : instance.checkpoints) {
+        if (!checkpoint.active || checkpoint.point.id != id) {
+            continue;
+        }
+        const WorldClock::time_point now = m_world.clock().now();
+        const auto used = member.checkpointCooldowns.find(id);
+        if (used != member.checkpointCooldowns.end() && used->second > now) {
+            // [agent; research death-travel.md 4.5: a request of a dead character is not refused] the start of the map.
+            log::write("world: the checkpoint %s of instance %llu has its cooldown for character %s: the respawn is at the start of the map",
+                       id.c_str(), static_cast<unsigned long long>(instance.id), character.characterId.c_str());
+            return std::nullopt;
+        }
+        member.checkpointCooldowns[id] = now + std::chrono::duration_cast<WorldClock::time_point::duration>(checkpoint.cooldown);
+        ++m_counts.checkpointRespawns;
+        home_points_changed(character.characterId);
+        return checkpoint.point.position;
+    }
+    return std::nullopt;
 }
 
 void Instances::start_content(Instance& instance) {
@@ -343,6 +542,12 @@ void Instances::start_content(Instance& instance) {
         }
     }
     instance.content = instance.content || portals > 0;
+    // Stage DG3: the checkpoints of the mode root of an own level, and the content of its level set (its creatures): the instance then waits
+    // for the timer of its mode when it is empty, and a former member joins it again [data: TimerThresholdDefault; agent].
+    const std::size_t checkpoints = make_checkpoints(instance);
+    const gamedata::LevelData* level = m_world.levels().data_of(instance.space);
+    instance.content = instance.content || checkpoints > 0
+                       || (level != nullptr && level->creature_part().loaded && !level->creatures().spawn_points().empty());
     // Stage QG9d: the quest objects of the mode root (the heartgems of QuestCaerDun): an object of the mode with a template of the kind
     // gathering, a row of the gathering data (gathering-data.json, member encounterObjects), and a game event that a task of the mode names
     // [data; agent: the mode script that makes them is not in the client]. The instance makes each one while a member has its task active
@@ -376,9 +581,11 @@ void Instances::start_content(Instance& instance) {
         m_world.encounters().hold_space(instance.space, true);
     }
     instance.content = instance.content || !instance.questObjects.empty();
-    log::write("world: the content of instance %llu (%s): %zu encounter(s), %zu exit portal(s), %zu quest object(s) of the mode root%s",
+    log::write("world: the content of instance %llu (%s): %zu encounter(s), %zu exit portal(s), %zu quest object(s) of the mode root%s, %zu "
+               "checkpoint(s)%s",
                static_cast<unsigned long long>(instance.id), instance.map.c_str(), encounters, portals, instance.questObjects.size(),
-               instance.held ? " (the encounters wait for them)" : "");
+               instance.held ? " (the encounters wait for them)" : "", checkpoints,
+               instance.content ? "" : "; no content: the instance ends when its last member goes");
 }
 
 void Instances::look_quest_objects(Instance& instance) {
@@ -794,6 +1001,8 @@ void Instances::end_instance(std::uint64_t id, const char* cause) {
         (void)m_world.interactions().remove_object(object);
     }
     const std::size_t removed = m_world.clear_space(space);
+    // Stage DG3: the objects of the level set of the space go (their states are of this space).
+    m_world.interactions().space_ended(space);
     // Stage DG2: the spawn points of the space go; the data of its level stays for a later instance.
     m_world.levels().space_ended(space);
     log::write("world: instance %llu (%s) ended: %s; space %u is free (%zu other entit%s removed)", static_cast<unsigned long long>(id),

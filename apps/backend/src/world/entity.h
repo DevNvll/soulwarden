@@ -253,6 +253,11 @@ enum class ComponentKey {
      * instance (field 0 activeGameModes, one entry) and the flag PlayerCanQuit (field 1). Owner only; after a leave the empty map.
      */
     gameModeParticipant,
+    /**
+     * Stage DG3 (docs/systems/instances.md, the checkpoints): the PlayerHome state of a character (slot 20, type 3652): field 0 homePointList,
+     * the dungeon checkpoints of its instance (respawn type 10). Owner only; after a leave the empty list.
+     */
+    playerHome,
 };
 
 /**
@@ -277,6 +282,31 @@ struct GameModeMembership {
     std::uint32_t mapCrc{0};
     /** W: the time of the entry (the synced wall clock, Unix nanoseconds). */
     std::uint64_t enteredNs{0};
+};
+
+/**
+ * Stage DG3: one element of the home point list of a character (PlayerHome field 0, element reader 0x34FCE70; research death-travel.md 4.2):
+ * a dungeon checkpoint of its instance. The respawn screen of the client shows each point of the type 10 in a mode with
+ * DungeonRespawnsPermitted (0x34ECB00), and the request 1938 names the id of the selected point.
+ */
+struct HomePoint {
+    /** The reference of the point: the actor of its server child, G of it, and the facet target of its home component. */
+    std::array<std::uint8_t, 16> actor{};
+    std::uint64_t group{0};
+    std::uint64_t facet{0};
+    /** The name: a text key ("@Respawn_EntranceName"). */
+    std::string name;
+    /** The respawn place (the place of the entity of its home component). */
+    state::WorldPosition position;
+    /** The cooldown of the point (nanoseconds), and its end (the synced wall clock, Unix nanoseconds; 0: no cooldown). */
+    std::uint64_t cooldownNs{0};
+    std::uint64_t cooldownEndNs{0};
+    /** The respawn type: 10, Dungeon. */
+    std::uint32_t type{10};
+    /** The id text of the request 1938 (1 to 31 bytes: client 0x69128E0 copies it to a buffer of 32 bytes). */
+    std::string id;
+    /** HomePointUniqueId of the UI. */
+    std::uint32_t unique{0};
 };
 
 struct GatherProgress {
@@ -417,11 +447,15 @@ struct LootTrackerEntry {
     state::WorldPosition position;
     std::uint32_t tag{0};
     std::uint8_t selector{0};
+    /** Stage DG3: the space of the entry (a quest gather of a story instance; not on the wire: the encoder sends the entries of the space of
+     *  the character). */
+    SpaceId space{kMainSpace};
 
     bool operator==(const LootTrackerEntry& other) const {
         return actor == other.actor && state == other.state && kind == other.kind && resetTime == other.resetTime
                && lootedTime == other.lootedTime && privileged == other.privileged && position.x == other.position.x
-               && position.y == other.position.y && position.z == other.position.z && tag == other.tag && selector == other.selector;
+               && position.y == other.position.y && position.z == other.position.z && tag == other.tag && selector == other.selector
+               && space == other.space;
     }
 };
 
@@ -448,6 +482,8 @@ struct QuestGatherState {
     std::array<std::uint8_t, 16> actor{};
     state::WorldPosition position;
     std::uint64_t generation{0};
+    /** Stage DG3 (code review of stage DG2, finding DG2R-R3): the space of the gather (its LootTracker entry is of that space only). */
+    SpaceId space{kMainSpace};
 };
 
 /**
@@ -2296,6 +2332,12 @@ struct Entity {
      */
     std::optional<GameModeMembership> gameModeMembership;
     bool gameModeKnown{false};
+    /**
+     * Stage DG3: the home point list of the character (the active checkpoints of its instance), and true after its first list in this world
+     * entry (the state then sends the empty list at a leave). Only the instance system changes them.
+     */
+    std::vector<HomePoint> homePoints;
+    bool homePointsKnown{false};
     bool encounterLinked{false};
     /** The items of the loot bag that the character opened (stage 3.5b.2, slot 76): the loot bag system sets them. */
     Bag selectedContainer;

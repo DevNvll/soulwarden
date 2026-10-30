@@ -1566,13 +1566,14 @@ std::size_t Creatures::reset_spawn_points() {
     return count;
 }
 
-bool Creatures::respawn_at(std::uint32_t spawnPoint, WorldClock::time_point time) {
+bool Creatures::respawn_at(SpaceId space, std::uint32_t spawnPoint, WorldClock::time_point time) {
     load_points();
-    if (spawnPoint >= m_main.points.size()) {
+    SpawnSet* set = set_of(space);
+    if (set == nullptr || spawnPoint >= set->points.size()) {
         return false;
     }
-    if (m_main.points[spawnPoint].waiting) {
-        m_main.points[spawnPoint].respawnAt = time;
+    if (set->points[spawnPoint].waiting) {
+        set->points[spawnPoint].respawnAt = time;
     }
     return true;
 }

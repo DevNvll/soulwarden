@@ -163,7 +163,14 @@ Output (one line of JSON):
    identity of a faction board and the destination of its missions. A backend of before does not read it.
    "instanceObjects" (format 6, stage QG9a): {SLICE PATH: template index, ...}: the server children of the mode root slices of the game
    modes that encounter_recipes.py reads (the exit portal of a story instance, kind dungeonExit), which the instance system of the backend
-   makes in the space of an instance.}
+   makes in the space of an instance.
+   Stage DG3, only in the file of an own level (--level): "modeObjects": [{"mode", "map", "root", "spawner", "slice", "client", "onInit",
+   "onTrigger", "position": [x, y, z]}, ...]: each PrefabSpawner of the mode root slice of each map of the level (SlicePath of the map row:
+   the mode script of the original server makes these children); "checkpoints": [{"mode", "map", "spawner" (the id text of its home point,
+   1 to 31 bytes), "slice", "template" (an index into "templates": a server child), "position", "rotation", "yaw", "respawn": [x, y, z] (the
+   place of the entity of its HomeComponent), "type" (10, Dungeon), "cooldown" (seconds), "name" (a text key), "homeEntity",
+   "homeComponent", "trigger": {"center": [x, y, z], "radius"}}, ...]: the dungeon checkpoints of those spawners. A backend of before does
+   not read them.}
   `key` is the placement UUID (the durable key of the object), `actor` the 32 hexadecimal digits of the actor id,
   `target` and `component` and an option entity 16 hexadecimal digits, `asset` the 32 hexadecimal digits of the slice
   asset id and `sub` its sub id (the metadata state of the record of the object). "options" of a bound are indexes into
@@ -411,9 +418,14 @@ STATION_OPTIONS = ("OpenCraftingOption", "OpenCraftingOptionLevel60", "BindToCam
 # The slice assets of PrefabSpawner children of the retail data that no record of the asset catalog of the game has (stage 2.5b,
 # code review finding ST-R7: the full catalog of build 1.400.6031.6004151 has 1,595,260 records and none of these ids; the spawners
 # Lotus_A, Lotus_B, and Lotus_C of an enclave of r_+04_+02, five uses). The client cannot make them either: they are not server
-# children. Each other concrete asset with no path stops the tool (a broken join).
+# children. Each other concrete asset with no path stops the tool (a broken join). Stage DG3: two assets of own levels whose ids are in no
+# byte of the asset catalog (a search of the raw catalog for both byte orders): the spawners gt_torch_a__spawner, gt_fence_b__spawner, and
+# gt_fence_d__spawner of the art layer of Glacial Tarn (nw_dungeon_greatcleave_00) and the spawner GateArena of the script layer of the
+# trial Q13 (nw_trial_season_02_q13).
 ASSETS_NOT_IN_GAME = frozenset({uuid.UUID("5f3bb00e-2549-523f-9063-98c2c3c132d0"), uuid.UUID("3e227128-6334-5dd2-8929-c12b15a6aadf"),
-                                uuid.UUID("e21df46d-ebfc-57db-82c7-52233ca4ded3")})
+                                uuid.UUID("e21df46d-ebfc-57db-82c7-52233ca4ded3"), uuid.UUID("20457a35-8cf2-5045-b297-ddd46a4e4d18"),
+                                uuid.UUID("2c187551-d6fa-5a7f-891a-3470de222a1c"), uuid.UUID("49e52041-3cc5-596d-b868-111bee9f3958"),
+                                uuid.UUID("909e468b-e74e-5754-95fc-025a3dab6c44")})
 CAUSE_SPAWNER = "a child of a PrefabSpawner that is not a station or a camp, or that the client makes: a later stage"
 CAUSE_EXIT_CHILD_ID_TAKEN = "an exit portal child of a mode root whose client id an earlier child slot has: the first slot keeps the id"
 CAUSE_NOT_IN_GAME = "a child of a PrefabSpawner whose slice asset no record of the asset catalog of the game has (ASSETS_NOT_IN_GAME)"
@@ -650,6 +662,109 @@ def mode_root_slices(sources: Sources, required: bool = True) -> dict[str, dict]
         if mode.lower() in solo and terrain == MAIN_TERRAIN and path:
             roots[path] = {"mode": mode, "map": maps.source(row, "GameModeMapId").strip()}
     return roots
+
+
+def slice_key(name: str) -> str:
+    """Stage DG3: @return The compare form of a slice name: lower case, "/", no start "slices/", no end ".dynamicslice" or ".slice" (the
+    SlicePath of the map of Amrine is "Dungeon/LevelScripts/AmrineDungeon", the capital "slices/dungeon/levelscripts/amrinedungeon")."""
+    key = name.replace("\\", "/").strip().lower()
+    key = key[len("slices/"):] if key.startswith("slices/") else key
+    for end in (".dynamicslice", ".slice"):
+        key = key[:-len(end)] if key.endswith(end) else key
+    return key
+
+
+def level_mode_roots(sources: Sources, terrain: str) -> dict[str, dict]:
+    """Stage DG3: @return The mode root slices of the maps of an own level (each mode, not only the solo modes): the SlicePath of a map row
+    whose CoatlicueName is the terrain of the level (its slice_key), to its mode and its map [data: javelindata_gamemodemaps]."""
+    modes_data = sources.read(MODES_TABLE)
+    maps_data = sources.read(MAPS_TABLE)
+    if maps_data is None or modes_data is None:
+        return {}
+    maps = Sheet(maps_data)
+    if any(column not in maps.columns for column in ("GameModeMapId", "GameModeId", "SlicePath", "CoatlicueName")):
+        raise Failure(f"{MAPS_TABLE} has no column SlicePath or CoatlicueName")
+    roots: dict[str, dict] = {}
+    for row in range(maps.row_count):
+        path = slice_key(maps.source(row, "SlicePath"))
+        if path and maps.source(row, "CoatlicueName").replace("\\", "/").strip().lower() == terrain.lower():
+            roots[path] = {"mode": maps.source(row, "GameModeId").strip(), "map": maps.source(row, "GameModeMapId").strip()}
+    return roots
+
+
+# Stage DG3: the HomeComponent of a dungeon checkpoint (slices/interactobjects/checkpoint/*: m_respawnType 10, m_respawnCooldown 30, the name
+# entity, and the activation volume of its server facet) and the sphere shape of a detection volume.
+HOME_CLASS = uuid.UUID("ce03091e-31ab-1c7a-d543-601b701ea43d")
+DETECTION_CLASS = uuid.UUID("41bc3bb3-ef30-41e4-b751-12c4eab97c0e")
+SPHERE_CLASS = uuid.UUID("e24cbff0-2531-4f8d-a8ab-47af4d54bcd2")
+RESPAWN_TYPE = field_id("m_respawnType")
+RESPAWN_COOLDOWN = field_id("m_respawnCooldown")
+NAME_ENTITY = field_id("m_nameEntity")
+SERVER_FACET = field_id("m_serverFacetPtr")
+SPHERE_RADIUS = field_id("Radius")
+NO_REFERENCE = 0xFFFFFFFF
+DUNGEON_RESPAWN = 10
+
+
+def checkpoint_of(path: str, roots: list[Element]) -> dict | None:
+    """Stage DG3: @return The dungeon checkpoint of a slice (a HomeComponent with the respawn type 10; a home of an other type: only its
+    "type"), in the frame of the slice: the entity
+    and the component id of the home, the place of its entity, the respawn type, the cooldown (seconds), the name (the first text with "@" of
+    the name entity), and the activation volume (the entity of the first reference of the server facet that has a detection volume: its
+    center and the radius of its sphere). None: no such component. A checkpoint with no sphere stops the tool."""
+    entities: dict[int, dict] = {}
+    home = None
+    for root in roots:
+        for element in walk(root):
+            if element.type_id != ENTITY_TYPE:
+                continue
+            entity_id = id_value(child_of(element, ID_FIELD))
+            components = child_of(element, COMPONENTS_FIELD)
+            if entity_id is None or components is None:
+                continue
+            info = {"name": text_of(child_of(element, NAME_FIELD)), "matrix": IDENTITY, "texts": [], "sphere": None, "detection": False}
+            for component in components.children:
+                world = find_field(component, WORLD_TM)
+                if world is not None:
+                    info["matrix"] = matrix_of(world.value, f"{path}: the transform of {info['name']}")
+                if component.type_id == HOME_CLASS and home is None:
+                    home = (entity_id, component)
+                if component.type_id == DETECTION_CLASS:
+                    info["detection"] = True
+                if component.type_id == SPHERE_CLASS:
+                    # Configuration/Radius of the sphere shape component.
+                    radius = next((node for node in walk(component) if node.name == SPHERE_RADIUS and node.value is not None), None)
+                    info["sphere"] = real_of(radius, f"{path}: the sphere of {info['name']}") if radius is not None else None
+                info["texts"] += [text_of(node) for node in walk(component) if node.value and text_of(node).startswith("@")]
+            entities[entity_id] = info
+    if home is None:
+        return None
+    entity_id, component = home
+    kind = whole_of(find_field(component, RESPAWN_TYPE), 4, f"{path}: m_respawnType")
+    if kind != DUNGEON_RESPAWN:
+        # A home of an other respawn type (the spawn points of Battle Royale): no checkpoint of a dungeon.
+        return {"type": kind}
+    cooldown = real_of(find_field(component, RESPAWN_COOLDOWN), f"{path}: m_respawnCooldown")
+    reference = find_field(component, NAME_ENTITY)
+    name_entity = next((int.from_bytes(node.value, "big") for node in walk(reference) if node.value is not None and len(node.value) == 8),
+                       None) if reference is not None else None
+    name = next(iter(entities.get(name_entity, {}).get("texts", [])), "") if name_entity is not None else ""
+    facet = find_field(component, SERVER_FACET)
+    trigger = None
+    for node in walk(facet) if facet is not None else []:
+        if node.value is not None and len(node.value) == 8:
+            target = int.from_bytes(node.value, "big")
+            if target != NO_REFERENCE and entities.get(target, {}).get("detection"):
+                trigger = target
+                break
+    if trigger is None or entities[trigger]["sphere"] is None:
+        raise Failure(f"{path}: the checkpoint has no activation volume with a sphere (the first detection volume of its server facet)")
+    home_matrix = entities[entity_id]["matrix"]
+    trigger_matrix = entities[trigger]["matrix"]
+    component_key = component_id(component)
+    return {"entity": entity_id, "component": component_key or 0, "respawn": (home_matrix[3], home_matrix[7], home_matrix[11]),
+            "type": kind, "cooldown": cooldown, "name": name, "center": (trigger_matrix[3], trigger_matrix[7], trigger_matrix[11]),
+            "radius": entities[trigger]["sphere"]}
 
 
 def actor_of(placement_id: str) -> bytes:
@@ -1553,6 +1668,11 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     person_groups: set[int] = set()
     # Stage QG9d: the mode root slices of the story instances of the main world level (their exit portals that the client makes).
     mode_roots = mode_root_slices(sources, required=False)
+    # Stage DG3: in a file of an own level, the mode roots of its maps: the spawners of each one (modeObjects) and its dungeon checkpoints
+    # (checkpoints: a server child of the instance, its respawn place, and its activation volume).
+    level_roots = level_mode_roots(sources, f"coatlicue/{WORLD}") if not other_worlds else {}
+    mode_objects: list[dict] = []
+    checkpoints: list[dict] = []
     counts.update({"persons": 0, "personsDirect": 0, "personsUnresolved": 0, "personSlotsWithTwoIds": 0, "personsFromTemplate": 0,
                    "personsAlsoOnTrigger": 0, "personsOfLevelScripts": 0, "personSwapStateDiffers": 0, "personsObjectiveFlow": 0})
     # The asset id of each slice path (the catalog of the game): the metadata state of a fixture.
@@ -1903,6 +2023,38 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                         "position": [round(value, 3) for value in place], "assembly": None, "bounds": bounds,
                         "board": {"territory": child.slots["territory"], "provider": dict(child.provider), "spawner": identifier}})
 
+    def mode_root_objects(identifier: str, matrix: tuple[float, ...], template: Template, root: dict) -> None:
+        """Stage DG3: the spawners of the mode root of a map of the level (modeObjects: the name, the child slice, the flags, the place) and
+        its dungeon checkpoints (a child slice with a HomeComponent of the respawn type 10). The mode script of the original server makes
+        these children (m_spawnOnInitialize 0); the instance system of the backend makes the checkpoints at the start of an instance."""
+        for spawner in template.spawner_list:
+            child_path = catalog.path(spawner["asset"]) if spawner["asset"] is not None else None
+            world = multiply(matrix, template.matrices.get(spawner["entity"], IDENTITY))
+            place = [round(world[3], 4), round(world[7], 4), round(world[11], 4)]
+            mode_objects.append({"mode": root["mode"], "map": root["map"], "root": identifier, "spawner": spawner["name"],
+                                 "slice": child_path or "", "client": spawner["client"], "onInit": spawner["onInit"],
+                                 "onTrigger": spawner["onTrigger"], "position": place})
+            if child_path is None or spawner["client"]:
+                continue
+            point = checkpoint_of(child_path, sources.stream(child_path) or [])
+            if point is None or point["type"] != DUNGEON_RESPAWN:
+                continue
+            spawner_name = spawner["name"].strip()
+            if not spawner_name or len(spawner_name.encode("utf-8")) > 31:
+                # The id of a home point is at most 31 bytes (client 0x69128E0 copies it to a buffer of 32 bytes; research death-travel.md 4.2).
+                raise Failure(f"the mode root {identifier}: the checkpoint spawner {spawner_name!r} has no name of 1 to 31 bytes")
+            respawn = apply(world, point["respawn"])
+            center = apply(world, point["center"])
+            quaternion = quaternion_of(world)
+            yaw = math.degrees(math.atan2(world[4], world[0])) % 360.0
+            checkpoints.append({"mode": root["mode"], "map": root["map"], "spawner": spawner_name, "slice": child_path,
+                                "template": template_entry(child_path, spawner["asset"]), "position": place,
+                                "rotation": [round(value, 6) for value in quaternion], "yaw": round(yaw, 3),
+                                "respawn": [round(value, 4) for value in respawn], "type": point["type"],
+                                "cooldown": round(point["cooldown"], 3), "name": point["name"],
+                                "homeEntity": f"{point['entity']:016x}", "homeComponent": f"{point['component']:016x}",
+                                "trigger": {"center": [round(value, 4) for value in center], "radius": round(point["radius"], 4)}})
+
     def template_entry(slice_path: str, asset: tuple[bytes, int] | None, depth: int = 0) -> int:
         """@return The index of the template of a slice in "templates" (with its server children)."""
         if slice_path in template_index:
@@ -2018,6 +2170,9 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 keys[identifier] = normal
                 group = group_of(actor)
                 matrix = placement_matrix(placement.get("rotation") or {}, position)
+                level_root = level_roots.get(slice_key(slice_name))
+                if level_root is not None:
+                    mode_root_objects(identifier, matrix, template, level_root)
                 # The server children of the placement: its stations and its camp (stage 2.5b).
                 for spawner in template.spawner_list:
                     if spawner["client"]:
@@ -2261,7 +2416,10 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     objects.sort(key=lambda entry: (entry["region"], entry["position"][0], entry["position"][1], entry["key"]))
     spawned.sort(key=lambda entry: (entry["region"], entry["position"][0], entry["position"][1], entry["key"]))
     counts["unresolvedNames"] = len(unresolved)
-    return {"format": FORMAT, "world": WORLD, "counts": counts, "excluded": dict(sorted(excluded.items())),
+    counts["modeObjects"] = len(mode_objects)
+    counts["checkpoints"] = len(checkpoints)
+    level_members = {"modeObjects": mode_objects, "checkpoints": checkpoints} if not other_worlds else {}
+    return {"format": FORMAT, "world": WORLD, "counts": counts, "excluded": dict(sorted(excluded.items())), **level_members,
             "unresolved": dict(sorted(unresolved.items())), "options": option_list, "achievements": achievement_list,
             "templates": template_list, "spawned": spawned, "fixtures": fixtures, "lootContainers": loot_containers, "objects": objects,
             "personsApart": apart, "encounterObjects": encounter_objects, "claims": {str(key): value for key, value in claim_map.items()},

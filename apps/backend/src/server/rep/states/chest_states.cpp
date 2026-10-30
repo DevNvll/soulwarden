@@ -75,7 +75,13 @@ std::vector<hub::Bytes> encode_loot_tracker_state(const world::Entity& entity, V
     // stage DG1, finding DG1R-R3: they are objects of the main world: a character in an instance gets none of them.
     if (entity.space == world::kMainSpace) {
         entries.insert(entries.end(), entity.questObjectTracker.begin(), entity.questObjectTracker.end());
-        entries.insert(entries.end(), entity.questGatherTracker.begin(), entity.questGatherTracker.end()); // Stage QG5a.
+    }
+    // Stage QG5a: the gathered quest objects. Stage DG3 (code review of stage DG2, finding DG2R-R3): the entries of the space of the
+    // character only (a gather in a story instance has the space of the instance; a gather of the main world the main world).
+    for (const world::LootTrackerEntry& entry : entity.questGatherTracker) {
+        if (entry.space == entity.space) {
+            entries.push_back(entry);
+        }
     }
     StateWriter state(kTrackerGroups);
     hub::Writer& map = state.field(0, 0);

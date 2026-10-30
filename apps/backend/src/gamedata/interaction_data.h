@@ -405,6 +405,35 @@ struct LookupWork {
     std::uint64_t bounds{0};
 };
 
+/**
+ * Stage DG3 (docs/systems/instances.md, "The checkpoints of an expedition"): a dungeon checkpoint of the mode root of a map of an own level
+ * (the member checkpoints of the level file: interactions.py --level): a PrefabSpawner of the mode root (m_spawnOnInitialize 0: the mode
+ * script of the original server makes it) whose slice has a HomeComponent of the respawn type 10 [data].
+ */
+struct ModeCheckpoint {
+    std::string mode;
+    std::string map;
+    /** The name of the spawner (Checkpoint_Entrance): the id text of its home point (1 to 31 bytes). */
+    std::string spawner;
+    std::string slice;
+    /** The template of its server child (an index into templates()), its place, and its yaw (degrees). */
+    std::uint32_t templateIndex{0};
+    state::WorldPosition position;
+    float yaw{0.0F};
+    /** The respawn place: the place of the entity of the HomeComponent. */
+    state::WorldPosition respawn;
+    /** m_respawnType (10), m_respawnCooldown (seconds), the name of the name entity ("@Respawn_EntranceName"). */
+    std::uint32_t type{10};
+    float cooldown{0.0F};
+    std::string name;
+    /** The entity of the HomeComponent and the id of the component in the frame of the slice (the facet target of the home point). */
+    std::uint64_t homeEntity{0};
+    std::uint64_t homeComponent{0};
+    /** The activation volume: the sphere of the detection volume of the server facet of the home (its center and radius). */
+    state::WorldPosition triggerCenter;
+    float triggerRadius{0.0F};
+};
+
 class InteractionData {
 public:
     /** Edge of a cell of the grid (meters). */
@@ -478,6 +507,14 @@ public:
     [[nodiscard]] std::optional<std::uint32_t> instance_object(std::string_view slice) const;
     /** Stage QG9a: sets the server children of the mode root slices (tests; the indexes are not checked). */
     void set_instance_objects(std::map<std::string, std::uint32_t, std::less<>> objects);
+    /** Stage DG3 (the member checkpoints of the file of an own level): the dungeon checkpoints of the mode roots of its maps. */
+    [[nodiscard]] const std::vector<ModeCheckpoint>& checkpoints() const {
+        return m_checkpoints;
+    }
+    /** Stage DG3: sets the checkpoints (tests; the template indexes are not checked). */
+    void set_checkpoints(std::vector<ModeCheckpoint> checkpoints) {
+        m_checkpoints = std::move(checkpoints);
+    }
     /**
      * Sets the start objects (the member encounterObjects; tests). @return False (no change) for an index that is not a template, or a
      * variation slot that is above 4095 or is a slot of an other state of the template.
@@ -559,6 +596,7 @@ private:
     /** Stage QG5c2: the template of each start object of the encounter recipes (the lower-case slice path). */
     std::map<std::string, EncounterObject, std::less<>> m_encounterObjects;
     std::map<std::string, std::uint32_t, std::less<>> m_instanceObjects;
+    std::vector<ModeCheckpoint> m_checkpoints;
     /** Stage QG6b: the claim of each territory (the member claims). */
     std::map<std::uint16_t, std::array<std::uint8_t, 16>> m_claims;
     /** Stage QG4: the persons apart, and the lower-case NPC id to their positions. */

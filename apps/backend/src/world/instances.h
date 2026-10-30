@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -13,6 +14,7 @@
 
 #include "gamedata/game_modes.h"
 #include "state/store.h"
+#include "world/entity.h"
 #include "world/ids.h"
 #include "world/world_clock.h"
 
@@ -33,8 +35,9 @@
 // that ends in an instance does the exit (decision D9 of research dungeons.md, an orchestrator pick: a disconnect in an instance brings the
 // character back to its return place).
 //
-// This stage has no content in an instance (no creature, no object, no level data: stage DG2). The entry is the development command
-// "instance enter" (the development routes, with the harness gate) until stage DG3 gives the entrance of the game.
+// Stage DG1 had no content in an instance; stage DG2 gives an own level its level data, stage QG9a the entrance of a story mode, and
+// stage DG3 the entrance of an expedition (its checks, its checkpoints, the objects of its level set). The development command
+// "instance enter" (the development routes, with the harness gate) stays.
 
 namespace soulwarden::backend::gamedata {
 struct DungeonEntrance;
@@ -53,11 +56,26 @@ class InteractionHandler;
  */
 namespace dungeon_result {
 inline constexpr std::uint32_t kSuccess = 0;
+/** Stage DG3: the group is smaller than the minimum group size of the entry (decision D7: 1). */
+inline constexpr std::uint32_t kNotEnoughMembers = 1;
+/** Stage DG3: the mode needs an item of RequiredConsumableItemClasses. */
+inline constexpr std::uint32_t kMissingReqItem = 3;
+/** Stage DG3: the group has more members than TeamCapacity of the mode. */
+inline constexpr std::uint32_t kTooManyMembers = 5;
 inline constexpr std::uint32_t kSoloGroupFailure = 7;
 inline constexpr std::uint32_t kPendingActivation = 8;
 inline constexpr std::uint32_t kEntranceActivationFailure = 10;
 inline constexpr std::uint32_t kGroupAlreadyInDungeon = 11;
+/** Stage DG3: a mutation tier (the difficulty 1 to 3 of the request) that the mode or the character does not have. */
+inline constexpr std::uint32_t kMutationDifficultyReq = 14;
 } // namespace dungeon_result
+
+/**
+ * Stage DG3 (decision D7 of research dungeons.md, an orchestrator pick that the user can change): the minimum group size of an entry is 1
+ * for each mode; MinGroupSize of the data is 3 for each expedition, and the client checks it only while its remote setting
+ * javelin.enable-dungeon-group-restriction is true (the backend sends false: server/http/routes.h).
+ */
+inline constexpr std::uint32_t kMinimumGroupSize = 1;
 
 /** Stage QG9a: why a member left its instance (the log and the counts). */
 enum class InstanceLeave : std::uint8_t {
@@ -90,6 +108,27 @@ struct InstanceMember {
     /** The place in the main world where the character goes at the exit: its position at the entry. */
     state::WorldPosition returnPlace;
     WorldClock::time_point entered{};
+    /** Stage DG3: the end of the cooldown of each checkpoint that the member used for a respawn (the id of the checkpoint). */
+    std::map<std::string, WorldClock::time_point> checkpointCooldowns;
+};
+
+/**
+ * Stage DG3 (docs/systems/instances.md, "The checkpoints of an expedition"): a dungeon checkpoint of the instance: a checkpoint of the mode
+ * root of its map in the level set (gamedata::ModeCheckpoint), its server child, its home point (the reference, the name, the respawn place,
+ * the cooldown, the id), and its activation. A member that comes into its activation sphere activates it for the instance [data: the
+ * detection volume of the server facet of its HomeComponent]; each member then has it in its home point list.
+ */
+struct InstanceCheckpoint {
+    /** The index of the checkpoint in the checkpoints of the level set. */
+    std::uint32_t index{0};
+    /** The server child of the checkpoint (0: not made). */
+    EntityId entity{0};
+    /** The home point (cooldownEndNs 0: the list of a member sets it). */
+    HomePoint point;
+    state::WorldPosition center;
+    float radius{0.0F};
+    std::chrono::nanoseconds cooldown{0};
+    bool active{false};
 };
 
 /**
@@ -145,6 +184,8 @@ struct Instance {
     EntityId modeEntity{0};
     /** Stage QG9d: the quest objects of the mode root (InstanceQuestObject). */
     std::vector<InstanceQuestObject> questObjects;
+    /** Stage DG3: the dungeon checkpoints of the mode root of its map (an own level with a level set). */
+    std::vector<InstanceCheckpoint> checkpoints;
     /**
      * Stage QG9d: the encounters of the mode wait (Encounters::hold_space) until each quest object is gathered or a member has an active
      * task of the mode that names a recipe of the space (a later step of the quest: an entry after the objects).
@@ -213,6 +254,10 @@ struct InstanceCounts {
     std::uint64_t questObjectsGathered{0};
     /** Code review of stage QG9d, finding QG9DR-R3: the gathered quest objects whose task a member has again (a reset): made again. */
     std::uint64_t questObjectsAgain{0};
+    /** Stage DG3: the checkpoints that the instances made, that a member activated, and the respawns at a checkpoint. */
+    std::uint64_t checkpointsMade{0};
+    std::uint64_t checkpointsActivated{0};
+    std::uint64_t checkpointRespawns{0};
 };
 
 class Instances {
@@ -249,7 +294,17 @@ public:
      * (Encounters::runs_mode), the character is in the main world and in no instance, and its level is RequiredLevel of the mode or more.
      * @return The result of 3094 (dungeon_result).
      */
-    [[nodiscard]] std::uint32_t entrance_result(const Entity& character, const gamedata::DungeonEntrance& entrance) const;
+    [[nodiscard]] std::uint32_t entrance_result(const Entity& character, const gamedata::DungeonEntrance& entrance,
+                                                std::uint32_t difficulty = 0) const;
+    /** Stage DG3: @return The number of the group of a character for an entry (the backend has no group: 1, the character). */
+    [[nodiscard]] std::uint32_t group_size(const Entity& character) const;
+    /**
+     * Stage DG3: @return True when the backend runs the content of a mode (the one rule of the entrance and of the support manifest): the
+     * game modes have one map of the mode, and an expedition (IsDungeon) of an own level has an accepted data set of its level
+     * (Levels::available, the first read of the set), each other mode the content of the encounter system (Encounters::runs_mode). The
+     * setting of QuestMedusa is a check of its own.
+     */
+    [[nodiscard]] bool mode_runs(std::string_view mode) const;
     /**
      * Stage QG9a: the entry of a character at the entrance of a mode: it joins again the empty instance of the mode that it left (the timer
      * of the instance runs), else it enters a new instance (enter). The checks of entrance_result first.
@@ -269,6 +324,13 @@ public:
     [[nodiscard]] const std::string* quest_object(EntityId object) const;
     /** Stage QG9d: the gather of a quest object completed (its events went to the gatherer): the object goes in the next tick. */
     void quest_object_gathered(EntityId object);
+    /**
+     * Stage DG3: the respawn of a dead member at the checkpoint of its instance with this id (the request 1938 with random 0 and the id of a
+     * home point). @return The respawn place of the checkpoint, or no value: no such active checkpoint of the instance of the character, or
+     * its cooldown for this member runs (the caller then takes the start of the map). A respawn at a checkpoint starts its cooldown for the
+     * member (m_respawnCooldown of its HomeComponent), and the home point list of the member shows it.
+     */
+    [[nodiscard]] std::optional<state::WorldPosition> use_checkpoint(const Entity& character, const std::string& id);
 
     /**
      * The entity of a member leaves the world (World::remove_entity: a session that ended, a removal; decision D9): the exit rows, the
@@ -313,6 +375,12 @@ private:
     void start_content(Instance& instance);
     /** Stage QG9d: the quest objects of an instance: make one whose task a member has, remove a gathered one, end the wait of the encounters. */
     void look_quest_objects(Instance& instance);
+    /** Stage DG3: the checkpoints of the mode root of a new instance of an own level (their server children and their home points). */
+    std::size_t make_checkpoints(Instance& instance);
+    /** Stage DG3: a member in the activation sphere of a checkpoint activates it; then the list of each member. */
+    void look_checkpoints(Instance& instance);
+    /** Stage DG3: the home point list of a character: the active checkpoints of its instance (none after its leave). */
+    void home_points_changed(const std::string& characterId);
     /**
      * Stage QG9a: the membership of a character changed: its GameModeParticipant state (the entry of its instance, or none) and its
      * TaskGameMode tasks.

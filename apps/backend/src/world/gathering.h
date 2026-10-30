@@ -109,6 +109,12 @@ struct GatherNode {
     /** The source of its identity and its version ("capital", "distribution:VERSION", "body"). */
     std::string source;
     state::WorldPosition position;
+    /**
+     * Stage DG3: the space of the state of a capital node that a character gathered in a space that is not the main world (a level object of
+     * the main world level in a story instance: InteractionContext::levelSpace). kMainSpace: the node of the main world. A node of a space
+     * has no entity and no row of the store (its space ends with the backend).
+     */
+    SpaceId space{kMainSpace};
     bool depleted{false};
     std::uint64_t generation{0};
     /** The respawn on the world clock and on the run clock of the world. */
@@ -382,6 +388,8 @@ private:
         EntityId group{0};
         std::string source;
         state::WorldPosition position;
+        /** Stage DG3: the space of the state of the node (GatherNode::space). */
+        SpaceId space{kMainSpace};
         /** Stage 1.8c: the InteractTag of a quest object (lower case), and InteractOnlyOnQuest. */
         std::string interactTag;
         bool onlyOnQuest{false};

@@ -254,6 +254,12 @@ The source of each rule is in brackets: game data, client code, live check (the 
   event no event table has is a quest row (`quest`: `Werewolf_Lord_Safe_Zone_interact`, an event of the quests, no trade skill experience)
   [agent: the rule of the quest rows of stage 1.8c]. A start object whose row the tool cannot take (BaseGatherTime 0: `Medea_Crystal`) is
   left out with a message; the recipe that needs it is refused [agent].
+- Stage DG3 (code review of stage DG2, findings DG2R-R2 and DG2R-R3; [Interactions](interactions.md), "A level object in a space"): a level
+  object that a character gathers in a space that is not the main world (the statue of Taurus in QuestMedusa) is a capital node of that
+  space: its key has the space (`KEY/space/N`), its depletion and the claim of a quest gather are of that space only, and it has no row of
+  the store and no entity (no node state goes to a session of the main world). A quest gather keeps its space
+  (`QuestGatherState::space`): its LootTracker entry Looted goes to the gatherer only while the gatherer is in that space; the entries of the
+  destroyed quest objects of the main world stay only in the main world [agent; cases DG2R2, DG2R3].
 
 ## Commands
 

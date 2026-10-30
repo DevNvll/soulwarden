@@ -216,6 +216,8 @@ struct InteractionBlock {
     std::uint8_t committedByte{0xFF};
     /** The text +0x48 (a test of the limit of a text). */
     std::string text48;
+    /** Stage DG3: the u32 +0x70 (the difficulty of an entry at the entrance of a game mode). */
+    std::uint32_t difficulty{0};
 };
 
 /** Writes a present interaction block (client writer at image RVA 0x35E67E0). */
@@ -229,7 +231,7 @@ inline void write_interaction_block(server::hub::Writer& out, const InteractionB
     out.u64(block.optionEntity);
     out.u32(0);
     out.string(block.text48);
-    out.u32(0);
+    out.u32(block.difficulty);
     out.u32(0);
     out.f32(0.0F);
     out.u8(block.committedByte != 0xFF ? block.committedByte : block.committed ? 1 : 0);

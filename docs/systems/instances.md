@@ -22,6 +22,8 @@ section 3.5 for the account rule). The encounter of a mode is in [Encounters](en
 | Stage DG2: the level data of an own level (its set, its read at the first space of the level, the spawn points of each space, the navigation of each level) | the section "The level data of an own level (stage DG2)" below, `gamedata/level_data.h` (`LevelData`, `LevelFolder`, `LevelSource`), `world/levels.h` (`Levels`), `World::navigation(space)`, `world/creatures.h` (`SpawnSet`, `level_space_started`, `data_of`), `tools/gamedata/level.sh` (`level_data.py`, `check_level_tool.py`), test cases LV1 to LV5 (`tests/level_tests.cpp`) |
 | Stage DG2, part 5: a level object of the main world level in a story instance (the statue of Taurus) | `world/interactions.cpp` (`check`), test case LV6 (`tests/story_level_object_tests.cpp`) |
 | Stage DG2: the corrections of the code review of stage QG9d (the floor wait of a spawn, a quest object after a reset) | `world/encounters.cpp` (`spawn`, the end rule), `world/instances.cpp` (`look_quest_objects`), `tests/review_qg9d_tests.cpp` (cases QG9DR1 to QG9DR3) |
+| Stage DG3: the expeditions (the entry at the entrance and its checks, the checkpoints and the PlayerHome state, the objects of a level set, the leave, a disconnect, the end of an empty instance) | the section "The expeditions (stage DG3)" below, `world/instances.cpp` (`entrance_result`, `group_size`, `make_checkpoints`, `look_checkpoints`, `home_points_changed`, `use_checkpoint`), `world/levels.h` (`Levels::available`), `gamedata/interaction_data.h` (`ModeCheckpoint`), `server/rep/states/player_home_state.cpp`, `world/health.cpp` (`respawn`), `tools/gamedata/interactions.py` (`level_mode_roots`, `checkpoint_of`, `mode_root_objects`), test cases DG3E1, DG3C1, DG3L1, DG3D1 (`tests/expedition_tests.cpp`) |
+| Stage DG3: the corrections of the code review of stage DG2 | `tests/review_dg2_tests.cpp` (cases DG2R1 to DG2R5), [Interactions](interactions.md) ("A level object in a space"), [Navigation](navigation.md) |
 | Stage QG9d: the quest objects of a mode root, the exit portal of a mode root that the client makes | `world/instances.cpp` (`InstanceQuestObject`, `look_quest_objects`, `quest_object`, `start_content`), `world/interactions.cpp` (`check`), `gamedata/interaction_data.h` (`InteractionObject::exitMode`), `tools/gamedata/interactions.py` (`exit_children`, `mode_root_slices`), `tools/gamedata/gathering.py` (`instance_object_form`, `instance_capital`), test cases QG9D2, QG9D3 (`tests/story_mode_qg9d_tests.cpp`), the section "The story instances of stage QG9d" below |
 | The other story instances (stage QG9b), the corrections of the code review of stage QG9a | the section "The other story instances" below, `world/instances.cpp` (`exit_pending`, `m_unrecovered`, the `committed` call of `enter_mode`), `world/quests.cpp` (`predicate`, `mode_task_active`), `world/abilities.cpp` (`space_left`), `tests/review_qg9a_tests.cpp` (cases QG9AR1 to QG9AR6, QG9ARC), `tests/story_mode_tests.cpp` (SY1 to SY5; SY5: the setting of QuestMedusa, `encounter_rules::kQuestMedusaRuns`, `World::set_quest_medusa`) |
 
@@ -129,7 +131,8 @@ agent of stage DG1 where the client and the data do not decide, [orchestrator] a
   next start: in one transaction each character of a row gets its return place, and the row goes [agent; live: the backend of the run was
   stopped with `kill -9` in Amrine; the next start wrote "instance 3 (DungeonAmrine) of an earlier start ended with the backend stop", and
   the login was at the return place].
-- A respawn in an instance is at the start of its map, in its space [agent: the checkpoints (respawn type 10) are stage DG3].
+- A respawn in an instance is at the start of its map, in its space [agent]. Stage DG3: the respawn screen of an expedition names the
+  checkpoints of the instance (the section "The expeditions (stage DG3)"); its random row (the dungeon entrance) is the start of the map.
 - An instance of a different level has the content of the data set of its level (stage DG2, the section below); with no set it has no
   content. A creature of a command near a character in an instance is refused (409) [agent].
 - A map whose level is the main world (the story instances in `newworld_vitaeeterna`, for example QuestMedea) is an instance with its own
@@ -341,11 +344,9 @@ DG2 (`~/Games/soulwarden/work/evidence/dungeons/dg2/implement/`).
   level have the navigation of the main world; a space of an own level has the navigation of its set, or a navigation with no data (no
   ground, no wall). Each place of a creature, each path, each line test, each slide, and each floor of a spawn uses the navigation of the
   space of its subject [agent; case LV3: the floor of the level (30 m) and of the main world (22 m) at the same coordinates].
-- The interaction objects of a level set are read (the part, its count), and the interaction system does not use them yet: a request in an
-  own level gets the rules of stage DG1 (an unknown object) [agent: the interaction system has one catalog of the objects, the options, and
-  the achievements, and the states of its objects by index; a second catalog is a change of each handler: stage DG3, with the exit portal
-  stone of Amrine]. The chests of the layers of a level: the chest tool writes none for Amrine (its chests are objects of its mode root,
-  stage DG5).
+- The interaction objects of a level set: stage DG3 uses them (a lore page, the exit stone of Amrine; [Interactions](interactions.md), "A
+  level object in a space"). The chests of the layers of a level: the chest tool writes none for Amrine (its chests are objects of its mode
+  root, stage DG5).
 - The encounters of an own level (the encounter entries of its layers, the recipes of its mode root) are not in the set: stage DG5
   (expeditions) and QG9e (the solo story levels) [orchestrator scope].
 
@@ -366,6 +367,103 @@ root (the encounter entries of its layers) [data].
   `TeleportDestination` entity [data]. No task of the mode names it, the interaction data has no such object (the tool has no kind of a
   teleporter), and the backend has no handler of action 82 in any space: the request stays refused (unknown object). The leave of the trial
   is its exit portal [agent: a teleporter is a later stage].
+
+### The expeditions (stage DG3)
+
+The sources: research dungeons.md (sections 3.3, 7, and 8), research expeditions.md, research death-travel.md (sections 4.2 to 4.5), the
+static read E of stage QG9a, and the evidence of stage DG3 (`~/Games/soulwarden/work/evidence/dungeons/dg3/implement/`). The picks of the
+orchestrator that the user can change: D7 (one player can enter each expedition), D8 (a space in the one world), D9 (a disconnect: the
+return place), D10 (Amrine first).
+
+The entry at the entrance:
+
+- The entrance of an expedition is a level object of the main world of the kind `dungeonEntrance` (the door of Amrine at 9306.0 3214.9
+  90.0, mode `DungeonAmrine`). OpenDungeonMenu (action 71) opens the expedition screen of the client; its button "Enter With Group" sends
+  1589 with action 72, base action 71, and the difficulty at the record +0x70 (0: the normal mode; 1 to 3: a mutation tier) [client
+  0x49A0F5A, 0x4912410; live].
+- The remote settings document of the backend sets `javelin.enable-dungeon-group-restriction` false (registered with true at 0x617DFA9):
+  the screen then shows "Minimum Players: 3" with a check and gives the button to one player [client; orchestrator: decision D7; live].
+- The checks of an entry (`Instances::entrance_result`), in this order. A refusal sends 3094 with its value at once and changes nothing (no
+  row, no move; rule MP-5):
+
+| Check | Result | Source |
+| --- | --- | --- |
+| The game modes have one map of the mode of the entrance | 10 EntranceActivationFailure | [data; stage QG9a] |
+| The character is in the main world and in no instance | 11 GroupAlreadyInDungeon | [stage QG9a] |
+| The difficulty is 0. A tier of a mode with IsMutable 0, or of a mutable mode (the backend has no mutation: stage DG7) | 14 MutationDifficultyReq | [data: IsMutable, the tiers of DifficultyProgressionId; agent: the value] |
+| The level of the character is RequiredLevel of the mode or more | 10 | [data; stage QG9a: the enum has no value for a level] |
+| The character has the achievements of EntryAchievementConditional (the reader of the quests) | 10 | [data; the queue HUD of the client tests it too] |
+| RequiredConsumableItemClasses of the mode is empty (no row of the supported build has a class) | 3 MissingReqItem | [data; agent: no check of an item class yet] |
+| The group (`Instances::group_size`: 1, the backend has no group) is the minimum (`kMinimumGroupSize` 1) or more, and TeamCapacity or less | 1 NotEnoughMembers, 5 TooManyMembers | [orchestrator: decision D7; data: TeamCapacity] |
+| The setting of QuestMedusa | 10 | [stage QG9b] |
+| An expedition (IsDungeon) of an own level: the level has an accepted data set (`Levels::available`, the first read of the set) | 10 | [orchestrator scope: the encounters are stage DG5; agent] |
+| Each other mode: the encounter system runs its content | 10 | [stage QG9a] |
+
+- No gear score rule: the mode rows have no gear score for an entry at a door (GearScoreOverride and GearScoreRecommended are 0;
+  MatchmakingMinGS is of the queue). The required item of the Enter option (KeyAmrine) has the count 0: no item [data]. The screen shows
+  "Requires 1 Azoth Staff" as an information line, not a check [live].
+- The success: the rule of stage QG9a (3094 with 0 after the commit of the rows, then the move). The client needs no PlayerArena and no
+  GroupData state for one player: the screen closed, the level loaded, the HUD and the respawn screen worked with neither [live].
+
+The content of an expedition:
+
+- An expedition of an own level runs with the content of its level set: its creatures, its navigation, the objects of its capitals, and its
+  checkpoints. Its encounters and bosses are stage DG5 (the instance has 0 encounters). An instance of an own level with creatures or
+  checkpoints has content: it waits empty for TimerThresholdDefault of its mode (600 s), and a former member joins it again at the entrance
+  [data; agent; live: the exit stone, then the door: "enters instance 1" again].
+- The objects of the mode root of Amrine (43 PrefabSpawners: the doors, the light bridge, the pressure plates, the encounters, the chests,
+  the checkpoints, the exit portal of the boss room, the names of the rooms) have m_spawnOnInitialize 0 and server authority; only
+  `Area_Music` (an audio slice) spawns at the init [data: `modeObjects` of the level file]. The client makes none of them, and the data has
+  no rule of their time: the mode script of the original server makes them. The backend makes the checkpoints at the start of an instance
+  (below) [agent]; the other objects are objects of the encounter runner (stage DG5). 24 of the 51 spawn points of Amrine have no free
+  floor of the navigation data within 2 m of their height (near the doors, the plates, the light bridge, the chamber): their creatures do
+  not walk (the evidence `logs/a3-points-no-floor.txt`).
+
+The checkpoints:
+
+- A checkpoint of a mode root is a spawner whose slice has a HomeComponent with m_respawnType 10 (Dungeon): Amrine has three
+  (`Checkpoint_Entrance`, `Checkpoint_Vestibule`, `Checkpoint_Boss`). The level tool writes each one (`checkpoints` of the level file):
+  its server child, its respawn place (the entity of the HomeComponent), m_respawnCooldown (30 s), the name of its name entity
+  (`@Respawn_EntranceName`, `@Respawn_ShrineName`), and its activation volume (the sphere of the detection volume of the server facet of
+  the HomeComponent: 30 m for the entrance, 5 m for a crystal) [data].
+- The instance makes a server child of each checkpoint of its mode and map at its start (the crystal shows; the client shows it only after
+  the record of the server) [agent: the mode script that spawns it is not in the client].
+- A member that comes into the activation sphere activates the checkpoint for the instance (each member gets it) [data: the volume; agent:
+  the instance shares it]. The tick looks only at the instances with checkpoints and their members (rule MP-8).
+- The PlayerHome state of the owner (slot 20, type 3652; protocol notes 4.68) has the active checkpoints of its instance: the reference
+  of the server child (its actor, G, the facet target of the HomeComponent by the XOR rule), the name, the respawn place, the cooldown, the
+  end of its cooldown for this member, the type 10, the id (the name of the spawner, 31 bytes or less: client 0x69128E0), and a unique
+  number. A character of the main world gets no fragment (its respawn screen keeps its random row); a leave sends the empty list
+  [client 0x34FD5F0, 0x34ECB00; live: "Expedition Entrance 8m Ready", then "Shrine 6m" and "Expedition Entrance 206m"].
+- The respawn request 1938 with random 0 and the id of an active checkpoint of the instance of the character: the character lives again at
+  its respawn place in its space, and the cooldown of that checkpoint starts for the character (its element shows the end) [data:
+  m_respawnCooldown; client: the confirm "This will put this respawn position in cooldown"; live]. An id that is not an active checkpoint of
+  the instance of the character, or a checkpoint in its cooldown: the start of the map [agent; research death-travel.md 4.5: a request of a
+  dead character is not refused]. The random row (the dungeon entrance) is the start of the map.
+
+The objects of a level set and the leave:
+
+- A lore page and the exit stone of the level set of Amrine are level objects of the space of the instance: [Interactions](interactions.md),
+  "A level object in a space". The exit stone (`interactobject_portalstone`, a capital of the level next to the start; ExitDungeon, a hold
+  of the key E) is the leave of an expedition with the rows of an exit [data; live]. The exit portal of the boss room (`PortalStoneInteract`
+  of the mode root) is an object of the encounter runner (stage DG5).
+- The leave button of the game menu has no text in an expedition and sends nothing: the mode row of Amrine has no QuitButtonTextId and no
+  LeaveTitleTextId [data; live]. 3309 and 1980 work as in stage QG9a.
+- A disconnect in an instance (Exit to Main Menu): the exit rows; the next world entry is at the return place (decision D9); the instance
+  waits for the time of its mode, and the entrance joins it again [orchestrator: D9; live].
+
+The compass in an own level (open problem P6 of research DG0; not corrected):
+
+- The compass name of a dungeon comes from the GameModeParticipant state: `OnEnteredGameMode` of `lyshineui/compass/compass.luac` sets the
+  display name of the mode row (`@dungeon_amrine_title`) when the row has IsDungeon; a later callback of the territory
+  (`Hud.LocalPlayer.CurrentAreaTerritory.SmallestContainingId`, `SetTerritoryData`) can put a name back [client: static read COMPASS of
+  stage DG3, `~/Games/soulwarden/work/evidence/dungeons/dg3/implement/static/compass/ANSWERS.md`]. The room names of the mode root of
+  Amrine (`icon_dungeon_amrine_*`) are map labels (ShowOnMapUIComponent: "Show on compass?" false): no server object of the compass.
+- Live: in an own level the compass keeps the name of the last place of the main world ("OXBORO" in Garden of Genesis after the inn of
+  Oxboro; "THE AMRINE EXCAVATION" in Amrine after its door). The state again with a newer revision after the load (`tools/world touch`)
+  does not change it [live]. The native apply 0x32B78C0 has two gates before the entry notification (the map row of M at 0x32B79DF, and
+  0x296B170 for a map row with a CoatlicueName at 0x32B7A0B) [client]. Which gate or callback keeps the old name needs a live trace of the
+  client (a later stage); the backend sends the state that the client reads for this name [agent].
 
 ### The paths across two spaces (the code review of stage DG1)
 
@@ -393,20 +491,22 @@ Stage QG9a corrected each one; cases DG1R1 to DG1R8 fail on the tree of stage DG
 tools/world instance maps [TEXT]                 # the maps of the game modes (game-modes.json)
 tools/world instance enter CHARACTER MAP [N]     # a new instance of the map (or the instance N of that map), at the start of the map
 tools/world instance return CHARACTER            # back to the return place in the main world
-tools/world instance list                        # the instances, their members, their return places, and (stage DG2) the levels read
+tools/world instance list                        # the instances, their members, their return places, (DG2) the levels read, (DG3) the checkpoints
 tools/world path NAME X Y Z                      # stage DG2: the path in the navigation of the space of the character (--space N)
 tools/gamedata/level.sh LEVEL [GAMEDATA_DIR]     # stage DG2: the data set of an own level (a level or a map id); --list names the levels
 tools/world list                                 # each entity with its space (0: the main world) and the line "instances"
 ```
 
 The commands are in the development routes only (the harness gate). Stage QG9a: the entrance of the game enters a solo mode of the main
-world level whose content the backend runs (QuestMedea; stage QG9b: the modes of the table above); the other modes refuse it (result 10).
+world level whose content the backend runs (QuestMedea; stage QG9b: the modes of the table above); stage DG3: also an expedition with a level
+set; the other modes refuse it (result 10).
 
 ## Traps
 
 - More than one gamescope can run on this computer: a picture with no `GAMESCOPE_WAYLAND_DISPLAY` can take the window of a different
   project. Read the display from the environment of the backend of the run (docs/development/live-runs.md).
-- The client shows the territory of the main world on its compass in an instance (research dungeons.md, open problem P6), and the buttons
+- The client shows the territory of the main world on its compass in an instance of an own level (research dungeons.md, open problem P6;
+  stage DG3: the section "The compass in an own level"), and the buttons
   "Map" of the quests are not in the journal there. The tracker of the quests can show the text of an active task of a place of the main
   world two times in an instance (the task `06_crewmates_02_TaskGoToPOITag_shipwreck1` and the inactive kill task of the same objective
   have one text; live: one line in the main world, two lines in Amrine). The Objectives state is the same state of the entity: this is a

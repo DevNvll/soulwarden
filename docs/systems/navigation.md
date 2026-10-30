@@ -46,9 +46,9 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
   0.35 m, slope 50 degrees, wade 1.2 m) is a project value with a live check for each
   number; each file has the values in its header, and the backend refuses a folder whose
   files do not have the same values, as a whole, as for each other file that is not
-  correct. A tile with more than 16 floors in one cell, and a tile stream with a byte after
-  its zlib stream, are not correct; the tool stops for a cell with more than 16 floors
-  (`kMaxCellFloors` of `navcore.cpp`), and it uses a stored report of the collision step only
+  correct. A tile with more than 63 floors in one cell (stage DG3; before: 16), and a tile
+  stream with a byte after its zlib stream, are not correct; the tool stops for a cell with more
+  than 63 floors (`kMaxCellFloors` of `navcore.cpp`), and it uses a stored report of the collision step only
   when the report is complete, of its format and tool version, and names no physics file
   that did not decode. The backend reads only the header and the directory of
   each file at its start. The tool stops (status 1, no region file) for a placed collider
@@ -139,6 +139,21 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
   scale of the main world the flat terrain of Amrine was at 256 m, above the mine, and the data had no floor of the mine.
 - Amrine: one region, 2,506 placements, 1.9 MB of navigation data; the floor of the start at 152.25 m (the probe of research DG0: 152.19);
   `tools/world path` in the mine gives a path of 13 corners and 85.9 m around the rock walls (a straight line of 52 m) [live].
+
+### The floors of a cell (stage DG3)
+
+- A cell has 63 floors at most (`NavTile::kMaxFloors`; before stage DG3: 16). Most own levels have a cell with 17 to 19 floors (Garden of
+  Genesis: 19; 60 cells above 16, with 289 free floors and 760 blocked floors of the sight). The file form does not change: the run code of a
+  tile can name 251 floors, and the reader keeps 63 (its cell word has 6 bits for the number). The key of a cell of a path search has 6 bits
+  for the floor (`Search::kFloorBits`; the column from bit 30) [agent; case RN3: 63 kept, 64 refuse the tile; case DG3N1: a path on the
+  floor of index 21 around a wall]. The tool does not drop or merge a floor: each free floor and each blocked floor of the sight stays.
+- A backend of before refuses a tile with a cell of more than 16 floors (only that tile: no ground there); the other tiles stay.
+- Code review of stage DG2, finding DG2R-R5: a level navigation gets its tick only while its level has a space or while it has a tile, a
+  route, or a search (`Navigation::busy`): an ended level does not scan the characters of the world each 500 ms. The data of the level stays
+  [agent; case DG2R5, count `wantScans`].
+- Code review of stage DG2, finding DG2R-R4: the navigation tool makes each region of an output of a different level or of the main world
+  again (the level and the world of navigation.json); it keeps the complete regions of an output of the same level [agent; case DG2R4,
+  `tools/gamedata/check_navigation_cache_tool.py`].
 
 ## Commands
 

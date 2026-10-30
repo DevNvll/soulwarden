@@ -581,9 +581,10 @@ void QuestSupport::build() {
     index.tables.reserve(objectives.size());
     // Stage QG9a: the modes that the backend runs: an entrance of the interaction data (the kind dungeonEntrance, its m_gameMode) and the
     // content of the encounter system (Encounters::runs_mode: each instance recipe of the mode that is not a daily alternative is taken).
+    // Stage DG3: the one rule of the entrance (Instances::mode_runs): also an expedition with a data set of its level.
     if (const gamedata::InteractionData* interactions = m_world.interactions().data()) {
         for (const gamedata::InteractionObject& object : interactions->objects()) {
-            if (object.entrance && m_world.encounters().runs_mode(object.entrance->mode)) {
+            if (object.entrance && m_world.instances().mode_runs(object.entrance->mode)) {
                 index.modes.insert(lower_text(object.entrance->mode));
             }
             if (object.entrance) {

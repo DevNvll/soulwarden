@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <optional>
 #include <string>
 
@@ -7,7 +8,7 @@
 
 // The instance commands of the common layer (character_commands.h; stage DG1, docs/systems/instances.md): the entry of a character into
 // an instance of a map of the game modes, and its return to its return place (world/instances.h). Only the development routes have them
-// (the harness gate) until stage DG3 gives the entrance of the game.
+// (the harness gate); the entrance of the game enters a story mode (stage QG9a) and an expedition (stage DG3).
 
 namespace soulwarden::backend::server::http::commands {
 namespace {
@@ -36,6 +37,22 @@ json instance_json(const world::World& world, const world::Instance& instance) {
                    {"capacity", instance.capacity},
                    {"seconds", std::chrono::duration<double>(world.clock().now() - instance.started).count()},
                    {"members", members}};
+    // Stage DG3: the checkpoints of the instance (an expedition with a level set): the id, the activation, the server child.
+    json checkpoints = json::array();
+    for (const world::InstanceCheckpoint& checkpoint : instance.checkpoints) {
+        char entity[17];
+        std::snprintf(entity, sizeof(entity), "%016llx", static_cast<unsigned long long>(checkpoint.entity));
+        checkpoints.push_back({{"id", checkpoint.point.id},
+                               {"active", checkpoint.active},
+                               {"entity", entity},
+                               {"respawn", place_json(checkpoint.point.position)}});
+    }
+    if (!checkpoints.empty()) {
+        result["checkpoints"] = checkpoints;
+    }
+    if (instance.emptyUntil) {
+        result["emptySeconds"] = std::chrono::duration<double>(*instance.emptyUntil - world.clock().now()).count();
+    }
     // Stage DG2: the spawn points of the level set of the space (an own level), with their creatures.
     if (const world::SpawnSet* set = instance.space != world::kMainSpace ? world.creatures().spawn_set(instance.space) : nullptr) {
         std::size_t creatures = 0;
@@ -176,7 +193,14 @@ json instances_json(world::World& world) {
               {"refused", counts.refused},
               {"questObjectsMade", counts.questObjectsMade},
               {"questObjectsGathered", counts.questObjectsGathered},
-              {"questObjectsAgain", counts.questObjectsAgain}}}};
+              {"questObjectsAgain", counts.questObjectsAgain},
+              {"entranceRequests", counts.entranceRequests},
+              {"entranceRefused", counts.entranceRefused},
+              {"rejoined", counts.rejoined},
+              {"emptyEnded", counts.emptyEnded},
+              {"checkpointsMade", counts.checkpointsMade},
+              {"checkpointsActivated", counts.checkpointsActivated},
+              {"checkpointRespawns", counts.checkpointRespawns}}}};
 }
 
 json game_maps_json(const gamedata::GameModes* modes) {

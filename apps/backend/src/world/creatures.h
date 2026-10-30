@@ -490,8 +490,10 @@ public:
      * creature again when a player is near it (the distance rule): the body of the dead creature
      * then leaves the world first.
      * @return False when the creature data has no spawn point with this index.
+     * Code review of stage DG2, finding DG2R-R1: `space` is the space of the creature: the index is an index of the spawn set of that space
+     * (the main world, or an instance of an own level), never of the main world for a creature of a level.
      */
-    bool respawn_at(std::uint32_t spawnPoint, WorldClock::time_point time);
+    bool respawn_at(SpaceId space, std::uint32_t spawnPoint, WorldClock::time_point time);
 
     /**
      * The spawn point rule. The world calls it in each tick: it does its work one time for

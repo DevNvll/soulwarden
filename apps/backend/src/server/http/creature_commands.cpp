@@ -205,8 +205,10 @@ json creatures_view(world::World& target, const std::string& character, std::opt
         row["retracing"] = mind.retracing;
         row["anchor"] = {mind.anchor.x, mind.anchor.y, mind.anchor.z};
         // The respawn time of the spawn point of a dead creature (stage 3.5a): seconds from now.
-        if (entity->creature.dead && entity->creature.spawnPoint) {
-            const world::SpawnPointState& point = system.spawn_points()[*entity->creature.spawnPoint];
+        // Code review of stage DG2, finding DG2R-R1: the point of the spawn set of the space of the creature.
+        const world::SpawnSet* points = entity->creature.spawnPoint ? system.spawn_set(entity->space) : nullptr;
+        if (entity->creature.dead && points != nullptr && *entity->creature.spawnPoint < points->points.size()) {
+            const world::SpawnPointState& point = points->points[*entity->creature.spawnPoint];
             if (point.waiting && point.respawnAt) {
                 row["respawnIn"] = std::max(0.0, std::chrono::duration<double>(*point.respawnAt - target.clock().now()).count());
             }
@@ -777,7 +779,10 @@ WorldCommand set_respawn_time(const std::string& character, const Arguments& arg
             return message(409, "the creature is not a dead creature of a spawn point");
         }
         const auto time = target.clock().now() + std::chrono::milliseconds(static_cast<long long>(seconds * 1000.0F));
-        (void)target.creatures().respawn_at(*entity->creature.spawnPoint, time);
+        // Code review of stage DG2, finding DG2R-R1: the spawn set of the space of the creature.
+        if (!target.creatures().respawn_at(entity->space, *entity->creature.spawnPoint, time)) {
+            return message(409, "the spawn set of the space of the creature has no such spawn point");
+        }
         log::write("world: command: the spawn point of creature %016llx makes its creature again in %.0f s",
                    static_cast<unsigned long long>(id),
                    static_cast<double>(seconds));

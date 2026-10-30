@@ -53,6 +53,13 @@ struct GameMap {
     bool raidTrial{false};
     /** TimerThresholdDefault of the mode (seconds). */
     std::uint32_t timeoutSeconds{0};
+    /**
+     * Stage DG3: the entry rules of the mode: IsMutable (the mutation tiers 1 to 3 of an entry), EntryAchievementConditional (an achievement
+     * expression of the quests; empty: none), and RequiredConsumableItemClasses (empty: none). A file of before has none of them: no rule.
+     */
+    bool mutableMode{false};
+    std::string entryConditional;
+    std::string requiredItemClasses;
 };
 
 class GameModes {

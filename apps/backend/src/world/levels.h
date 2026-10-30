@@ -71,6 +71,11 @@ public:
     void space_started(SpaceId space, const std::string& level);
     /** The instance system ended a space (after World::clear_space). The data of its level stays. */
     void space_ended(SpaceId space);
+    /**
+     * Stage DG3: @return True when the level has an accepted data set (the check of an entry at the entrance of an expedition). The first
+     * call reads the set (one time for each backend process, as the first space of the level).
+     */
+    [[nodiscard]] bool available(const std::string& level);
 
     /** @return The level of a space of an own level that this system knows, or null (the main world level, a space that is not there). */
     [[nodiscard]] const Level* level_of_space(SpaceId space) const;
@@ -94,6 +99,9 @@ public:
     }
 
 private:
+    /** @return The level of the cache: the first call reads its set (a level with no set has no data). */
+    Level& read(const std::string& level);
+
     World& m_world;
     const gamedata::LevelSource* m_source;
     const bool m_navigationThread;

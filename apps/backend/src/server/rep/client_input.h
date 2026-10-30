@@ -152,6 +152,12 @@ struct InputInteraction {
     std::uint64_t optionEntity{0};
     bool committed{false};
     float holdTime{0.0F};
+    /**
+     * Stage DG3: the u32 at the interaction record +0x70 (the first u32 after the first text): the difficulty of an entry at the entrance of
+     * a game mode (action 72): 0 the normal mode, 1 to 3 a mutation tier (client 0x49A0F5A copies it, 0x4912410 writes it to +0x70; research
+     * dungeons.md 3.3). 0 in each other request.
+     */
+    std::uint32_t difficulty{0};
     std::uint32_t optionId{0};
     std::uint8_t requiredItemCount{0};
     std::uint64_t requiredCurrency{0};

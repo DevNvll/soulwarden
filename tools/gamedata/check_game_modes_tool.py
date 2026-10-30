@@ -30,7 +30,8 @@ from check_combat_tool import sheet  # noqa: E402
 
 def mode_row(identifier: str, key: str, dungeon: bool, solo: bool, capacity: int, minimum: int) -> dict:
     return {"GameModeId": identifier, "DisplayName": key, "RecommendedLevel": 25, "RequiredLevel": 0, "TeamCapacity": capacity,
-            "MinGroupSize": minimum, "IsDungeon": dungeon, "IsSoloTrial": solo, "IsRaidTrial": False, "TimerThresholdDefault": 600}
+            "MinGroupSize": minimum, "IsDungeon": dungeon, "IsSoloTrial": solo, "IsRaidTrial": False, "TimerThresholdDefault": 600,
+            "IsMutable": dungeon and capacity > 5, "EntryAchievementConditional": "", "RequiredConsumableItemClasses": ""}
 
 
 def map_row(identifier: str, mode: str, terrain: str, start: str) -> dict:

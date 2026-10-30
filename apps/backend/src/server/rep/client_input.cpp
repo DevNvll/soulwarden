@@ -189,7 +189,8 @@ bool read_interaction(hub::Reader& reader, std::optional<InputInteraction>& bloc
     if (!skip_interaction_text(reader)) {               // +0x48
         return false;
     }
-    reader.raw(4 + 4);                                  // +0x70, +0x74
+    request.difficulty = reader.u32();                  // +0x70 (stage DG3: the difficulty of an entry)
+    reader.u32();                                       // +0x74
     reader.f32();                                       // +0x78
     if (!read_flag(reader, request.committed)) {        // +0x80
         return false;

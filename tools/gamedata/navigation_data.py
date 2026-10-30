@@ -192,6 +192,13 @@ def make(arguments: argparse.Namespace, output: Path, work: Path, level: str | N
     agent = agent_environment()
     if manifest.get("tool") != TOOL_VERSION or manifest.get("format") != nav_file.VERSION or manifest.get("agentVariables") != agent:
         manifest = {}
+    # Code review of stage DG2, finding DG2R-R4: the regions of an output of a different level or world (an own level and the main world, or
+    # two own levels, have regions with one name: r_+00_+00) are not complete regions of this run: each one is made again.
+    if manifest.get("level") != (level or None) or (level and manifest.get("world") != world_name):
+        if manifest.get("regions"):
+            print(f"navigation: the output has the regions of {manifest.get('level') or 'the main world'}, not of "
+                  f"{level or 'the main world'}: each region is made again", flush=True)
+        manifest = {}
     manifest.update({"format": nav_file.VERSION, "tool": TOOL_VERSION, "agentVariables": agent})
     if level:
         manifest.update({"level": level, "world": world_name})

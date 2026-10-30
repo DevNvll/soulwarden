@@ -8,7 +8,8 @@ The sources (the data tables in the pak files of the game copy; research dungeon
 
   1. The modes (GameModeData, javelindata_gamemodes: 53 rows): the id, the display name key and its English text, the levels
      (RecommendedLevel, RequiredLevel), the group sizes (TeamCapacity, MinGroupSize), the kind flags (IsDungeon, IsSoloTrial, IsRaidTrial),
-     and the timeout of an empty instance (TimerThresholdDefault).
+     and the timeout of an empty instance (TimerThresholdDefault). Stage DG3: the entry rules of a mode (IsMutable, the achievement
+     conditional EntryAchievementConditional, the item classes RequiredConsumableItemClasses).
   2. The maps (GameModeMapData, javelindata_gamemodemaps: 62 rows): the map id, its mode, the terrain project (CoatlicueName), and the start
      places of its teams (TeamTeleportData: "x,y,z,heading", a "+" between two teams). A mode can have more than one map (Outpost Rush, the
      arenas): a command names the map id.
@@ -30,7 +31,9 @@ Output (one line of JSON):
   {"format": 1, "counts": {"modes": N, "maps": N, "mapsWithNoPlace": N},
    "maps": [{"id", "mode", "row", "modeRow", "level", "terrain", "starts": [[x, y, z, heading], ...], "nameKey", "name",
              "recommendedLevel", "requiredLevel", "teamCapacity", "minGroupSize", "dungeon", "soloTrial", "raidTrial",
-             "timeoutSeconds"}, ...]}
+             "timeoutSeconds", "mutable", "entryConditional", "requiredItemClasses"}, ...]}
+  Stage DG3: the members "mutable", "entryConditional", and "requiredItemClasses" (the format stays 1: a backend of before does not read
+  them, and the backend reads a file with no such member as a mode with no such rule).
   The maps are in the order of the map table.
 
 Usage: game_modes.py [OUTPUT.json]
@@ -62,7 +65,8 @@ FORMAT = 1
 MODES_TABLE = TABLES_FOLDER + "javelindata_gamemodes.datasheet"
 MAPS_TABLE = TABLES_FOLDER + "javelindata_gamemodemaps.datasheet"
 MODE_COLUMNS = ("GameModeId", "DisplayName", "RecommendedLevel", "RequiredLevel", "TeamCapacity", "MinGroupSize", "IsDungeon",
-                "IsSoloTrial", "IsRaidTrial", "TimerThresholdDefault")
+                "IsSoloTrial", "IsRaidTrial", "TimerThresholdDefault", "IsMutable", "EntryAchievementConditional",
+                "RequiredConsumableItemClasses")
 MAP_COLUMNS = ("GameModeMapId", "GameModeId", "CoatlicueName", "TeamTeleportData")
 # Limits of a place: the height range of a world position on the wire, with the margin of the backend (World::travel).
 LOWEST_HEIGHT, HIGHEST_HEIGHT = -99.0, 999.0
@@ -123,7 +127,11 @@ def build_document(sources: Sources) -> dict:
                                      "dungeon": bool(modes_sheet.cell(row, "IsDungeon")),
                                      "soloTrial": bool(modes_sheet.cell(row, "IsSoloTrial")),
                                      "raidTrial": bool(modes_sheet.cell(row, "IsRaidTrial")),
-                                     "timeoutSeconds": whole(modes_sheet.cell(row, "TimerThresholdDefault"))}
+                                     "timeoutSeconds": whole(modes_sheet.cell(row, "TimerThresholdDefault")),
+                                     # Stage DG3: the entry rules of the mode (an empty text: no rule).
+                                     "mutable": bool(modes_sheet.cell(row, "IsMutable")),
+                                     "entryConditional": str(modes_sheet.cell(row, "EntryAchievementConditional")).strip(),
+                                     "requiredItemClasses": str(modes_sheet.cell(row, "RequiredConsumableItemClasses")).strip()}
     texts = read_texts(sources, {mode["nameKey"].lstrip("@").lower() for mode in modes.values() if mode["nameKey"]})
     sources.check_complete()
     maps = []
@@ -150,7 +158,8 @@ def build_document(sources: Sources) -> dict:
         maps.append({"id": identifier, "mode": mode["id"], "row": row, "modeRow": mode["row"], "level": level, "terrain": terrain,
                      "starts": read_starts(start_text, what), "nameKey": mode["nameKey"], "name": texts.get(key, ""),
                      **{name: mode[name] for name in ("recommendedLevel", "requiredLevel", "teamCapacity", "minGroupSize", "dungeon",
-                                                      "soloTrial", "raidTrial", "timeoutSeconds")}})
+                                                      "soloTrial", "raidTrial", "timeoutSeconds", "mutable", "entryConditional",
+                                                      "requiredItemClasses")}})
     if not maps:
         raise Failure("the map table has no map with a terrain project and a start place")
     return {"format": FORMAT, "counts": {"modes": len(modes), "maps": len(maps), "mapsWithNoPlace": no_place}, "maps": maps}

@@ -1065,6 +1065,17 @@ button on "Confirm").
   own (they are members of its encounter).
 - The statue of Taurus (stage DG2): in the instance of QuestMedusa the task "Unpetrify Taurus" (`09A_M12_SaveTaurus`) has its prompt
   "Free Taurus with the tincture", and the use of the statue completes the task.
+- Expeditions (stage DG3, [Instances](systems/instances.md), "The expeditions"): the entrance of an expedition with a level data set (Amrine
+  and the other expeditions of the folder `levels`) enters a new instance for one player: OpenDungeonMenu, then "Enter With Group" of the
+  window of the game (the remote setting `javelin.enable-dungeon-group-restriction` false). The result 3094: 0, 14 for a mutation tier, 10
+  for a level below RequiredLevel, an achievement of EntryAchievementConditional that the character does not have, or a level with no data
+  set, 3 for a mode with RequiredConsumableItemClasses. The checkpoints of the mode root of the level (Amrine: the entrance, the vestibule,
+  the boss) are server children of the instance; a character in the sphere of a checkpoint activates it for the instance, and the PlayerHome
+  state (slot 20) lists the active checkpoints for the respawn screen; the respawn 1938 at a checkpoint starts its cooldown (30 s) for that
+  character. A lore page and the exit stone of a level set work in the instance (each space has its own state of the object). An empty
+  instance waits 10 minutes (TimerThresholdDefault), and the entrance joins it again; a character that leaves the world in an instance enters
+  again at its return place. `tools/world instance list` shows the checkpoints of an instance. Not yet: the encounters, the bosses, the
+  doors and the light bridge, the chests, the room names of the compass, the mutations, the party.
 - Story instances (stage QG9a, [Instances](systems/instances.md)): the entrance of a solo mode of the main world level (Medea in
   Thornhall, the mode QuestMedea) enters a private instance of the same level: OpenDungeonMenu, then the Enter button of the window of the
   game (the result 3094; a mode whose content the server does not run gets "the entrance cannot be activated"). In the instance only its

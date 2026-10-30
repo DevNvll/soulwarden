@@ -372,7 +372,8 @@ RespawnPlace Health::respawn_place(const Entity& character) const {
     place.position = character.position;
     if (character.space != kMainSpace) {
         // Stage DG1 (docs/systems/instances.md) [agent]: in an instance the start of its map (the travel places are places of the main
-        // world). The checkpoints of an instance (respawn type 10) are stage DG3.
+        // world). Stage DG3: the random row of the respawn screen in an expedition is the dungeon entrance (@ui_dungeon_entrance_respawn_
+        // location): the start of the map; a checkpoint comes from the id of the request (respawn).
         if (const Instance* instance = m_world.instances().instance_of_space(character.space)) {
             place.position = instance->start;
             place.name = "the start of instance " + std::to_string(instance->id);
@@ -395,7 +396,7 @@ RespawnPlace Health::respawn_place(const Entity& character) const {
     return place;
 }
 
-HealthResult Health::respawn(SessionId session) {
+HealthResult Health::respawn(SessionId session, const std::string& point) {
     HealthResult result;
     Entity* target = m_world.entity_of(session);
     if (target == nullptr) {
@@ -409,7 +410,14 @@ HealthResult Health::respawn(SessionId session) {
         result.error = HealthError::alive;
         return result;
     }
-    const RespawnPlace place = respawn_place(*target);
+    RespawnPlace place = respawn_place(*target);
+    // Stage DG3 (docs/systems/instances.md, the checkpoints): the checkpoint of the instance that the respawn screen selected.
+    if (!point.empty() && target->space != kMainSpace) {
+        if (const std::optional<state::WorldPosition> checkpoint = m_world.instances().use_checkpoint(*target, point)) {
+            place.position = *checkpoint;
+            place.name = "the checkpoint " + point;
+        }
+    }
     target->life.dead = false;
     target->vitals.health = target->vitals.healthMax;
     result.after = target->vitals.health;

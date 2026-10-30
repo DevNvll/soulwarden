@@ -29,10 +29,14 @@ inline constexpr const char* kRemoteConfigurationHost = "ags-javelin-remote-conf
 inline constexpr const char* kGameplayConfigurationPath =
     "/applications/publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.1063730/versionless";
 /**
- * The document. It sets one registered setting of the client. The client reads the body only
- * when the reply has its length (the HTTP writer gives it): 50 bytes.
+ * The document. It sets registered settings of the client. The client reads the body only
+ * when the reply has its length (the HTTP writer gives it): 99 bytes.
+ *   - javelin.enable-client-authoritative-melee true: the client reports its melee contacts (protocol notes 2.3).
+ *   - Stage DG3: javelin.enable-dungeon-group-restriction false (registered with true at 0x617DFA9): the entry screen of an
+ *     expedition does not ask for MinGroupSize (3) of the mode (research dungeons.md 3.2; decision D7: one player can enter).
  */
-inline constexpr const char* kMeleeReportDocument = R"({"javelin.enable-client-authoritative-melee":true})";
+inline constexpr const char* kMeleeReportDocument =
+    R"({"javelin.enable-client-authoritative-melee":true,"javelin.enable-dungeon-group-restriction":false})";
 
 /** Switches of the AWS routes. */
 struct AwsOptions {

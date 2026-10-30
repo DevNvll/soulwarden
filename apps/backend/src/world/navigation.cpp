@@ -82,9 +82,19 @@ struct Navigation::Search {
     bool found{false};
     bool full{false};
 
+    /** Stage DG3: the floor has 6 bits (NavTile::kMaxFloors 63), the row 24 bits, the column the bits from 30. */
+    static constexpr unsigned kFloorBits = 6;
+    static constexpr unsigned kColumnShift = 24 + kFloorBits;
+    static_assert(gamedata::NavTile::kMaxFloors <= (1U << kFloorBits), "the key of a search has a floor of 6 bits");
     [[nodiscard]] static std::uint64_t key_of(const Place& place) {
-        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(place.x)) << 28)
-               | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(place.y) & 0xFFFFFFU) << 4) | place.floor;
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(place.x)) << kColumnShift)
+               | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(place.y) & 0xFFFFFFU) << kFloorBits) | place.floor;
+    }
+    [[nodiscard]] static std::int32_t column_of(std::uint64_t key) {
+        return static_cast<std::int32_t>(key >> kColumnShift);
+    }
+    [[nodiscard]] static std::int32_t row_of(std::uint64_t key) {
+        return static_cast<std::int32_t>((key >> kFloorBits) & 0xFFFFFFU);
     }
 
     /** @return The place of a key in the table: a new one has `fresh`. No value: the table is full. */
@@ -192,8 +202,8 @@ struct Navigation::Search {
                 running = false;
                 break;
             }
-            const auto x = static_cast<std::int32_t>(slot.key >> 28);
-            const auto y = static_cast<std::int32_t>((slot.key >> 4) & 0xFFFFFFU);
+            const std::int32_t x = column_of(slot.key);
+            const std::int32_t y = row_of(slot.key);
             const float height = slot.height;
             const float cost = slot.cost;
             const float left = estimate(x, y);
@@ -241,7 +251,7 @@ struct Navigation::Search {
         std::uint32_t at = end;
         for (std::size_t guard = 0; guard < kSlots; ++guard) {
             const Slot& slot = slots[at];
-            cells.push_back({static_cast<std::int32_t>(slot.key >> 28), static_cast<std::int32_t>((slot.key >> 4) & 0xFFFFFFU), slot.height});
+            cells.push_back({column_of(slot.key), row_of(slot.key), slot.height});
             if (slot.parent == at) {
                 break;
             }
@@ -376,6 +386,7 @@ bool Navigation::level_data(SpaceId space) const {
 
 void Navigation::update_wanted() {
     const WorldClock::time_point now = m_world.clock().now();
+    ++m_counts.wantScans;
     // Stage DG1: the navigation data is the data of the main world: a character in an instance of a different level needs no tile of it.
     // Stage QG9a: a story instance of the level of the main world (QuestMedea) uses the navigation of the main world. Stage DG2: the
     // navigation of an own level keeps the tiles near the characters of the spaces of its level.

@@ -48,7 +48,7 @@ Client state names (string table at 0x84FA000): `QueryGameUpdateCheck`,
 | Login queue | `POST /prod/game/login/queue/v2?tokenVersion=10` | Request `{"LoginQueueRequest":{CharacterId,...}}`; reply `{"LoginQueueResponse":{Token:{RepAddress,...},...}}` (reader 0x74E4F20, 0x74E5990) |
 | Entitlement sync | `POST /players/{persona}/games/new-world/platforms/steam/entitlements/sync`, host `client.entitlementservice.amazongames.com` | Request `{"syncTypes":["FirstTimeLogin","PrimeGamingSync","CodeRedemptionSync","TwitchDropsSync","SteamRetailSync"]}` (builder 0x74D5100); reply `{}` (4.29) |
 | Entitlement list | `GET /players/{persona}/games/new-world/platforms/steam/entitlements`, same host | `{"entitlements":[{"alias":TEXT,"amount":{"freeAmount","paidAmount","pendingAmount","lossAmount","totalAmount"}}],"hasMoreResults":false}` (parsers 0x74C2770, 0x74C2E60, 0x74C15D0; 4.29) |
-| Remote configuration | `GET /applications/publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.<app>/versionless`, host `ags-javelin-remote-config.s3.amazonaws.com` | The document `{"javelin.enable-client-authoritative-melee":true}` (2.3). Each other object of a host with `.s3.` in its name: status 404, `NoSuchKey` |
+| Remote configuration | `GET /applications/publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.<app>/versionless`, host `ags-javelin-remote-config.s3.amazonaws.com` | The document `{"javelin.enable-client-authoritative-melee":true,"javelin.enable-dungeon-group-restriction":false}` (2.3; the second setting from stage DG3). Each other object of a host with `.s3.` in its name: status 404, `NoSuchKey` |
 
 World checks in the client (0x6423730): `WorldStatus == "ACTIVE"`, `WorldType` is `OpenWorld` or
 `FTUE` (0x17C40A0), `WorldVersion` must contain the client version text, population text is
@@ -451,7 +451,8 @@ Research file: `~/Games/soulwarden/work/research/melee-mode.md`. Evidence of the
 - **The reply of the backend.** The request for the path
   `/applications/publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.1063730/versionless`
   of that host gets the status 200, the type `application/json`, and the body
-  `{"javelin.enable-client-authoritative-melee":true}` (50 bytes), each time. Each other
+  `{"javelin.enable-client-authoritative-melee":true}` (50 bytes), each time (stage DG3: the body
+  `{"javelin.enable-client-authoritative-melee":true,"javelin.enable-dungeon-group-restriction":false}`, 99 bytes; section 4.67). Each other
   request to that host, and each request for an object of a different S3 host, keeps the
   reply 404 with the XML code `NoSuchKey` (`server/http/aws_routes.cpp`). The compare of the
   host is exact (with no port), and the route is for `GET` only. The compare of the path is
@@ -8217,6 +8218,50 @@ interaction-data.json) [project rule; live run P2: the leave to the return place
 `02_Trigger_IGC_Spawner_Bink` (PlayCinematicVideoComponent, `m_cinematicEntryId` FTUE_Rit, local player only). Live (no sound): 0x2CC7E70
 with the entry id `FTUE_Rit` (read of the facet +0xF8), then 0x6506CB0, no 0x2EF9A00, no 6606 and no 6542: the white screen of 4.58. No
 task of the quest data waits for this cinematic.
+
+**Stage DG3: the entry at the entrance of an expedition** [static; live; project rules]: the door of Amrine (`dungeonentrance_amrine`,
+options OpenDungeonMenu and EnterDungeonAmrine, option CRC 42143B66) opens the expedition screen; its button "Enter With Group" sends 1589
+with action 72, base action 71, and the u32 at the record +0x70: the difficulty (0 the normal mode; the reader of the backend took it from
+the bytes that it skipped before stage DG3) [static: 0x49A0F5A, 0x4912410; live: 0]. With the remote setting
+`javelin.enable-dungeon-group-restriction` false (section 2.3; registered with true at 0x617DFA9) the screen shows "Minimum Players: 3"
+with a check and gives the button to one player [live]. The backend sends 3094 with 0 (the entry), 14 for a difficulty of 1 to 3 (a
+mutation tier), 3 for a mode with RequiredConsumableItemClasses, 1 or 5 for a group out of the limits (one player: never), and 10 or 11 as
+in stage QG9a [project rule; docs/systems/instances.md]. The screen needs no PlayerArena and no GroupData state for one player [live].
+
+### 4.68 The PlayerHome state: the dungeon checkpoints, the respawn 1938 at a checkpoint (live proof of stage DG3; static proof of research death-travel.md 4.1 to 4.5; the activation, the server child, and the id text are project rules)
+
+The research is death-travel.md sections 4.1 to 4.5 (`~/Games/soulwarden/work/research/death-travel.md`) and the static read E of stage
+QG9a (E6). The backend side is in docs/systems/instances.md ("The expeditions (stage DG3)").
+
+**MB::PlayerHomeComponentReplicatedState** (type 3652, constructor 0x34E2E40; slot 20 of the player slice). The backend sends group 0 field
+0 homePointList in the full form (change reader 0x34FCFD0, full reader 0x34FD550; element reader 0x34FCE70, writer 0x34F13D0):
+
+```text
+changes:size = 0  version: has:u8 = 0  count:size
+count x { actor:16raw  gde:u64  facet:u64  name:text  x:f32 y:f32 z:f32
+          cooldownDuration:u64 (ns)  cooldownEnd:u64 (synced wall clock, Unix ns; 0: none)
+          type:u32  overloaded:u8 = 0  failed:u8 = 0  id:text  unique:u32 }
+```
+
+- `actor`, `gde`: the actor and G of the server child of the checkpoint; `facet`: the facet target of its HomeComponent by the XOR rule
+  (section 4.2: the entity of the component XOR K plus the component id) [project rule: the client compares no reference of a type 10
+  point]. `name`: the text key of the name entity of the checkpoint slice (`@Respawn_EntranceName`, `@Respawn_ShrineName`) [data]. The
+  place: the entity of the HomeComponent [data]. `type`: 10 Dungeon [data: m_respawnType]. `cooldownDuration`: m_respawnCooldown (30 s)
+  [data]. `id`: the name of the spawner of the mode root (`Checkpoint_Entrance`; 31 bytes or less: 0x69128E0 copies it to 32 bytes)
+  [project rule]. `unique`: the number of the checkpoint [project rule].
+- The owner only (the UI values are of the local player: 0x34F0AB0) [static]. A character of the main world gets no fragment; a leave of
+  an instance sends the empty list `00 00 00` [project rule].
+- The respawn screen of a mode with DungeonRespawnsPermitted (0x34ECB00) shows each point of the type 10 with its name, its distance, and
+  "Ready", and asks "This will put this respawn position in cooldown. Continue?" before the request [live: "Expedition Entrance 8m Ready";
+  then "Shrine 6m" and "Expedition Entrance 206m"].
+- The request **1938** of the selected point: `target:u64 entity:u64 random:u8 = 00 id:text` (the id of the element) [static; live:
+  `random 0, id "Checkpoint_Entrance"`, then `"Checkpoint_Vestibule"`]. The backend puts the character at the place of the point in its
+  space and sets the end of the cooldown of the point of that character (`cooldownEnd` of its element); an id that is not an active point of
+  the instance of the character, or a point in its cooldown: the start of the map (the random rule) [project rule]. Field 1 homePointId is
+  not sent.
+- The activation of a point: the sphere of the detection volume of the server facet of the HomeComponent (`CheckpointAreaTrigger`,
+  `PlayerOnlyCollision`; 5 m for a crystal, 30 m for the entrance) [data; the activation rule of the original server is not in the
+  client: project rule].
 
 ## 5. Open items
 

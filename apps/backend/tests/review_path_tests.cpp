@@ -5,7 +5,7 @@
 //
 //   RN1  a contact of an attack after the target went behind a wall (F1)
 //   RN2  a creature and a character on one vertical line, with a ceiling between them (F2)
-//   RN3  a tile with 17 floors in one cell (F3)
+//   RN3  a tile with more floors in one cell than the reader keeps (F3; stage DG3: 64)
 //   RN4  a byte after the zlib stream of a tile (F4)
 //   RN5  a path in the memory of a creature that goes into a tile that the world removed (F5)
 //   RN6  the footing of a place 0.53 m from the nearest free floor (F6)
@@ -232,17 +232,30 @@ void vertical_sight(const Options& options) {
 }
 
 void too_many_floors(const Options&) {
+    // Stage DG3: the limit is NavTile::kMaxFloors (63; before: 16). A cell with the limit is accepted, one more floor refuses the tile.
     TestNavRegion region;
-    TestCells cells = [](int x, int y, std::vector<TestFloor>& floors) {
-        if (x == 0 && y == 0) {
-            floors.clear();
-            for (int n = 0; n < 17; ++n) floors.push_back({50.0F + n * 3.0F, 0});
-        }
+    const auto tile_with = [&](int count, std::string& problem) {
+        TestCells cells = [count](int x, int y, std::vector<TestFloor>& floors) {
+            if (x == 0 && y == 0) {
+                floors.clear();
+                for (int n = 0; n < count; ++n) floors.push_back({50.0F + n * 3.0F, 0});
+            }
+        };
+        return gamedata::NavTile::decode(0, 0, region.tile_bytes(&cells), region.heightScale, region.agent, &problem);
     };
+    const int limit = static_cast<int>(gamedata::NavTile::kMaxFloors);
     std::string problem;
-    auto tile = gamedata::NavTile::decode(0, 0, region.tile_bytes(&cells), region.heightScale, region.agent, &problem);
+    const auto kept = tile_with(limit, problem);
+    gamedata::NavSpot spots[gamedata::NavTile::kMaxFloors];
+    const std::size_t count = kept != nullptr ? kept->spots(0, 0, spots) : 0;
+    note("tile with " + std::to_string(limit) + " floors accepted=" + std::to_string(kept != nullptr) + ", floors " + std::to_string(count)
+         + "; problem: " + problem);
+    check(kept != nullptr && count == gamedata::NavTile::kMaxFloors && spots[count - 1].index == limit - 1,
+          "control: a cell with the limit of floors (63) is kept with each floor");
+    problem.clear();
+    const auto tile = tile_with(limit + 1, problem);
     note("over-limit tile accepted=" + std::to_string(tile != nullptr) + "; problem: " + problem);
-    check(tile == nullptr, "a cell with more than 16 floors invalidates the tile");
+    check(tile == nullptr, "a cell with more than 63 floors invalidates the tile");
 }
 
 void extra_stream_bytes(const Options& options) {
@@ -452,14 +465,14 @@ void navigation_tool(const Options& options) {
           "region file, status 1: F10), and its terrain reader gives the height of height_maps.py at the east edge and "
           "at the north edge of a region with no neighbor (F11); the review of the corrections after user test 1: a "
           "complete report with a physics file that did not decode, or of the tool version 1, is not used again (F6), "
-          "and the tile writer refuses a cell with 17 floors (F8)");
+          "and the tile writer refuses a cell with 64 floors (F8; stage DG3: the limit 63)");
 }
 
 } // namespace
 std::vector<Case> review_path_cases() {
     return {{"RN1", "review of 3.4d: a contact of an attack after the target went behind a wall does no damage", contact_after_wall},
             {"RN2", "review of 3.4d: a creature does not see or attack a character above a ceiling on one vertical line", vertical_sight},
-            {"RN3", "review of 3.4d: a tile with 17 floors in one cell is refused", too_many_floors},
+            {"RN3", "review of 3.4d: a tile with 64 floors in one cell is refused (stage DG3: 63 are kept)", too_many_floors},
             {"RN4", "review of 3.4d: a tile stream with a byte after its zlib stream is refused", extra_stream_bytes},
             {"RN5", "review of 3.4d: a path into a tile that the world removed waits for the tile", path_after_drop},
             {"RN6", "review of 3.4d: a place with no free floor in 0.5 m does not walk", footing_radius},
