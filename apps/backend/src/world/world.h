@@ -40,6 +40,7 @@
 #include "world/encounters.h"
 #include "world/gathering.h"
 #include "world/item_containers.h"
+#include "world/levels.h"
 #include "world/loot_bags.h"
 #include "world/interactions.h"
 #include "world/inventory.h"
@@ -397,6 +398,11 @@ struct WorldOptions {
      * and a dodge has no immune window.
      */
     const gamedata::StaminaData* staminaData{nullptr};
+    /**
+     * Stage DG2: the level data sets of the own levels (gamedata/level_data.h, the folder levels/ of the game data folder; world/levels.h).
+     * Null: no set; an instance of an own level has no content.
+     */
+    const gamedata::LevelSource* levelSource{nullptr};
     /**
      * The terrain heights (game data): the ground for a creature that walks. Null: no creature
      * leaves its place. The world asks it only in the world thread.
@@ -978,6 +984,9 @@ public:
     [[nodiscard]] Creatures& creatures() {
         return m_creatures;
     }
+    [[nodiscard]] const Creatures& creatures() const {
+        return m_creatures;
+    }
     /** @return The combat system: the hit claims of the clients and the damage. */
     [[nodiscard]] Combat& combat() {
         return m_combat;
@@ -1134,6 +1143,21 @@ public:
         return m_navigation;
     }
     /**
+     * Stage DG2 (docs/systems/instances.md, "The level data"): @return The navigation of the level of a space: the main world and a space of
+     *         the main world level have the navigation of the main world; a space of an own level has the navigation of its level set, or
+     *         a navigation with no data (no set, no navigation part): no ground, no wall, no way. Each place of a creature, each path, and
+     *         each line test of a subject in a space uses the navigation of that space.
+     */
+    [[nodiscard]] Navigation& navigation(SpaceId space);
+    [[nodiscard]] const Navigation& navigation(SpaceId space) const;
+    /** @return The level data of the own levels (stage DG2, world/levels.h). */
+    [[nodiscard]] Levels& levels() {
+        return m_levels;
+    }
+    [[nodiscard]] const Levels& levels() const {
+        return m_levels;
+    }
+    /**
      * Gives a session the damage that its character took (SessionSink::damage_taken), and the
      * death of its character (SessionSink::died). Only the health system calls them. No effect
      * for a session that the world does not know: an entity with no session.
@@ -1216,6 +1240,10 @@ private:
     Factions m_factions;
     Ownership m_ownership;
     Navigation m_navigation;
+    /** Stage DG2: the navigation of a space of an own level with no navigation of its own (World::navigation). */
+    Navigation m_noNavigation;
+    /** Stage DG2: the level data of the own levels and their navigation. */
+    Levels m_levels;
     Creatures m_creatures;
     Combat m_combat;
     Health m_health;

@@ -95,10 +95,14 @@ inline constexpr float kCellSize = 64.0F;
 inline constexpr float kAboveFloor = 2.0F;
 /**
  * Code review of stage QG9c, finding QG9CR-R1: a spawn of a creature member of an instance recipe whose navigation tile is not in the world
- * yet (it loads) tries again after this time, at most kFloorTries times; then the floor rule takes the floor that it has.
+ * yet (it loads) tries again after this time. Code review of stage QG9d, finding QG9DR-R2 (stage DG2, the one rule of the wait of a spawn
+ * for its tile, in the main world level and in an own level): the spawn waits while its tile is on its way, also after kFloorTries tries;
+ * then it tries again each kFloorSlowWait. Only a tile that the data does not have (no data, a region with no file, a tile that is not
+ * correct) gives the terrain [agent: the loader thread ends each request with a tile or with "missing"].
  */
 inline constexpr std::chrono::milliseconds kFloorWait{100};
 inline constexpr std::size_t kFloorTries = 50;
+inline constexpr std::chrono::milliseconds kFloorSlowWait{1000};
 /** The entries of the stage state 2133 that the client takes (client 0x26F7550: at most 10). */
 inline constexpr std::size_t kHistory = 10;
 /** The manager status (state 6786; the Lua names eEncounterStatus_*: static, protocol notes 4.62). */
@@ -214,6 +218,11 @@ struct EncounterStageRun {
      */
     std::vector<std::uint32_t> counts;
     std::vector<bool> met;
+    /**
+     * Code review of stage QG9d, finding QG9DR-R1: the spawns of the stage that wait for their navigation tile (encounter_rules::kFloorWait).
+     * The end rule of the stage ("start", "after") waits for them: the end of the stage would cancel them.
+     */
+    std::uint32_t floorWaits{0};
 };
 
 struct EncounterParticipant {

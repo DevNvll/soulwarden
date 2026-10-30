@@ -19,6 +19,9 @@ section 3.5 for the account rule). The encounter of a mode is in [Encounters](en
 | The entrance of a game mode, the result 3094, the exit portal, the empty timer (stage QG9a) | `world/instances.cpp` (`EntranceHandler`, `ExitHandler`, `Instances::entrance_result`, `enter_mode`, `in_mode`, `start_content`, `member_gone`, `content_succeeded`, `dungeon_result`), `gamedata/interaction_data.h` (`DungeonEntrance`, kinds `dungeonEntrance` and `dungeonExit`, `instance_object`), `server/rep/instance_messages.h`, test cases SI1, SI6, SI7 (`tests/story_instance_tests.cpp`) |
 | The GameModeParticipant state, the leave 3309 and 1980, TaskGameMode (stage QG9a) | `world/entity.h` (`GameModeMembership`), `Instances::membership_changed`, `server/rep/states/game_mode_state.cpp`, `RepSession::handle_game_mode_request`, `world/quests.cpp` (`task_type::kGameMode`, `mode_changed`), test cases SI2, SI3, SI6 |
 | The corrections of the code review of stage DG1 (the paths that cross two spaces) | `tests/review_dg1_tests.cpp` (cases DG1R1 to DG1R8), the section "The paths across two spaces" below |
+| Stage DG2: the level data of an own level (its set, its read at the first space of the level, the spawn points of each space, the navigation of each level) | the section "The level data of an own level (stage DG2)" below, `gamedata/level_data.h` (`LevelData`, `LevelFolder`, `LevelSource`), `world/levels.h` (`Levels`), `World::navigation(space)`, `world/creatures.h` (`SpawnSet`, `level_space_started`, `data_of`), `tools/gamedata/level.sh` (`level_data.py`, `check_level_tool.py`), test cases LV1 to LV5 (`tests/level_tests.cpp`) |
+| Stage DG2, part 5: a level object of the main world level in a story instance (the statue of Taurus) | `world/interactions.cpp` (`check`), test case LV6 (`tests/story_level_object_tests.cpp`) |
+| Stage DG2: the corrections of the code review of stage QG9d (the floor wait of a spawn, a quest object after a reset) | `world/encounters.cpp` (`spawn`, the end rule), `world/instances.cpp` (`look_quest_objects`), `tests/review_qg9d_tests.cpp` (cases QG9DR1 to QG9DR3) |
 | Stage QG9d: the quest objects of a mode root, the exit portal of a mode root that the client makes | `world/instances.cpp` (`InstanceQuestObject`, `look_quest_objects`, `quest_object`, `start_content`), `world/interactions.cpp` (`check`), `gamedata/interaction_data.h` (`InteractionObject::exitMode`), `tools/gamedata/interactions.py` (`exit_children`, `mode_root_slices`), `tools/gamedata/gathering.py` (`instance_object_form`, `instance_capital`), test cases QG9D2, QG9D3 (`tests/story_mode_qg9d_tests.cpp`), the section "The story instances of stage QG9d" below |
 | The other story instances (stage QG9b), the corrections of the code review of stage QG9a | the section "The other story instances" below, `world/instances.cpp` (`exit_pending`, `m_unrecovered`, the `committed` call of `enter_mode`), `world/quests.cpp` (`predicate`, `mode_task_active`), `world/abilities.cpp` (`space_left`), `tests/review_qg9a_tests.cpp` (cases QG9AR1 to QG9AR6, QG9ARC), `tests/story_mode_tests.cpp` (SY1 to SY5; SY5: the setting of QuestMedusa, `encounter_rules::kQuestMedusaRuns`, `World::set_quest_medusa`) |
 
@@ -127,8 +130,8 @@ agent of stage DG1 where the client and the data do not decide, [orchestrator] a
   stopped with `kill -9` in Amrine; the next start wrote "instance 3 (DungeonAmrine) of an earlier start ended with the backend stop", and
   the login was at the return place].
 - A respawn in an instance is at the start of its map, in its space [agent: the checkpoints (respawn type 10) are stage DG3].
-- An instance of a different level has no content: no creature, no object, no level data (stage DG2). A creature of a command near a
-  character in an instance is refused (409) [agent].
+- An instance of a different level has the content of the data set of its level (stage DG2, the section below); with no set it has no
+  content. A creature of a command near a character in an instance is refused (409) [agent].
 - A map whose level is the main world (the story instances in `newworld_vitaeeterna`, for example QuestMedea) is an instance with its own
   space and a level change to the same level text [agent; live: stage QG9a]. Its space uses the terrain, the navigation, and the collision
   data of the main world (`World::main_level`) [agent: the instance has only its own content].
@@ -278,7 +281,9 @@ The sources: the static reads AXES and AZOTH and the live runs P1 and P2 of stag
   client]. The encounters of the space wait until each quest object is gathered or a member has an active task that names a recipe of
   the space [agent from the quest data: the heartgem tasks come before the kill of Umberto]. A character with no such task never gets the
   objects, and the encounters of its instance wait [agent]. Count `questObjectsMade`, `questObjectsGathered` of `tools/world instance
-  list`. Case QG9D2.
+  list`. Case QG9D2. Stage DG2 (code review of stage QG9d, finding QG9DR-R3): the gather ends the use of the object, not its task: when the
+  object is gone and a member has its task active again (a reset of the quest), the instance makes the object again (count
+  `questObjectsAgain`) [review; agent]. Case QG9DR3.
 - The exit portal of a mode root that the client makes: the spawner `Portal` of the seraph mode root has m_spawnOnInitialize true, so the
   client makes the portal from the level data with the id of a child (client 0x6160B60, the rule of a person child) [data; live: the
   actor 67c3245614c36008 of the refused request of stage QG9c is this id]. The interactions tool writes it as a level object of the kind
@@ -306,6 +311,62 @@ The sources: the static reads AXES and AZOTH and the live runs P1 and P2 of stag
 | QuestHeartforge | the end cutscene, the trace of the cinematic | the white screen is `FTUE_Rit` with no sound |
 | QuestYonas | the boss stage | open (BT3) |
 
+### The level data of an own level (stage DG2)
+
+An own level is a level of a map row that is not the level of the main world: Amrine (`nw_dungeon_windsward_00`), the other expeditions,
+the solo story levels with a level of their own, the arenas. The sources: research dungeons.md (sections 7 and 8) and the evidence of stage
+DG2 (`~/Games/soulwarden/work/evidence/dungeons/dg2/implement/`).
+
+- The data of an own level is a set in the folder `levels/LEVEL` of the game data folder: the manifest `level.json` (format 1: the level, its
+  terrain folder, its maps, its parts), `creatures.json` (the spawn points of the layers of its terrain project, with their kinds and their
+  slices: the form of the creature data of the main world), `navigation/` and `heights/` (its one region), and `interaction-data.json` (the
+  objects of its capitals). `tools/gamedata/level.sh LEVEL` makes it; the level and its terrain folder come from the map row of the data
+  (`CoatlicueName`), not from a constant [data; agent: the form of the set].
+- The world reads a set when the first space of its level starts (`Levels::space_started`, from the instance system before the move of the
+  character), in the world thread, one time for each backend process: the data stays until the stop of the backend, and each later instance
+  of the level uses it [agent: a level set is small (Amrine: 2.2 MB on the disk, 8 ms, +2.7 MB in memory); the load case LV5 has a set of
+  2,000 points]. A level with no folder, a set with no manifest, and a manifest of a different format (an old file) or of a different level
+  give an instance with no content (the rule of stage DG1) and one log line. A part that its reader refuses has no data; the other parts
+  stay [agent].
+- Each instance of a level has the states of its own spawn points (`Creatures::SpawnSet` of its space): the spawn point rule makes the
+  creature of a point of the level set in the space of the instance when a character of that space is near it (the distances of the main
+  world). Two instances of one level have two creatures of one point; a character of the main world at the same coordinates makes and sees
+  none of them (rule MP-8; case LV2). The end of an instance removes its creatures (`World::clear_space`) and then its states [agent].
+- A creature of a level has the kind and the slice of its level set: each index of its data (the projectile of a ranged release, the route of
+  its spawn point) is an index of that set (`Creatures::data_of`, `spawn_point_of`). The level table and the damage rules are the tables of
+  the creature data of the backend (the same table of the game in each file): with no creature data of the backend the points of a level make
+  no creature [agent].
+- Each own level with navigation data or terrain heights has its own navigation (`Levels`, one `Navigation` with its loader thread, its tiles,
+  and its paths). `World::navigation(space)` gives the navigation of the level of a space: the main world and a space of the main world
+  level have the navigation of the main world; a space of an own level has the navigation of its set, or a navigation with no data (no
+  ground, no wall). Each place of a creature, each path, each line test, each slide, and each floor of a spawn uses the navigation of the
+  space of its subject [agent; case LV3: the floor of the level (30 m) and of the main world (22 m) at the same coordinates].
+- The interaction objects of a level set are read (the part, its count), and the interaction system does not use them yet: a request in an
+  own level gets the rules of stage DG1 (an unknown object) [agent: the interaction system has one catalog of the objects, the options, and
+  the achievements, and the states of its objects by index; a second catalog is a change of each handler: stage DG3, with the exit portal
+  stone of Amrine]. The chests of the layers of a level: the chest tool writes none for Amrine (its chests are objects of its mode root,
+  stage DG5).
+- The encounters of an own level (the encounter entries of its layers, the recipes of its mode root) are not in the set: stage DG5
+  (expeditions) and QG9e (the solo story levels) [orchestrator scope].
+
+The levels of the map table and their sets (the tool of stage DG2 on each own level): the evidence of stage DG2 (`logs/all-levels.tsv`).
+No solo story level with a level of its own has a usual spawn point: each creature of such a level is a member of an encounter of its mode
+root (the encounter entries of its layers) [data].
+
+### The level objects of the main world level in a story instance (stage DG2, part 5)
+
+- A level object of the main world data is there in an instance of a mode of the main world level when one bound of it has the InteractTag
+  of an active task of the character with the GameModeID of the mode of the instance (`Quests::mode_task_active` with the key of the tag)
+  [data: the task `09A_M12_SaveTaurus` (GameModeID QuestMedusa, InteractTag `IO_09A_M12_TaurusStatue`) names the statue of Taurus, a
+  capital of the main world level (a quest gatherable, InteractOnlyOnQuest) in the arena of the mode; agent: the rule; live: the prompt
+  "Free Taurus with the tincture", the gather of 2 s, the task done, the next task `09A_M12_TalkToTaurus`]. Each other level object of the main
+  world stays unknown in an instance (case LV6).
+- The inner gate of the Mammoth trial (`DungeonEntrance_QuestMammoth_Locked_V2`, a coatgen capital at 9464.7 1959.4 65.8) is a teleporter of
+  the open world after the trial: the option `InteractTeleporter` (action 82), the conditional `09A_M11_MammothTrialComplete ...`, and a
+  `TeleportDestination` entity [data]. No task of the mode names it, the interaction data has no such object (the tool has no kind of a
+  teleporter), and the backend has no handler of action 82 in any space: the request stays refused (unknown object). The leave of the trial
+  is its exit portal [agent: a teleporter is a later stage].
+
 ### The paths across two spaces (the code review of stage DG1)
 
 The review of stage DG1 found eight paths that crossed two spaces (`~/Games/soulwarden/work/evidence/dungeons/dg1/code-review/FINDINGS.md`).
@@ -332,7 +393,9 @@ Stage QG9a corrected each one; cases DG1R1 to DG1R8 fail on the tree of stage DG
 tools/world instance maps [TEXT]                 # the maps of the game modes (game-modes.json)
 tools/world instance enter CHARACTER MAP [N]     # a new instance of the map (or the instance N of that map), at the start of the map
 tools/world instance return CHARACTER            # back to the return place in the main world
-tools/world instance list                        # the instances, their members, and their return places
+tools/world instance list                        # the instances, their members, their return places, and (stage DG2) the levels read
+tools/world path NAME X Y Z                      # stage DG2: the path in the navigation of the space of the character (--space N)
+tools/gamedata/level.sh LEVEL [GAMEDATA_DIR]     # stage DG2: the data set of an own level (a level or a map id); --list names the levels
 tools/world list                                 # each entity with its space (0: the main world) and the line "instances"
 ```
 
@@ -371,9 +434,13 @@ world level whose content the backend runs (QuestMedea; stage QG9b: the modes of
   ground (the first record of the renewed body lives, and the dead mark follows).
 - Stage QG9b: the arena of Medusa is full of statues with collision. The start of the map and the place of the intro are between them,
   and a walk to Medusa stops at a statue. Use `tools/world travel` to open ground near her (8621.5 1421.3 203.7).
-- Stage QG9b: the level objects of the main world are not in an instance (the rule above; stage DG2). The task `09A_M12_SaveTaurus` (the
-  statue of Taurus in the Medusa arena) gets no prompt, and the inner side of the gate of the Mammoth trial shows the prompt "Enter" of a
-  main level object (refused: "no object of the data has this reference"). Leave the Mammoth trial by the exit portal of the arena
+- Stage QG9b: the level objects of the main world are not in an instance (the rule above). Stage DG2: the statue of Taurus of
+  `09A_M12_SaveTaurus` is there (part 5). The inner side of the gate of the Mammoth trial still shows the prompt of a teleporter of the main
+  level (refused: "no object of the data has this reference"). Leave the Mammoth trial by the exit portal of the arena
   (`interactobject_exitportal`, 9521.9 1974.9 62.9).
+- Stage DG2: a travel (`tools/world travel`) of the target ends the fight of a creature ("the target went to a different place"). For a live
+  fight with a path, let the creature see the character and move the character with keys (`tools/hx 'keydown 0x57'`).
+- Stage DG2: the tiles of the navigation of a level are the tiles of its one region `r_+00_+00`: a tile of Amrine near the start is 1.8 MB
+  in memory (the mine has many floors), and the search table of each level navigation is 8 MB (one time for each level).
 - Stage QG9b: the quest of Apophis (1624_0801_agodawakens) needs the three trigger volumes of the teleport puzzle before the mode
   (`TriggerVol_16_TelePuzzle_Enter`, `_FinalPlat`, `_End` of `trigger-data.json`); a travel to each one completes them.

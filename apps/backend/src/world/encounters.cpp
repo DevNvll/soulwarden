@@ -1345,6 +1345,9 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
     const gamedata::EncounterRecipe& recipe = *placement.recipe;
     const gamedata::EncounterStage& stage = recipe.stages[index];
     EncounterStageRun& run = instance.stages[index];
+    if (tries > 0 && run.floorWaits > 0) {
+        --run.floorWaits; // Finding QG9DR-R1: this spawn waited for its tile; a new wait below counts again.
+    }
     if (instance.phase != EncounterPhase::running || !run.started || run.ended) {
         return; // A spawn of a stage that ended (its due entry came later): no member.
     }
@@ -1354,19 +1357,23 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
         return;
     }
     const gamedata::EncounterMember& member = m_data->members()[spawn.memberIndex];
-    if (!recipe.mode.empty() && member.kind == gamedata::EncounterMemberKind::creature && member.parts.empty() && tries < encounter_rules::kFloorTries) {
+    if (!recipe.mode.empty() && member.kind == gamedata::EncounterMemberKind::creature && member.parts.empty()) {
         // Code review of stage QG9c, finding QG9CR-R1: the floor rule below needs the navigation tile of each spawn location in the world.
-        // A tile that loads (or that no character wanted yet) is not the terrain: the spawn waits for it and tries again.
+        // A tile that loads (or that no character wanted yet) is not the terrain: the spawn waits for it and tries again. Code review of
+        // stage QG9d, finding QG9DR-R2: also after kFloorTries tries (then each kFloorSlowWait); the navigation of the level of the space
+        // (stage DG2: the main world level or an own level).
+        Navigation& navigation = m_world.navigation(instance.space);
         bool ready = true;
         for (const gamedata::EncounterPlace& location : spawn.locations) {
-            ready = m_world.navigation().line_ready(location.position, location.position, instance.space) && ready;
+            ready = navigation.line_ready(location.position, location.position, instance.space) && ready;
         }
         if (spawn.locations.empty()) {
-            ready = m_world.navigation().line_ready(recipe.position, recipe.position, instance.space);
+            ready = navigation.line_ready(recipe.position, recipe.position, instance.space);
         }
         if (!ready) {
             ++m_counts.spawnsWaited;
-            schedule(m_world.clock().now() + encounter_rules::kFloorWait,
+            ++run.floorWaits;
+            schedule(m_world.clock().now() + (tries < encounter_rules::kFloorTries ? encounter_rules::kFloorWait : encounter_rules::kFloorSlowWait),
                      Due{DueKind::spawn, instance.placement, instance.generation, index, entry, tries + 1});
             return;
         }
@@ -1483,7 +1490,7 @@ void Encounters::spawn(EncounterInstance& instance, std::uint32_t index, std::ui
                 // no body, and no hit reached her]: a creature member of an instance recipe whose spawn location is above the floor of
                 // the data (the start of the intro of a boss tree, which jumps down with Phase_Intro or Pounce: the tree is not in the
                 // client) stands on the floor below that location.
-                if (const std::optional<float> floor = m_world.navigation().ground_height(place);
+                if (const std::optional<float> floor = m_world.navigation(instance.space).ground_height(place);
                     floor && place.z - *floor > encounter_rules::kAboveFloor) {
                     stand.z = *floor;
                     ++m_counts.membersLowered;
@@ -1868,6 +1875,12 @@ void Encounters::take_due() {
             break;
         case DueKind::endRule:
             if (instance->phase == EncounterPhase::running && instance->stages[entry.stage].started && !instance->stages[entry.stage].ended) {
+                if (instance->stages[entry.stage].floorWaits > 0) {
+                    // Code review of stage QG9d, finding QG9DR-R1: a spawn of the stage waits for its navigation tile: the end of the stage
+                    // waits for that spawn (the spawns of the timeline of the stage are the spawns that it makes).
+                    schedule(m_world.clock().now() + encounter_rules::kFloorWait, entry);
+                    break;
+                }
                 const gamedata::EncounterStage& stage = m_placements[entry.placement].recipe->stages[entry.stage];
                 log::write("world: encounters: the encounter %s: the stage %s ends by the end rule %s (no sender of the data)",
                            m_placements[entry.placement].recipe->key.c_str(), stage.name.c_str(),

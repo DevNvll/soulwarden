@@ -191,7 +191,11 @@ public:
      * @param terrain The terrain heights (game data): the ground when the navigation data has no tile for a place. Null: none.
      * @param loaderThread True: a thread of its own reads the tiles. False: the world thread reads a tile when it needs it (a test).
      */
-    Navigation(World& world, const gamedata::NavigationData* data, gamedata::Terrain* terrain, bool loaderThread);
+    /**
+     * @param level Stage DG2: the own level of this navigation (the data of its level set, world/levels.h): it serves the spaces of that
+     *        level. Empty: the navigation of the main world level (the main world and the story instances of its level).
+     */
+    Navigation(World& world, const gamedata::NavigationData* data, gamedata::Terrain* terrain, bool loaderThread, std::string level = {});
     ~Navigation();
     Navigation(const Navigation&) = delete;
     Navigation& operator=(const Navigation&) = delete;
@@ -413,7 +417,10 @@ private:
     void want(std::int32_t tileX, std::int32_t tileY, WorldClock::time_point now);
     void want_around(const state::WorldPosition& position, float distance, WorldClock::time_point now);
     void update_wanted();
-    /** @return True when the navigation data applies to a space: the main world, or a space of the level of the main world (stage QG9a). */
+    /**
+     * @return True when the navigation data applies to a space: the main world, or a space of the level of the main world (stage QG9a); for
+     *         the navigation of an own level (stage DG2), a space of that level.
+     */
     [[nodiscard]] bool level_data(SpaceId space) const;
     void insert(std::uint64_t key, std::shared_ptr<const gamedata::NavTile> tile, std::chrono::nanoseconds time);
     void take_loaded();
@@ -436,6 +443,8 @@ private:
     [[nodiscard]] NavStep terrain_step(const state::WorldPosition& from, const state::WorldPosition& goal, float distance) const;
 
     World& m_world;
+    /** Stage DG2: the own level of this navigation; empty: the main world level. */
+    std::string m_level;
     const gamedata::NavigationData* m_data;
     gamedata::Terrain* m_terrain;
     const bool m_threaded;

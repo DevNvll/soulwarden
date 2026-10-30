@@ -123,10 +123,28 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
   of their subject. In a space of a different level nothing stops them (the rule of no data); a wall of the main world does not block a
   heal or a shot there (case DG1R6) [review]. The ground and the slide of a space of a different level are open (stage DG2).
 
+### Own levels (stage DG2)
+
+- Each own level with navigation data or terrain heights in its level set has its own navigation: its tiles, its loader thread, its path
+  searches (with the limits of a tick of its own), and its search table (8 MB) ([Instances](instances.md)). `World::navigation(space)` gives
+  the navigation of the level of a space; each call of a subject (a creature, a caster, a spell, a projectile, a spawn of an encounter, the
+  path command) takes the navigation of its space. A space of an own level with no set has a navigation with no data: no ground, no wall,
+  no way [agent; case LV3].
+- The navigation of a level keeps the tiles near the characters of the spaces of its level (`Navigation::level_data` with the level).
+- The tools of a level (`tools/gamedata/level.sh`; `navigation.sh --level LEVEL`, `heights.sh --level LEVEL`): the collision of a region with
+  no `region.chunks` and no `region.slicedata` is the collision of its capitals (the geometry of a dungeon is in `dungeon_art`) and of its
+  distribution; the work files of a level are in `SOULWARDEN_NAVIGATION_WORK/levels/LEVEL` (its region has the name of a region of the main
+  world). The terrain of a level has its own `mountainHeight` (terrain.json: 256 m in most levels, 2048 m in the main world): the tools put
+  its samples into the scale of 2048 m (`nav_terrain.to_main_scale`), the scale of each tool file and of the backend [data; agent]. With the
+  scale of the main world the flat terrain of Amrine was at 256 m, above the mine, and the data had no floor of the mine.
+- Amrine: one region, 2,506 placements, 1.9 MB of navigation data; the floor of the start at 152.25 m (the probe of research DG0: 152.19);
+  `tools/world path` in the mine gives a path of 13 corners and 85.9 m around the rock walls (a straight line of 52 m) [live].
+
 ## Commands
 
 ```sh
 tools/world path NAME 8861.6 4243.4 139.5   # the path of the navigation between two places (a place: X Y Z or a character name)
+tools/world path NAME 694.7 684.6 148.7     # stage DG2: in the navigation of the space of the character (an own level); --space N
 python3 -B tools/research/nav_draw.py ~/.local/share/soulwarden/gamedata/navigation 8850 4230 8880 4260 OUT.png --path FILE   # a picture of the data
 ```
 

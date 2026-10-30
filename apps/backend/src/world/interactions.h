@@ -374,6 +374,8 @@ struct InteractionCounts {
     std::uint64_t scans{0};
     /** Stage 2.5c (case NC7): the lookups of a reference in the reference map of the data (one for each request). */
     std::uint64_t referenceLookups{0};
+    /** Stage DG2: the requests in an instance of the main world level for a level object that a task of the mode names (Interactions::check). */
+    std::uint64_t modeLevelObjects{0};
     /** The work of the last scan of the spawn rule (case IT-LOAD). */
     gamedata::LookupWork scanWork;
 };

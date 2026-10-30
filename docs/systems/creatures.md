@@ -444,7 +444,7 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
 - Stage DG1 ([Instances](instances.md)): each creature is in the main world (the spawn points, the encounters, and the commands are main
   world content). The spawn point rule takes the places of the characters of the main world only: a character in an instance makes no
   creature of a point at the same coordinates (case IN10). A creature of a command near a character in an instance is refused (409): the
-  creatures of an instance level come with its level data (stage DG2) [agent].
+  creatures of an instance level come with its level data (stage DG2: the section below) [agent].
 - Stage QG9a ([Instances](instances.md), [Encounters](encounters.md)): the members of an instance recipe are creatures of the space of the
   instance (`Creatures::spawn_member` with a space); the spawn points of the main world stay main world content.
 - Stage QG9a: the declared casts (`gamedata::kDeclaredCasts`, creature_data.cpp): a creature slice whose ranged action the creature data
@@ -459,6 +459,27 @@ The source of each rule is in brackets, as above ([live] here: the live checks o
   the data: they do not fight (a known limit). Case CRG1 (a declared slice casts; the same actions in an other slice give no shot). Live:
   Medusa hits the character with the poison spit (1034.6 Nature damage, four hits kill a character with no armor); Apophis hits with his
   shot (888.6 Strike damage).
+
+### The creatures of an own level (stage DG2)
+
+- Stage DG2 ([Instances](instances.md), "The level data of an own level"): the spawn points of the level set of an own level make their
+  creatures in the space of each instance of that level (`Creatures::SpawnSet`, one for each space: the states, the grid, the points that
+  wait). The scan takes the characters of each space with a spawn set and looks only at the points of the cells near them (the cost depends
+  on the characters, not on the size of the sets; load case LV5). A death, a removal by a command, the respawn time, and the reset command
+  use the set of the space of the creature [agent].
+- A creature of a level has the kind, the slice, the spawn point, and the route of its level set; each index of its slice (a projectile of a
+  ranged release) is an index of that set (`Creatures::data_of`, `spawn_point_of`). The vision search takes the largest sight of the data of
+  the backend and of each set (`Creatures::largest_sight`) [agent].
+- The creature tool takes the layers of the terrain project of a level with `--level LEVEL` (a level or a map id of the map table): Amrine has
+  97 spawn entries (72 in `dungeon_spawners`, 25 in `dungeon_script`), 66 usual ones, and 51 spawn points of 14 kinds (10 second entries of
+  one placement and 5 nests with no movement component are left out; the 25 entries of the encounters are stage DG5). The frozen ghost of
+  the dungeon affiliation (`wex_dungeon_affiliation/ghost_frozen_dg_aff`) is one more authored case of the plague nova (AREA_EXCEPTIONS)
+  [data]. 26 of the 51 points stand on a free floor of the data: the other ones stand on objects that the mode script makes later (the light
+  bridge over the chasm of the vestibule: a spawner with m_spawnOnInitialize 0) or in a solid; such a creature does not leave its place (the
+  rule of navigation.md) [data; tool].
+- Live (stage DG2): the Amrine creatures at their places in the space of the instance (Star Excavation Scavenger, Retcher, Punisher,
+  Abomination, Plaguegeist, level 25), their attacks (Plague Nova 1,217.6 Nature damage), and a fight of a Scavenger whose path goes around
+  the wall of a corridor.
 
 ### The death of a slice with no reaction action (stage QG9c)
 

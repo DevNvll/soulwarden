@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "gamedata/game_modes.h"
+#include "gamedata/level_data.h"
 #include "gamedata/mission_data.h"
 #include "gamedata/ability_data.h"
 #include "gamedata/appearance_tables.h"
@@ -52,6 +53,20 @@ struct TestTerrain final : gamedata::Terrain {
 
     [[nodiscard]] std::optional<float> height(float x, float y) override {
         return source ? source(x, y) : std::nullopt;
+    }
+};
+
+/**
+ * Stage DG2: the level data sets of a test (gamedata/level_data.h): a folder of sets (levels/LEVEL, the backend form), and the count of the
+ * reads. With no folder, no level has a set.
+ */
+struct TestLevels final : gamedata::LevelSource {
+    gamedata::LevelFolder folder{""};
+    mutable unsigned reads{0};
+
+    [[nodiscard]] std::unique_ptr<gamedata::LevelData> open(const std::string& level) const override {
+        ++reads;
+        return folder.open(level);
     }
 };
 
@@ -115,8 +130,10 @@ struct ServerHost {
     gamedata::MissionData missions;
     /** The game modes (stage DG1). Empty until a case sets them: "instance enter" is then refused. */
     gamedata::GameModes gameModes;
+    /** Stage DG2: the level data sets. No folder until a case sets one: an instance of an own level then has no content. */
+    TestLevels levels;
     world::World world{clock, store, tables,
-                       with_game_modes(with_missions(with_encounters(with_quest_objects(with_triggers(with_conversations(with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
+                       with_levels(with_game_modes(with_missions(with_encounters(with_quest_objects(with_triggers(with_conversations(with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
                                                                                                               combat, places, terrain, navigation,
                                                                                                               loot, abilities, perks, spells,
                                                                                                               projectiles, weaponActions),
@@ -127,7 +144,7 @@ struct ServerHost {
                                      crafting),
                                      quests),
                                      pois),
-                                     conversations), triggers), questObjects), encounters), missions), gameModes)};
+                                     conversations), triggers), questObjects), encounters), missions), gameModes), levels)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -333,6 +350,10 @@ struct ServerHost {
     }
     static world::WorldOptions with_game_modes(world::WorldOptions options, const gamedata::GameModes& modes) {
         options.gameModes = &modes;
+        return options;
+    }
+    static world::WorldOptions with_levels(world::WorldOptions options, const TestLevels& levels) {
+        options.levelSource = &levels;
         return options;
     }
 

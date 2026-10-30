@@ -43,6 +43,7 @@
 #include "gamedata/gathering_data.h"
 #include "gamedata/interaction_data.h"
 #include "gamedata/game_modes.h"
+#include "gamedata/level_data.h"
 #include "gamedata/travel_places.h"
 #include "server/http/admin_access.h"
 #include "server/http/request_handler.h"
@@ -345,6 +346,23 @@ int main(int argc, char** argv) {
                    "tools/gamedata/creatures.sh",
                    creatureDataPath.c_str(),
                    creatureData.error().c_str());
+    }
+    // Stage DG2: the level data sets of the own levels (levels/LEVEL of the game data folder). The backend reads a set when the first space
+    // of its level starts (world/levels.h), not here: this line only names the folders.
+    const gamedata::LevelFolder levelFolder((gameDataDirectory / gamedata::kLevelsFolder).string());
+    {
+        const std::vector<std::string> levels = levelFolder.levels();
+        std::string names;
+        for (const std::string& level : levels) {
+            names += (names.empty() ? "" : ", ") + level;
+        }
+        if (levels.empty()) {
+            log::write("backend: no level data set at %s: an instance of an own level has no content (tools/gamedata/level.sh makes a set)",
+                       levelFolder.directory().c_str());
+        } else {
+            log::write("backend: level data sets at %s (%zu, read at the first instance of each level): %s", levelFolder.directory().c_str(),
+                       levels.size(), names.c_str());
+        }
     }
     // The terrain heights: the ground of a creature that walks. The reader opens no file here:
     // it reads the tile of a place when a creature needs the height there.
@@ -853,6 +871,7 @@ int main(int argc, char** argv) {
     worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
     worldOptions.navigationData = &navigationData;
     worldOptions.navigationThread = true;
+    worldOptions.levelSource = &levelFolder;
     worldOptions.creatureBehavior = options.creatureBehavior;
     // The behavior trees of a development run (stage BT1): a folder whose tree files replace the trees of the program, and the reload
     // route reads it again. Only with --dev-commands (the harness gate): a start of the user has the trees of the program.

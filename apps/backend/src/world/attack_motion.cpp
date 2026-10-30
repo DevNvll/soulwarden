@@ -237,7 +237,7 @@ bool AttackMotion::step(Entity& entity, WorldClock::time_point now) {
         }
         const state::WorldPosition goal{entity.position.x + dx, entity.position.y + dy, entity.position.z};
         if (!rooted && horizontal_distance(goal, entity.position) > 0.0005F) {
-            const Slide slide = m_world.navigation().slide(entity.position, goal);
+            const Slide slide = m_world.navigation(entity.space).slide(entity.position, goal);
             if (!slide.waiting) {
                 const float travel = horizontal_distance(entity.position, slide.position);
                 if (travel > 0.0005F || std::fabs(slide.position.z - entity.position.z) > 0.0005F) {

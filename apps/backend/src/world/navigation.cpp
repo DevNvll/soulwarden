@@ -254,8 +254,8 @@ struct Navigation::Search {
 
 // ---- the start and the end -------------------------------------------------------------------
 
-Navigation::Navigation(World& world, const gamedata::NavigationData* data, gamedata::Terrain* terrain, bool loaderThread)
-    : m_world(world), m_data(data), m_terrain(terrain), m_threaded(loaderThread) {
+Navigation::Navigation(World& world, const gamedata::NavigationData* data, gamedata::Terrain* terrain, bool loaderThread, std::string level)
+    : m_world(world), m_level(std::move(level)), m_data(data), m_terrain(terrain), m_threaded(loaderThread) {
     if (m_threaded) {
         m_loader = std::thread([this] { loader_main(); });
     }
@@ -367,15 +367,20 @@ void Navigation::want_around(const state::WorldPosition& position, float distanc
 }
 
 bool Navigation::level_data(SpaceId space) const {
-    return space == kMainSpace || m_world.main_level(space);
+    if (m_level.empty()) {
+        return space == kMainSpace || m_world.main_level(space);
+    }
+    const SpaceLevel* level = m_world.level_of(space);
+    return level != nullptr && level->level == m_level;
 }
 
 void Navigation::update_wanted() {
     const WorldClock::time_point now = m_world.clock().now();
     // Stage DG1: the navigation data is the data of the main world: a character in an instance of a different level needs no tile of it.
-    // Stage QG9a: a story instance of the level of the main world (QuestMedea) uses the navigation of the main world.
+    // Stage QG9a: a story instance of the level of the main world (QuestMedea) uses the navigation of the main world. Stage DG2: the
+    // navigation of an own level keeps the tiles near the characters of the spaces of its level.
     m_world.for_each_character([&](const Entity& character) {
-        if (m_world.main_level(character.space)) {
+        if (level_data(character.space)) {
             want_around(character.position, navigation_rules::kKeepDistance, now);
         }
     });

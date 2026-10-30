@@ -32,6 +32,7 @@ The module needs only the standard library of Python.
 from __future__ import annotations
 
 import json
+import math
 import os
 import struct
 import subprocess
@@ -107,6 +108,33 @@ def lzw_decode(data: bytes, expected: int) -> bytearray:
             limit = (1 << width) - 1
         if len(out) >= expected:
             return out
+
+
+MAIN_MOUNTAIN_HEIGHT = 2048.0
+
+
+def mountain_height(document: bytes | None, what: str) -> float:
+    """Stage DG2: @return `mountainHeight` of the terrain.json of a terrain project: the height of the sample 65535 in meters (2048 for the
+    main world; 256 for most own levels). A file with no value has the 2048 m of the main world; a value above 2048 stops the tool (the
+    formats of the tools and of the backend keep 2048 m at most)."""
+    if document is None:
+        raise Failure(f"the game copy has no {what}")
+    try:
+        value = float(json.loads(document.decode("utf-8-sig")).get("mountainHeight", MAIN_MOUNTAIN_HEIGHT))
+    except (ValueError, AttributeError, TypeError) as error:
+        raise Failure(f"{what}: no mountain height: {error}") from error
+    if not (math.isfinite(value) and 0.0 < value <= MAIN_MOUNTAIN_HEIGHT):
+        raise Failure(f"{what}: the mountain height {value} is not a height from 0 to {MAIN_MOUNTAIN_HEIGHT:g} m")
+    return value
+
+
+def to_main_scale(samples: array, mountain: float) -> array:
+    """Stage DG2: the samples of a height map whose sample 65535 is `mountain` meters, in the scale of the main world (2048 m; each tool
+    file and each file of the backend has this scale): round(sample * mountain / 2048). The step of a sample stays 2048 / 65535 m."""
+    if mountain == MAIN_MOUNTAIN_HEIGHT:
+        return samples
+    factor = mountain / MAIN_MOUNTAIN_HEIGHT
+    return array("H", (min(65535, int(sample * factor + 0.5)) for sample in samples))
 
 
 def read_heightmap(data: bytes) -> array:

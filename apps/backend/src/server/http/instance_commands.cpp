@@ -25,17 +25,77 @@ json instance_json(const world::World& world, const world::Instance& instance) {
                            {"returnPlace", place_json(member.returnPlace)},
                            {"seconds", std::chrono::duration<double>(world.clock().now() - member.entered).count()}});
     }
-    return {{"id", instance.id},
-            {"space", instance.space},
-            {"map", instance.map},
-            {"mode", instance.mode},
-            {"level", instance.level.level},
-            {"terrain", instance.level.terrain},
-            {"start", place_json(instance.start)},
-            {"heading", instance.heading},
-            {"capacity", instance.capacity},
-            {"seconds", std::chrono::duration<double>(world.clock().now() - instance.started).count()},
-            {"members", members}};
+    json result = {{"id", instance.id},
+                   {"space", instance.space},
+                   {"map", instance.map},
+                   {"mode", instance.mode},
+                   {"level", instance.level.level},
+                   {"terrain", instance.level.terrain},
+                   {"start", place_json(instance.start)},
+                   {"heading", instance.heading},
+                   {"capacity", instance.capacity},
+                   {"seconds", std::chrono::duration<double>(world.clock().now() - instance.started).count()},
+                   {"members", members}};
+    // Stage DG2: the spawn points of the level set of the space (an own level), with their creatures.
+    if (const world::SpawnSet* set = instance.space != world::kMainSpace ? world.creatures().spawn_set(instance.space) : nullptr) {
+        std::size_t creatures = 0;
+        for (const world::SpawnPointState& point : set->points) {
+            creatures += point.entity != 0 ? 1 : 0;
+        }
+        result["levelSpawnPoints"] = set->points.size();
+        result["levelCreatures"] = creatures;
+        result["levelWaiting"] = set->waiting.size();
+    }
+    return result;
+}
+
+json part_json(const gamedata::LevelPart& part) {
+    json result = {{"loaded", part.loaded}, {"bytes", part.bytes}};
+    if (!part.loaded) {
+        result["problem"] = part.problem;
+    }
+    return result;
+}
+
+/** Stage DG2: the own levels that the world read (world/levels.h). */
+json levels_json(const world::World& world) {
+    json list = json::array();
+    for (const auto& [name, level] : world.levels().levels()) {
+        json entry = {{"level", name},
+                      {"set", level.data != nullptr},
+                      {"loadMilliseconds", std::chrono::duration<double, std::milli>(level.loadTime).count()},
+                      {"spaces", json(level.spaces)},
+                      {"navigation", level.navigation != nullptr}};
+        if (level.data != nullptr) {
+            const gamedata::LevelData& data = *level.data;
+            entry["accepted"] = data.accepted();
+            if (!data.accepted()) {
+                entry["problem"] = data.problem();
+            } else {
+                entry["terrain"] = data.terrain();
+                entry["creatures"] = part_json(data.creature_part());
+                entry["creatures"]["spawnPoints"] = data.creatures().spawn_points().size();
+                entry["creatures"]["kinds"] = data.creatures().kinds().size();
+                entry["heights"] = part_json(data.height_part());
+                entry["navigationData"] = part_json(data.navigation_part());
+                entry["navigationData"]["regions"] = data.navigation().regions();
+                entry["interactions"] = part_json(data.interaction_part());
+                entry["interactions"]["objects"] = data.interactions().objects().size();
+            }
+        }
+        if (level.navigation != nullptr) {
+            const world::NavigationCounts& counts = level.navigation->counts();
+            entry["tilesHeld"] = counts.tilesHeld;
+            entry["tilesLoaded"] = counts.tilesLoaded;
+            entry["searches"] = counts.searches;
+        }
+        list.push_back(std::move(entry));
+    }
+    const world::LevelCounts& counts = world.levels().counts();
+    return {{"source", world.levels().source() != nullptr},
+            {"levels", list},
+            {"counts", {{"reads", counts.reads}, {"refused", counts.refused}, {"noSet", counts.noSet}, {"spacesStarted", counts.spacesStarted},
+                        {"spacesEnded", counts.spacesEnded}}}};
 }
 
 service::HttpResponse refusal_of(const world::InstanceResult& result) {
@@ -105,6 +165,7 @@ json instances_json(world::World& world) {
     const world::InstanceCounts& counts = instances.counts();
     return {{"data", instances.data() != nullptr},
             {"instances", list},
+            {"levels", levels_json(world)},
             {"counts",
              {{"made", counts.made},
               {"ended", counts.ended},
@@ -114,7 +175,8 @@ json instances_json(world::World& world) {
               {"recovered", counts.recovered},
               {"refused", counts.refused},
               {"questObjectsMade", counts.questObjectsMade},
-              {"questObjectsGathered", counts.questObjectsGathered}}}};
+              {"questObjectsGathered", counts.questObjectsGathered},
+              {"questObjectsAgain", counts.questObjectsAgain}}}};
 }
 
 json game_maps_json(const gamedata::GameModes* modes) {

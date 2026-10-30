@@ -1259,7 +1259,7 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
         state::WorldPosition launch = own->position;
         launch.z += 1.5F;
         state::WorldPosition origin = shot.origin;
-        if (!valid_position(origin) || distance3(origin, own->position) > kShotOrigin || m_world.navigation().line_stop(launch, origin, own->space)) {
+        if (!valid_position(origin) || distance3(origin, own->position) > kShotOrigin || m_world.navigation(own->space).line_stop(launch, origin, own->space)) {
             origin = launch;
         }
         std::array<float, 3> direction = shot.direction;
@@ -1292,7 +1292,7 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
     // The origin must be near the character, with no wall between the launch place of the server and it (code review of
     // stage 3.3a, finding F3): a client cannot put the origin behind a wall.
     if (!valid_position(origin) || distance3(origin, character->position) > kShotOrigin
-        || !m_world.navigation().sees(launch, origin, character->space)) {
+        || !m_world.navigation(character->space).sees(launch, origin, character->space)) {
         origin = launch;
     }
     std::array<float, 3> direction = shot.direction;
@@ -1830,7 +1830,7 @@ void Abilities::spell_landed(std::uint64_t number, const SpellLanding& landing) 
     }
     if (request.attach == 0) {
         // On the ground below the point (the navigation data; with no data the point of the landing).
-        if (const std::optional<float> ground = m_world.navigation().ground_height(place)) {
+        if (const std::optional<float> ground = m_world.navigation(cast.space).ground_height(place)) {
             place.z = *ground;
         }
     }
@@ -1862,7 +1862,7 @@ void Abilities::spawn_summon(std::uint64_t number) {
     const float ahead = row != nullptr && plan.role == SpellRole::summon ? row->cells.number("CharRelPosOffsetY") : 0.0F;
     const std::array<float, 2> front = direction_of(cast.yaw);
     state::WorldPosition place{caster->position.x + front[0] * ahead, caster->position.y + front[1] * ahead, caster->position.z};
-    if (const std::optional<float> ground = m_world.navigation().ground_height(place); ground && std::fabs(*ground - caster->position.z) < 3.0F) {
+    if (const std::optional<float> ground = m_world.navigation(caster->space).ground_height(place); ground && std::fabs(*ground - caster->position.z) < 3.0F) {
         place.z = *ground;
     }
     // The payment at the spawn (the action IceMagic_IcePylon_Cooldown pays the cost of the UI spell; the one mana path).
@@ -1952,7 +1952,7 @@ Entity* Abilities::heal_target(Entity& caster, const gamedata::SpellRow& spell, 
         }
         state::WorldPosition chest = entity.position;
         chest.z += 1.5F;
-        if (!m_world.navigation().sees(eye, chest, entity.space)) {
+        if (!m_world.navigation(entity.space).sees(eye, chest, entity.space)) {
             return;
         }
         best = &entity;
@@ -2091,7 +2091,7 @@ void Abilities::throw_projectile(Cast& cast, const state::WorldPosition& origin,
     // A wall on the line stops the projectile.
     for (float along = 0.5F; along < best; along += 0.5F) {
         const state::WorldPosition point{origin.x + dx * along, origin.y + dy * along, origin.z};
-        if (!m_world.navigation().sees(origin, point, thrower->space)) {
+        if (!m_world.navigation(thrower->space).sees(origin, point, thrower->space)) {
             best = std::max(along - 0.5F, 0.0F);
             touched.reset();
             ++m_counts.blocked;
@@ -2101,7 +2101,7 @@ void Abilities::throw_projectile(Cast& cast, const state::WorldPosition& origin,
     state::WorldPosition landing{origin.x + dx * best, origin.y + dy * best, origin.z};
     if (touched) {
         landing = *touched;
-    } else if (const std::optional<float> ground = m_world.navigation().ground_height(landing)) {
+    } else if (const std::optional<float> ground = m_world.navigation(thrower->space).ground_height(landing)) {
         landing.z = *ground;
     } else {
         landing.z = origin.z - 1.5F;
@@ -2337,7 +2337,7 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
             continue;
         }
         // A wall between the center and the creature stops the area.
-        if (!m_world.navigation().sees(center, target->position, target->space)) {
+        if (!m_world.navigation(target->space).sees(center, target->position, target->space)) {
             ++m_counts.blocked;
             continue;
         }
@@ -2798,7 +2798,7 @@ void Abilities::counter_hit(std::uint64_t number, std::uint32_t index, EntityId 
     }
     // The capsule of the counter action is in front of the caster: the attacker must still be in the reach of its hit, with
     // no wall between them.
-    if (distance3(caster->position, target->position) > reach || !m_world.navigation().sees(caster->position, target->position, caster->space)) {
+    if (distance3(caster->position, target->position) > reach || !m_world.navigation(caster->space).sees(caster->position, target->position, caster->space)) {
         log::write("world: ability: the counter of %s does not reach creature %016llx", caster->name.c_str(),
                    static_cast<unsigned long long>(attacker));
         return;
@@ -2966,7 +2966,7 @@ void Abilities::step_dashes() {
         const float more = dash.distance * part - dash.travelled;
         const state::WorldPosition goal{character->position.x + dash.direction[0] * more, character->position.y + dash.direction[1] * more,
                                         character->position.z};
-        const Slide slide = m_world.navigation().slide(character->position, goal);
+        const Slide slide = m_world.navigation(character->space).slide(character->position, goal);
         bool done = part >= 1.0F || slide.blocked;
         if (!slide.waiting) {
             dash.travelled += horizontal_distance(character->position, slide.position);
@@ -3081,7 +3081,7 @@ void Abilities::perk_burst(Entity& caster, std::string_view spellId) {
             break;
         }
         if (target == nullptr || target->creature.dead || target->creature.immune()
-            || !m_world.navigation().sees(center, target->position, target->space)) {
+            || !m_world.navigation(target->space).sees(center, target->position, target->space)) {
             continue;
         }
         if (m_world.combat().strike(*own, *target, HitWeapon{itemId, slot, weapon, gearScore, {}}, *row, 1.0F, "a burst of a perk").verdict
@@ -3369,7 +3369,7 @@ void Abilities::follow_strike(Cast& cast, Entity& caster, const gamedata::Attack
                     // No pull through a wall: the sight from the chest of the caster to the creature (1.5 m and 1 m above the feet).
                     const state::WorldPosition from{caster.position.x, caster.position.y, caster.position.z + 1.5F};
                     const state::WorldPosition to{entity.position.x, entity.position.y, entity.position.z + 1.0F};
-                    if (m_world.navigation().sees(from, to, entity.space)) {
+                    if (m_world.navigation(entity.space).sees(from, to, entity.space)) {
                         eligible.emplace_back(horizontal_distance(caster.position, entity.position), entity.id);
                     }
                     return;
@@ -3405,7 +3405,7 @@ void Abilities::follow_strike(Cast& cast, Entity& caster, const gamedata::Attack
         });
         const state::WorldPosition from{caster.position.x, caster.position.y, caster.position.z + 1.5F};
         const state::WorldPosition to{creature->position.x, creature->position.y, creature->position.z + 1.0F};
-        if (reached && m_world.navigation().sees(from, to, creature->space)) {
+        if (reached && m_world.navigation(creature->space).sees(from, to, creature->space)) {
             eligible.emplace_back(away, id);
         }
     }
@@ -3549,7 +3549,7 @@ void Abilities::cast_spell_at(Entity& character, std::uint64_t cast, std::string
         request.attach = character.id;
     } else {
         request.role = SpellRole::visual;
-        if (const std::optional<float> ground = m_world.navigation().ground_height(request.position);
+        if (const std::optional<float> ground = m_world.navigation(character.space).ground_height(request.position);
             ground && std::fabs(*ground - request.position.z) < 3.0F) {
             request.position.z = *ground;
         }

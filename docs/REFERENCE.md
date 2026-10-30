@@ -136,6 +136,7 @@ tools/gamedata/weapon-actions.sh   # one time: the attack graphs of the melee we
 tools/gamedata/perks.sh            # one time: perk data (perks, buckets, item perk places, consumables, equip load; without it an item has no perk)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
 tools/gamedata/game-modes.sh       # one time: the maps of the game modes (the instances: the level, the terrain, the start; without them "instance enter" is refused); 4 s; needs an Oodle library
+tools/gamedata/level.sh LEVEL      # stage DG2: the data set of an own level (a level or a map id, DungeonAmrine; without it an instance of the level has no content); Amrine 2.2 MB, 1 minute; needs an Oodle library, a C and a C++ compiler
 tools/gamedata/interactions.sh     # one time: the interaction objects of the world (without them each use of an object is refused); 24 MB, 4 minutes; needs an Oodle library
 tools/gamedata/chests.sh           # one time: the chests of the world (without them no chest opens); 3.6 MB; needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
@@ -1052,9 +1053,18 @@ button on "Confirm").
   modes and back, in the same connection: `tools/world instance maps [TEXT]`, `tools/world instance enter CHARACTER MAP [INSTANCE]` (for
   example `DungeonAmrine`: the loading screen of the expedition, then the character at the start of the map; INSTANCE: the id of an
   instance of that map to join), `tools/world instance return CHARACTER` (back to the place of the entry in the main world),
-  `tools/world instance list`. `tools/world list` shows the space of each entity. An instance of a different level has no creature and no
-  object yet (stage DG2). A character that leaves the world in an instance, or whose backend stops, enters the world again at the place
-  of its entry.
+  `tools/world instance list`. `tools/world list` shows the space of each entity. A character that leaves the world in an instance, or
+  whose backend stops, enters the world again at the place of its entry.
+- The level data of an own level (stage DG2, [Instances](systems/instances.md)): an instance of a level with a data set
+  (`tools/gamedata/level.sh LEVEL`; the set goes to `levels/LEVEL` of the game data folder) has the creatures of the spawn points of that
+  level, its floors, its walls, and its paths: in the Amrine Excavation the creatures of the mine stand at their places, see a character,
+  walk around the walls to it, and fight. Each instance has its own creatures. The backend reads a set at the first instance of its level
+  (Amrine: 8 ms); with no set an instance of the level has no creature and no object. `tools/world path NAME X Y Z` searches in the
+  navigation of the space of the character; `tools/world instance list` names the levels that the backend read. Not yet: the encounters
+  and the bosses of an expedition, the objects and the lore pages of an own level, the creatures of a solo story level with a level of its
+  own (they are members of its encounter).
+- The statue of Taurus (stage DG2): in the instance of QuestMedusa the task "Unpetrify Taurus" (`09A_M12_SaveTaurus`) has its prompt
+  "Free Taurus with the tincture", and the use of the statue completes the task.
 - Story instances (stage QG9a, [Instances](systems/instances.md)): the entrance of a solo mode of the main world level (Medea in
   Thornhall, the mode QuestMedea) enters a private instance of the same level: OpenDungeonMenu, then the Enter button of the window of the
   game (the result 3094; a mode whose content the server does not run gets "the entrance cannot be activated"). In the instance only its

@@ -586,7 +586,7 @@ void Gear::perk_status(Entity& attacker, Entity& target, std::string_view status
                     }
                     const float away = horizontal_distance(entity.position, from);
                     if (away <= best && std::fabs(entity.position.z - from.z) <= 3.0F
-                        && m_world.navigation().sees(from, entity.position, entity.space)) {
+                        && m_world.navigation(entity.space).sees(from, entity.position, entity.space)) {
                         best = away;
                         next = &entity;
                     }

@@ -211,6 +211,8 @@ struct InstanceCounts {
     /** Stage QG9d: the quest objects of the mode roots that the instances made and that a member gathered. */
     std::uint64_t questObjectsMade{0};
     std::uint64_t questObjectsGathered{0};
+    /** Code review of stage QG9d, finding QG9DR-R3: the gathered quest objects whose task a member has again (a reset): made again. */
+    std::uint64_t questObjectsAgain{0};
 };
 
 class Instances {

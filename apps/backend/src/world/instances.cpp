@@ -397,21 +397,32 @@ void Instances::look_quest_objects(Instance& instance) {
     }
     bool waiting = false;
     for (InstanceQuestObject& quest : instance.questObjects) {
+        const auto wanted_now = [&] {
+            return std::any_of(present.begin(), present.end(), [&](const Entity* character) {
+                return m_world.quests().mode_task_active(*character, instance.mode, {quest.key});
+            });
+        };
         if (quest.gathered) {
             if (quest.entity != 0) {
                 (void)m_world.interactions().remove_object(quest.entity);
                 instance.objects.erase(std::remove(instance.objects.begin(), instance.objects.end(), quest.entity), instance.objects.end());
                 quest.entity = 0;
+                continue;
             }
-            continue;
+            // Code review of stage QG9d, finding QG9DR-R3: the gather ended the use of the object, not its task. When its object is gone
+            // and a member has its task active again (a reset of the quest), the object comes again [agent: the gather of the object
+            // completes its one task; the mode script that makes it is not in the client].
+            if (!wanted_now()) {
+                continue;
+            }
+            quest.gathered = false;
+            ++m_counts.questObjectsAgain;
         }
         waiting = true;
         if (quest.entity != 0 || quest.object >= recipes->instance_objects().size()) {
             continue;
         }
-        const bool wanted = std::any_of(present.begin(), present.end(), [&](const Entity* character) {
-            return m_world.quests().mode_task_active(*character, instance.mode, {quest.key});
-        });
+        const bool wanted = wanted_now();
         const gamedata::InstanceObject& object = recipes->instance_objects()[quest.object];
         const std::optional<std::uint32_t> templateIndex = catalog->instance_object(object.slice);
         if (!wanted || !templateIndex) {
@@ -647,6 +658,9 @@ InstanceResult Instances::enter(const std::string& characterId, const std::strin
                    static_cast<unsigned long long>(id), instance->map.c_str(), instance->mode.c_str(), instance->level.level.c_str(),
                    instance->space, static_cast<double>(instance->start.x), static_cast<double>(instance->start.y),
                    static_cast<double>(instance->start.z), instance->capacity);
+        // Stage DG2: a space of an own level gets the content of the data set of its level (the first space reads the set), before the
+        // move: the character comes to the floors of its level.
+        m_world.levels().space_started(instance->space, instance->level.level);
     }
     instance->members[characterId] = member;
     m_byCharacter[characterId] = id;
@@ -780,6 +794,8 @@ void Instances::end_instance(std::uint64_t id, const char* cause) {
         (void)m_world.interactions().remove_object(object);
     }
     const std::size_t removed = m_world.clear_space(space);
+    // Stage DG2: the spawn points of the space go; the data of its level stays for a later instance.
+    m_world.levels().space_ended(space);
     log::write("world: instance %llu (%s) ended: %s; space %u is free (%zu other entit%s removed)", static_cast<unsigned long long>(id),
                found->second.map.c_str(), cause, space, removed, removed == 1 ? "y" : "ies");
     m_bySpace.erase(space);

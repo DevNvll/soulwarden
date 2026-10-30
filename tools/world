@@ -1462,14 +1462,37 @@ def instances_text(document: dict) -> str:
     lines = [f"instances: {len(document['instances'])} now; {counts['made']} made, {counts['ended']} ended, {counts['entries']} entries, "
              f"{counts['exits']} returns, {counts['departures']} members that left the world, {counts['recovered']} rows of an earlier "
              f"start, {counts['refused']} refused, {counts.get('questObjectsMade', 0)} quest object(s) of a mode root made, "
-             f"{counts.get('questObjectsGathered', 0)} gathered" + ("" if document.get("data", True) else " (the backend has no game modes)")]
+             f"{counts.get('questObjectsGathered', 0)} gathered, {counts.get('questObjectsAgain', 0)} made again"
+             + ("" if document.get("data", True) else " (the backend has no game modes)")]
     for instance in document["instances"]:
         x, y, z = instance["start"]
+        # Stage DG2: the spawn points of the level set of the space of an own level.
+        level_points = (f"  level spawn points {instance['levelSpawnPoints']} ({instance['levelCreatures']} creatures, "
+                        f"{instance['levelWaiting']} wait)" if "levelSpawnPoints" in instance else "")
         lines.append(f"  instance {instance['id']}  space {instance['space']}  map {instance['map']} ({instance['level']})  start "
-                     f"{x:.2f} {y:.2f} {z:.2f}  {len(instance['members'])} of {instance['capacity']} member(s)  {instance['seconds']:.0f} s")
+                     f"{x:.2f} {y:.2f} {z:.2f}  {len(instance['members'])} of {instance['capacity']} member(s)  {instance['seconds']:.0f} s"
+                     + level_points)
         for member in instance["members"]:
             rx, ry, rz = member["returnPlace"]
             lines.append(f"    member {member['character']}  return place {rx:.2f} {ry:.2f} {rz:.2f}  {member['seconds']:.0f} s")
+    # Stage DG2: the own levels whose data set the backend read (at the first instance of each level).
+    levels = document.get("levels") or {}
+    level_counts = levels.get("counts") or {}
+    if levels:
+        lines.append(f"levels: {len(levels.get('levels', []))} read; {level_counts.get('reads', 0)} sets, {level_counts.get('refused', 0)} "
+                     f"refused, {level_counts.get('noSet', 0)} with no set; {level_counts.get('spacesStarted', 0)} spaces started, "
+                     f"{level_counts.get('spacesEnded', 0)} ended" + ("" if levels.get("source", True) else " (the backend has no level folder)"))
+    for level in levels.get("levels", []):
+        if not level.get("set"):
+            lines.append(f"  level {level['level']}: no set")
+        elif not level.get("accepted"):
+            lines.append(f"  level {level['level']}: refused ({level.get('problem', '')})")
+        else:
+            parts = ", ".join(f"{name} {'%d bytes' % level[name]['bytes'] if level[name]['loaded'] else 'none'}"
+                              for name in ("creatures", "navigationData", "heights", "interactions"))
+            lines.append(f"  level {level['level']}: read in {level['loadMilliseconds']:.1f} ms; {level['creatures'].get('spawnPoints', 0)} spawn "
+                         f"points, {level['interactions'].get('objects', 0)} objects; {parts}; spaces {level['spaces']}; navigation tiles "
+                         f"{level.get('tilesHeld', 0)}")
     return "\n".join(lines)
 
 
@@ -1889,9 +1912,17 @@ def main() -> None:
                 fail("give a file name after --tsv")
             table = words[place + 1]
             del words[place:place + 2]
-        # A place is three numbers, or a character that is in the world.
+        # A place is three numbers, or a character that is in the world. Stage DG2: the search uses the navigation of the space of the first
+        # character of the command (an instance of an own level has its own data), or of --space N; the main world with neither.
         values: list[float] = []
         entities = None
+        space = None
+        if "--space" in words:
+            place = words.index("--space")
+            if place + 1 >= len(words) or not words[place + 1].isdigit():
+                fail("give the number of a space after --space")
+            space = int(words[place + 1])
+            del words[place:place + 2]
         while words and len(values) < 6:
             try:
                 float(words[0])
@@ -1905,10 +1936,13 @@ def main() -> None:
                 if not found:
                     fail("the character of the path command is not in the world: give its place as three numbers")
                 values.extend(found[0]["position"])
+                if space is None:
+                    space = int(found[0].get("space", 0))
         if len(values) != 6 or words:
             fail("give two places: X0 Y0 Z0 X1 Y1 Z1 (a place can be the name of a character that is in the world)")
         request(data_dir, "GET", "/v1/dev/world/path?" + "&".join(f"{name}={value}" for name, value in
-                                                                 zip(("x0", "y0", "z0", "x1", "y1", "z1"), values)),
+                                                                 zip(("x0", "y0", "z0", "x1", "y1", "z1", "space"),
+                                                                     values + [space or 0])),
                 filter_text=table)
     elif command == "track" and len(arguments) in (3, 5):
         words = arguments[1:]

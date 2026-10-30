@@ -122,6 +122,10 @@ The source of each rule is in brackets: game data, client code, live check (the 
 - Stage QG9a (finding DG1R-R3 of the review of stage DG1): a move to a different space clears the chest entries of the LootTracker of the
   character (`Chests::space_changed`) and marks the state: the owner record of the new context has none (case DG1R3) [review]. The quest
   object trackers of the owner record (questObjectTracker, questGatherTracker) are only in the main world (case DG1R7).
+- Stage DG2: the chest tool takes the layers of an own level with `--level LEVEL` (`chests.use_level`). Amrine has no chest of the chest data
+  in its layers: its 7 kind-0 records are the 6 locked chests (LootLargeT3, root Empty) of its mode root, which the mode script makes (stage
+  DG5), and the hallowed candle; the level tool then writes no `chest-data.json` into the set, and the backend has no chest part of a level
+  [data; agent].
 
 ## Commands
 

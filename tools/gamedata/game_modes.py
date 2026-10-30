@@ -156,6 +156,40 @@ def build_document(sources: Sources) -> dict:
     return {"format": FORMAT, "counts": {"modes": len(modes), "maps": len(maps), "mapsWithNoPlace": no_place}, "maps": maps}
 
 
+MAIN_LEVEL = "newworld_vitaeeterna"
+
+
+def level_terrain(sources: Sources, name: str) -> tuple[str, str, list[dict]]:
+    """Stage DG2 (docs/systems/instances.md, "The level data"): the terrain project of an own level, from the map table of the game copy
+    (not from a constant of a tool).
+    @param name A level ("nw_dungeon_windsward_00") or a map id ("DungeonAmrine"); the compare ignores the case.
+    @return The level, its terrain folder below sharedassets/ ("coatlicue/nw_dungeon_windsward_00"), and its map rows. The level of the
+            main world and a name of no map row stop the tool: the main world has its own data files."""
+    maps = build_document(sources)["maps"]
+    wanted = name.strip().lower()
+    rows = [entry for entry in maps if entry["level"] == wanted]
+    if not rows:
+        by_id = next((entry for entry in maps if entry["id"].lower() == wanted), None)
+        if by_id is not None:
+            rows = [entry for entry in maps if entry["level"] == by_id["level"]]
+    if not rows:
+        raise Failure(f"no map row of {MAPS_TABLE} has the level or the map id {name!r}")
+    level = rows[0]["level"]
+    if level == MAIN_LEVEL:
+        raise Failure(f"{name} is a map of the level of the main world ({MAIN_LEVEL}): its data is the data of the main world")
+    return level, rows[0]["terrain"], rows
+
+
+def own_levels(sources: Sources) -> list[tuple[str, str, list[str]]]:
+    """Stage DG2: @return Each own level of the map table (a level that is not the level of the main world): the level, its terrain
+    folder, and the ids of its maps, in the order of the map table."""
+    levels: dict[str, tuple[str, list[str]]] = {}
+    for entry in build_document(sources)["maps"]:
+        if entry["level"] != MAIN_LEVEL:
+            levels.setdefault(entry["level"], (entry["terrain"], []))[1].append(entry["id"])
+    return [(level, terrain, ids) for level, (terrain, ids) in levels.items()]
+
+
 def main() -> int:
     home = Path.home()
     game = Path(os.environ.get("SOULWARDEN_GAME_DIR") or home / "Games/soulwarden/game")

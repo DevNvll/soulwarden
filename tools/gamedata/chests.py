@@ -448,6 +448,18 @@ def cell_of(x: float, y: float) -> tuple[int, int]:
     return (math.floor(x), math.floor(y))
 
 
+def use_level(sources: Sources, name: str) -> str:
+    """Stage DG2: the layers of an own level (a level or a map id of the map table; game_modes.level_terrain). @return The level."""
+    import game_modes  # noqa: PLC0415 (the module imports creature_data)
+    global REGIONS_FOLDER, WORLD
+    level, terrain, _rows = game_modes.level_terrain(sources, name)
+    if not terrain.startswith("coatlicue/") or terrain.count("/") != 1:
+        raise Failure(f"the terrain project {terrain!r} of the map row is not a folder coatlicue/NAME")
+    WORLD = terrain.split("/", 1)[1]
+    REGIONS_FOLDER = f"sharedassets/coatlicue/{WORLD}/regions/"
+    return level
+
+
 def build_document(sources: Sources, regions: list[str] | None = None, center: tuple[float, float] | None = None,
                    radius: float | None = None) -> dict:
     tables = Tables(sources)
@@ -648,15 +660,26 @@ def main() -> int:
     parser.add_argument("--center", type=float, nargs=2, metavar=("X", "Y"), help="the center of the circle")
     parser.add_argument("--list", metavar="STATE_OR_KIND", help="print the chests of a state (ordinary, unavailable) or a kind "
                                                                 "(supply, provision, alchemy, elite, other), and write no file")
+    parser.add_argument("--level", metavar="LEVEL", help="stage DG2: the chests of the layers of an own level (a level or a map id of the "
+                                                         "map table; default output GAMEDATA/levels/LEVEL/chest-data.json)")
     arguments = parser.parse_args()
+    if arguments.level and (arguments.region or arguments.radius is not None):
+        print("chests: --level takes the whole terrain of the level: no --region and no --radius. No file was written.", file=sys.stderr)
+        return 1
     if arguments.radius is not None and not (math.isfinite(arguments.radius) and arguments.radius > 0):
         print("chests: --radius must be a number above 0. No file was written.", file=sys.stderr)
         return 1
     center = tuple(arguments.center) if arguments.center else (DEFAULT_CENTER if arguments.radius is not None else None)
     target = Path(arguments.output)
     try:
-        sources = Sources(game / "assets", WANTED)
+        # Stage DG2: the layers of a level are below its terrain folder; the map table needs the texts of the modes.
+        sources = Sources(game / "assets", WANTED + (("sharedassets/coatlicue/", "localization/") if arguments.level else ()))
+        level = use_level(sources, arguments.level) if arguments.level else None
+        if level is not None and arguments.output == parser.get_default("output"):
+            target = gamedata / "levels" / level / OUTPUT_NAME
         document = build_document(sources, arguments.region, center, arguments.radius)
+        if level is not None:
+            document["level"] = level
         if not arguments.list:
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_name(target.name + ".tmp")

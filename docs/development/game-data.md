@@ -642,6 +642,23 @@ backend. The tool of each system is also in the document of that system.
   representatives of the faction boards). The top-level member `claims` maps each territory id (text) to the ActorId of its Claim
   landmark (hex, 16 bytes; the build: 13 territories): the provider identity of a faction board of that territory. A backend of stage
   QG6a reads the file and does not use the two members.
+- Stage DG2 ([Instances](../systems/instances.md), "The level data of an own level"): the level data set of an own level (a level of a map
+  row that is not `newworld_vitaeeterna`) is the folder `levels/LEVEL` of the game data folder: `level.json` (format 1: `level`, `terrain`,
+  `maps`, `modes`, `parts` with the bytes and the counts of each part, `spawnEntries`, `bytes`, `seconds`), `creatures.json` (the form of
+  the creature data of the main world, format 4, with the spawn points of the layers of the level; no member list), `navigation/` and
+  `heights/` (the one region of the level), `interaction-data.json` (format 6: the objects of the capitals of the level; no list of the
+  persons of the other worlds), and `chest-data.json` only for a level with a chest. `tools/gamedata/level.sh LEVEL [GAMEDATA_DIR]` makes
+  the set (`level_data.py`): the level and its terrain folder come from the map row (`game_modes.level_terrain`: a level or a map id; the
+  level of the main world and a name of no map row stop it); it runs `creature_data.py`, `navigation_data.py`, `interactions.py`, and
+  `chests.py` with `--level LEVEL` into `levels/LEVEL.part` and puts the part in the place of the old set only when each tool ended with
+  status 0 (a tool that stops keeps the old set). A level whose layers have no usual spawn point has no `creatures.json` (its creatures are
+  members of the encounters of its mode root: the solo story levels). The terrain of a level has its own `mountainHeight` (terrain.json):
+  `nav_terrain.to_main_scale` puts its samples into the scale of 2048 m of each tool file; a value above 2048 m stops the tools. The backend
+  reads a set at the first instance of its level and refuses a set with no manifest or with a different format (an old file) as a whole,
+  and a part whose reader refuses it alone. Without the folder `levels` the backend starts and works (an instance of an own level has no
+  content). `check_level_tool.py` is the check (case LV1). Amrine: 2.2 MB, 68 s with 8 processes (the creatures 199 KB, the navigation
+  1.9 MB, the heights 42 KB, the interactions 67 KB); the list of the levels that the tools make is in the result of stage DG2.
+
 ## Commands
 
 ```sh
@@ -674,9 +691,19 @@ tools/gamedata/heights.sh            # one time: terrain heights for the backend
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
 tools/gamedata/gathering.sh --region r_+04_+02 --near 8817 4281 30   # the gathering nodes near a place, with their G (no file)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
+tools/gamedata/level.sh DungeonAmrine  # stage DG2: the level data set of an own level into levels/LEVEL (Amrine 2.2 MB, 1 minute); --list names the own levels and their sets
 ```
 
 ## Traps
+
+- Stage DG2: a level has a region with the name of a region of the main world (`r_+00_+00`). The tools keep the work files of a level apart
+  (`SOULWARDEN_NAVIGATION_WORK/levels/LEVEL`: the collision, the terrain after the cookies, the grids); a height tool with no `--level` reads
+  the terrain of the main world. Give a test an output folder (`tools/gamedata/level.sh LEVEL FOLDER`), not the common folder.
+- Stage DG2: the scale of the terrain of a level (`mountainHeight` 256 m in most levels). A tool that reads a height map of a level must put
+  its samples into the scale of 2048 m (`nav_terrain.to_main_scale`): with the scale of the main world the flat terrain of Amrine was 8 times
+  too high (256 m above the mine, 32 m in the game).
+- Stage DG2 changes no file of the common game data folder other than the new folder `levels` (the set of Amrine). `creatures.json` and the
+  other files of the main world keep their bytes; a backend of before ignores the folder `levels`.
 
 - Stage QG8 changes `loot-tables.json` (still format 2: the optional member `eventRoots`, the loot table of each game event whose
   ItemReward is "[LTID]NAME": 149 events; 111 more tables and 50 more buckets, the tables of before keep their values; an event table

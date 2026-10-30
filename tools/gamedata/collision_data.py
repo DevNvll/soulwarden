@@ -75,8 +75,8 @@ from nav_shapes import (IDENTITY, Statistics, box_part, cylinder_part, multiply,
                         read_physics, sphere_part)
 from nav_slices import (MARK_CUT, MARK_NONE, MARK_NOT_WALKABLE, MARK_WALKABLE, Collider, SliceContent,  # noqa: E402
                         matrix_of, physics_path, read_slice)
-from nav_terrain import (HEIGHT_SCALE, NO_WATER, REGION_SIZE, apply_cookies, read_cookies, read_heightmap,  # noqa: E402
-                         read_water)
+from nav_terrain import (HEIGHT_SCALE, MAIN_MOUNTAIN_HEIGHT, NO_WATER, REGION_SIZE, apply_cookies, mountain_height,  # noqa: E402
+                         read_cookies, read_heightmap, read_water, to_main_scale)
 
 DEFAULT_WORLD = "newworld_vitaeeterna"
 FILTERS_PATH = "sharedassets/physics/default.collisionfilters"
@@ -153,6 +153,9 @@ class Counts:
 class World:
     """The readers and the caches that all regions share."""
 
+    # Stage DG2: the height of the sample 65535 of the terrain project (the main world: 2048 m; __init__ reads terrain.json).
+    mountain_height: float = MAIN_MOUNTAIN_HEIGHT
+
     def __init__(self, name: str, cache: Path, navcore: Path | None = None, noise: Path | None = None) -> None:
         self.name = name
         self.folder = f"sharedassets/coatlicue/{name}/regions/"
@@ -176,6 +179,9 @@ class World:
             self.ocean_level = float(json.loads(self.paks.read(terrain))["oceanLevel"])
         except (Failure, ValueError, KeyError, TypeError) as error:
             raise Failure(f"{terrain}: no ocean level: {error}") from error
+        # Stage DG2: the height of the sample 65535 of the terrain project (256 m in most own levels): the samples go to the scale of the
+        # main world (2048 m), the scale of each file of the tools.
+        self.mountain_height = mountain_height(self.paks.read(terrain), terrain)
         self.mesh_physics: dict[str, bool] = {}
 
     def mesh_has_physics(self, path: str) -> bool:
@@ -695,7 +701,7 @@ class Region:
         files_before, bytes_before = self.world.paks.files_read, self.world.paks.bytes_read
         if not self.world.paks.has(self.folder + "region.heightmap"):
             raise Failure(f"{self.name}: the game copy has no region.heightmap for this region")
-        self.heights = read_heightmap(self.read("region.heightmap"))
+        self.heights = to_main_scale(read_heightmap(self.read("region.heightmap")), self.world.mountain_height)
         plain_low, plain_high = min(self.heights), max(self.heights)
         cookies = read_cookies(self.world.paks, self.folder)
         if cookies and not (self.world.navcore.is_file() and self.world.noise.is_file()):

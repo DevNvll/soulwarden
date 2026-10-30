@@ -149,6 +149,12 @@ This is an independent project with no connection to Amazon Games. The repositor
   (the main story gives it at "Forge the Staff"; the prompt "No equipped Azoth Staff Tier 1" means that rank is missing). The quest goes on
   to "Return to the surface". The exit portal of the seraph trial now works (hold E). After the end cutscene of the Heartforge the game
   plays a video; it needs the sound of the game.
+- The level of an expedition (stage DG2): the Amrine Excavation has the creatures of its mine (the Star Excavation creatures at their
+  places, level 25), its floors, and its walls: a creature sees you, walks around the walls to you, and fights. The data of a level comes
+  from `tools/gamedata/level.sh DungeonAmrine` (the release has it). The entry is still a development command (`tools/world instance
+  enter`); the entrance of the game, the bosses, the doors, the chests, and the lore pages of an expedition come in later stages. In the
+  Medusa instance the task "Unpetrify Taurus" now works: use the statue of Taurus. A quest that you reset gets its heartgems of Caer Dun
+  again.
 - Territory standing (stage QG1). The standing of a territory goes up to rank 300: the points above a rank go to the next rank, and each new rank gives character experience (for example 125 at rank 1 of Windsward) and one standing point ("token"). A quest gives its standing to the territory where you hand it in (the notice shows "+100 Windsward Standing"). Open the map (M), the second tab "Territories": a territory with a free token shows a badge; click it to "Claim your reward" and choose a card (Standing Gain, XP Gain, Gather, Station Fee, Trading Fee, Storage, House Ownership; the house card keeps the token). Standing Gain, XP Gain, and Gather act now while you are in that territory; the other cards are kept for their later systems. The standing, the tokens, and the cards stay after a restart. The Windsward main story goes on after "Feast to Famine" (Marcel Dupont, then Saatvik Agrawal).
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.

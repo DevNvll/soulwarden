@@ -71,6 +71,8 @@ World::World(const WorldClock& clock,
       m_factions(*this, store, options.progressionTables),
       m_ownership(*this, store, options.progressionTables),
       m_navigation(*this, options.navigationData, options.terrain, options.navigationThread),
+      m_noNavigation(*this, nullptr, nullptr, false, "-"),
+      m_levels(*this, options.levelSource, options.navigationThread),
       m_creatures(*this, options.creatureData),
       m_combat(*this, options.combatTables, options.weaponActions),
       m_health(*this),
@@ -151,6 +153,8 @@ void World::tick() {
     // the spawn point rule and the behavior of the creatures, on the world clock.
     try {
         m_navigation.tick();
+        // Stage DG2: the navigation of each own level.
+        m_levels.tick();
         // The world time before the creatures (stage 2.2): a phase change scans the points with a time constraint in this tick.
         m_worldTime.tick();
         m_creatures.tick();
@@ -1095,6 +1099,22 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     result.entity = entity;
     result.distance = travel.distance;
     return result;
+}
+
+Navigation& World::navigation(SpaceId space) {
+    if (space == kMainSpace || main_level(space)) {
+        return m_navigation;
+    }
+    Navigation* own = m_levels.navigation_of(space);
+    return own != nullptr ? *own : m_noNavigation;
+}
+
+const Navigation& World::navigation(SpaceId space) const {
+    if (space == kMainSpace || main_level(space)) {
+        return m_navigation;
+    }
+    const Navigation* own = m_levels.navigation_of(space);
+    return own != nullptr ? *own : m_noNavigation;
 }
 
 SpaceMoveError World::move_to_space(const std::string& characterId, SpaceId space, const state::WorldPosition& place) {

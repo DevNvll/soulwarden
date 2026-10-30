@@ -307,6 +307,16 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   only for that space [agent].
 - Stage QG9a: a required item of an option with the count 0 is no requirement [data: the Enter options of the entrances name a key
   (KeyDynasty) with RequiredItemCount 0; live: the Medea entrance refused the entry while the backend tested the item].
+- Stage DG2 (part 5, [Instances](instances.md)): in an instance of a mode of the main world level, a level object of the main world data is
+  there when one bound of it has the InteractTag of an active task of the character with the GameModeID of the mode (the statue of Taurus of
+  `09A_M12_SaveTaurus` in QuestMedusa: a quest gatherable, InteractOnlyOnQuest); the request then has the rules of the main world (the
+  range, the quest gate, the handler of its kind). Count `modeLevelObjects` [data; agent; live; case LV6].
+- Stage DG2: the interaction tool takes the capitals of an own level with `--level LEVEL` (`interactions.use_level`: the level from its map
+  row; no list of the persons of the other worlds). Amrine has 4 objects: 3 lore pages (`lore_00_aeternum_title_14_01` to `_03`) and its
+  exit portal stone (kind dungeonExit). The backend reads the file of a level set (its count) and does not use its objects yet: one catalog
+  of the objects, the options, and the achievements, and the states of the objects by index (stage DG3) [agent].
+- Stage DG2: the inner gate of the Mammoth trial is a teleporter of the main world (`InteractTeleporter`, action 82, a `TeleportDestination`
+  entity) that this tool does not write (no kind of a teleporter) and that the backend does not handle in any space [data; agent].
 
 ## Commands
 

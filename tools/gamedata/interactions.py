@@ -1398,8 +1398,22 @@ def read_claim_landmarks(sources: Sources) -> tuple[dict[int, str], list[tuple[t
     return claims, boards
 
 
+def use_level(sources: Sources, name: str) -> str:
+    """Stage DG2: the capitals of an own level (a level or a map id of the map table; game_modes.level_terrain): the terrain folder of its
+    map row, not a constant. @return The level."""
+    import game_modes  # noqa: PLC0415 (the module imports creature_data)
+    global REGIONS_FOLDER, WORLD
+    level, terrain, _rows = game_modes.level_terrain(sources, name)
+    if not terrain.startswith("coatlicue/") or terrain.count("/") != 1:
+        raise Failure(f"the terrain project {terrain!r} of the map row is not a folder coatlicue/NAME")
+    WORLD = terrain.split("/", 1)[1]
+    REGIONS_FOLDER = f"sharedassets/coatlicue/{WORLD}/regions/"
+    return level
+
+
 def build_document(sources: Sources, regions: list[str] | None = None, center: tuple[float, float] | None = None,
-                   radius: float | None = None, encounters: bool = True) -> dict:
+                   radius: float | None = None, encounters: bool = True, other_worlds: bool = True) -> dict:
+    """@param other_worlds Stage DG2: False for a file of an own level (no list of the persons of the other worlds)."""
     options = read_options(sources)
     lore_rows, achievement_rows = read_lore_tables(sources)
     catalog_data = sources.read(CATALOG_PATH)
@@ -2112,7 +2126,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 objects.append(entry)
     # Stage QG4: the persons of the placements of the other worlds (the instances, the introduction worlds): not objects of the file (the
     # backend has the open world only), in "personsApart" with their world. Only a whole run has them (no --region, no --radius).
-    if radius is None and len(regions) == len(capital_regions(sources)):
+    if other_worlds and radius is None and len(regions) == len(capital_regions(sources)):
         other_worlds = sorted({path[len(WORLDS_FOLDER):].split("/", 1)[0] for path in sources.paths(WORLDS_FOLDER, ".capitals.json")}
                               - {WORLD})
         for other in other_worlds:
@@ -2266,7 +2280,12 @@ def main() -> int:
     parser.add_argument("--center", type=float, nargs=2, metavar=("X", "Y"), help="the center of the circle")
     parser.add_argument("--list", metavar="KIND", help="print the objects of a kind (or 'spawned': the server children), and "
                                                       "write no file")
+    parser.add_argument("--level", metavar="LEVEL", help="stage DG2: the objects of the capitals of an own level (a level or a map id of the "
+                                                         "map table; default output GAMEDATA/levels/LEVEL/interaction-data.json)")
     arguments = parser.parse_args()
+    if arguments.level and (arguments.region or arguments.radius is not None):
+        print("interactions: --level takes the whole terrain of the level: no --region and no --radius. No file was written.", file=sys.stderr)
+        return 1
     if arguments.radius is not None and not (math.isfinite(arguments.radius) and arguments.radius > 0):
         print("interactions: --radius must be a number above 0. No file was written.", file=sys.stderr)
         return 1
@@ -2274,7 +2293,12 @@ def main() -> int:
     target = Path(arguments.output)
     try:
         sources = Sources(game / "assets", WANTED)
-        document = build_document(sources, arguments.region, center, arguments.radius)
+        level = use_level(sources, arguments.level) if arguments.level else None
+        if level is not None and arguments.output == parser.get_default("output"):
+            target = gamedata / "levels" / level / OUTPUT_NAME
+        document = build_document(sources, arguments.region, center, arguments.radius, other_worlds=level is None)
+        if level is not None:
+            document["level"] = level
         if not arguments.list:
             target.parent.mkdir(parents=True, exist_ok=True)
             # The backend must not read a file that is not complete: write, then rename.

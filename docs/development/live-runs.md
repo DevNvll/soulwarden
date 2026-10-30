@@ -401,3 +401,9 @@ tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
   instance return NAME`) or the world. No quest task waits for `FTUE_Rit`.
 - In a command of zsh a variable with two numbers is one word (stage QG9d: `tools/world travel NAME $place 134.8` failed with no line).
   Write the numbers, or use an array.
+- The made-up character of the evidence runs has its sword in weapon slot 1 and no weapon in the hand after a respawn or a start (stage
+  DG2): a click is then no attack. Press the key 1 (`tools/hx 'key 0x31'`), then `'click 628 330'`.
+- A picture of `gamescopectl screenshot` of a run is the frame of the game window (1256 x 660 on the agent desktop, stage DG2): a position
+  in that picture is the position of `tools/hx 'click X Y'` (the respawn button of "You died" at 1000 580).
+- A travel of the target ends the fight of a creature (stage DG2: "the target went to a different place"). For a fight with a path, let
+  the creature see the character (its vision at rest is a cone), then move the character with the keys (`'keydown 0x57'`, `'keyup 0x57'`).

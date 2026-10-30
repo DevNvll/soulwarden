@@ -404,15 +404,24 @@ service::HttpResponse find_path(const Services& services, const RouteContext& co
         }
         *value = *number;
     }
-    return in_world(services, [from, to](world::World& target) {
+    // Stage DG2: the space whose navigation the search uses (an instance of an own level has the navigation of its level set). 0: the main
+    // world.
+    const auto spaceNumber = query_number(request, "space");
+    const world::SpaceId space = spaceNumber && *spaceNumber >= 0.0F && *spaceNumber < 4.0e9F ? static_cast<world::SpaceId>(*spaceNumber)
+                                                                                            : world::kMainSpace;
+    return in_world(services, [from, to, space](world::World& target) {
+        if (!target.has_space(space)) {
+            return message(404, "the world has no such space");
+        }
         // The search of this command runs now, in the world thread, with no limit of a tick: a development aid.
-        const world::PathReport report = target.navigation().find_path(from, to);
+        const world::PathReport report = target.navigation(space).find_path(from, to);
         json corners = json::array();
         for (const state::WorldPosition& corner : report.corners) {
             corners.push_back({corner.x, corner.y, corner.z});
         }
         return json_reply(200,
                           json{{"path", report.found},
+                               {"space", space},
                                {"cause", report.cause},
                                {"direct", report.direct},
                                {"length", report.length},

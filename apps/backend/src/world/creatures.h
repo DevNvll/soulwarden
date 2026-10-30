@@ -179,6 +179,22 @@ private:
     std::vector<std::pair<std::pair<std::int64_t, std::int64_t>, const std::vector<std::uint32_t>*>> m_sorted;
 };
 
+/**
+ * Stage DG2 (docs/systems/instances.md, "The level data"): the spawn points of one space with their states. The main world has the spawn
+ * points of the creature data of the backend; the space of an instance of an own level has the spawn points of the creature data of its
+ * level set (each instance its own states: two instances of one level have two creatures of one point). A space of the main world level
+ * (a story instance of newworld_vitaeeterna) has no spawn point [agent: stage DG1].
+ */
+struct SpawnSet {
+    /** The creature data of the points (and of the kinds and slices of their creatures). */
+    const gamedata::CreatureData* data{nullptr};
+    /** One state for each spawn point of the data, with the same index. */
+    std::vector<SpawnPointState> points;
+    SpawnGrid grid;
+    /** The points that wait: the reset command walks only these. */
+    std::set<std::uint32_t> waiting;
+};
+
 /** Counts of the creature system, for the log and for the tests. */
 struct CreatureCounts {
     /** Creatures that the spawn points made, and that a command made. */
@@ -222,6 +238,8 @@ struct CreatureCounts {
     std::size_t largest{0};
     /** Number of scans of the spawn point rule. */
     std::uint64_t scans{0};
+    /** Stage DG2: the creatures that the spawn points of the own levels made (each in the space of its instance). */
+    std::uint64_t spawnedByLevel{0};
     /**
      * Number of spawn points and of creatures that the scans looked at, and the same two
      * numbers for the last scan: the work of a scan, which depends on the players and on what
@@ -496,12 +514,35 @@ public:
     [[nodiscard]] Entity* find(EntityId id);
 
     [[nodiscard]] const std::vector<SpawnPointState>& spawn_points() const {
-        return m_points;
+        return m_main.points;
     }
     /** @return The number of spawn points that wait. */
     [[nodiscard]] std::size_t waiting_count() const {
-        return m_waiting.size();
+        return m_main.waiting.size();
     }
+
+    /**
+     * Stage DG2: the space of an instance of an own level starts with the creature data of its level set (world/levels.h): its spawn points
+     * make their creatures in that space when a character of that space is near them. The data stays until the stop of the backend.
+     */
+    void level_space_started(SpaceId space, const gamedata::CreatureData& data);
+    /** Stage DG2: the space ended (after World::clear_space removed its creatures): its states go. */
+    void level_space_ended(SpaceId space);
+    /** Stage DG2: @return The spawn points of a space (kMainSpace: the main world), or null for a space with none. */
+    [[nodiscard]] const SpawnSet* spawn_set(SpaceId space) const;
+    /** Stage DG2: @return The spawn sets of the spaces of the own levels. */
+    [[nodiscard]] const std::map<SpaceId, SpawnSet>& level_sets() const {
+        return m_spaces;
+    }
+    /**
+     * Stage DG2: @return The creature data of a creature: the data of its kind and slice (the data of the backend, or the level set of its
+     *         space). The indexes of its slice (a projectile of a ranged release) and of its spawn point are indexes of this data.
+     */
+    [[nodiscard]] const gamedata::CreatureData* data_of(const Entity& creature) const;
+    /** Stage DG2: @return The largest vision distance at rest of a slice that fights, of the data of the backend and of each level set. */
+    [[nodiscard]] float largest_sight() const;
+    /** Stage DG2: @return The spawn point of a creature in the data of its space, or null. */
+    [[nodiscard]] const gamedata::SpawnPoint* spawn_point_of(const Entity& creature) const;
     /** @return The behavior of the creatures: the targets, the attacks, and the counts of its steps. */
     [[nodiscard]] Behavior& behavior() {
         return m_behavior;
@@ -579,7 +620,9 @@ public:
     static constexpr std::chrono::milliseconds kReactionTime{1500};
 
 private:
-    Entity* make(const gamedata::CreatureKind& kind,
+    /** @param data The creature data of the kind (stage DG2: the data of the backend, or the level set of the space). */
+    Entity* make(const gamedata::CreatureData& data,
+                 const gamedata::CreatureKind& kind,
                  std::uint32_t level,
                  const state::WorldPosition& position,
                  float yaw,
@@ -589,10 +632,12 @@ private:
     void scan();
     /** Makes the table of the spawn points for the creature data, when it does not have its size. */
     void load_points();
+    /** Stage DG2: @return The spawn set of a space, or null. */
+    [[nodiscard]] SpawnSet* set_of(SpaceId space);
     /** Sets or clears the mark "the point waits" of a spawn point. */
-    void set_waiting(std::uint32_t point, bool waiting);
+    static void set_waiting(SpawnSet& set, std::uint32_t point, bool waiting);
     /** The point waits its respawn time (stage 2.2: a cooldown flag of a spawner with a time constraint), as after a death. */
-    void start_cooldown(std::uint32_t point, const char* cause);
+    void start_cooldown(SpawnSet& set, std::uint32_t point, const char* cause);
     /** Removes the action of each creature whose action has an end that came, and each additive reaction whose end came (stage U3). */
     void end_actions();
     /** The plan of a full reaction (stage U3): its fragment (no value: the fragment of the action), its length, its turn, its side. */
@@ -628,12 +673,10 @@ private:
 
     World& m_world;
     const gamedata::CreatureData* m_data;
-    /** One state for each spawn point of the creature data, with the same index. */
-    std::vector<SpawnPointState> m_points;
-    /** The spawn points by their place. */
-    SpawnGrid m_grid;
-    /** The spawn points that wait: the reset command walks only these. */
-    std::set<std::uint32_t> m_waiting;
+    /** The spawn points of the main world (the creature data of the backend). */
+    SpawnSet m_main;
+    /** Stage DG2: the spawn points of the space of each instance of an own level with creature data. */
+    std::map<SpaceId, SpawnSet> m_spaces;
     /**
      * The creatures whose spawn point a player is near in the scan that runs: a list of the
      * scan, with no value between two scans.

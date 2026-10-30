@@ -187,7 +187,7 @@ bool ForcedMotion::step(Entity& entity, WorldClock::time_point now) {
         goal = {entity.position.x + move.direction[0] * more, entity.position.y + move.direction[1] * more, entity.position.z};
     }
     move.stepped = at;
-    const Slide slide = m_world.navigation().slide(entity.position, goal);
+    const Slide slide = m_world.navigation(entity.space).slide(entity.position, goal);
     if (slide.waiting) {
         ++m_counts.waits;
         if (last) {

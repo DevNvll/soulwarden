@@ -40,9 +40,9 @@ The tool needs only the standard library of Python and the modules appearance_ta
 creature_data.py of this folder. The pak entries of the height maps are stored data: the tool
 needs no Oodle library.
 
-Usage: height_maps.py [OUTPUT_DIR] [--region NAME ...] [--jobs N]
+Usage: height_maps.py [OUTPUT_DIR] [--region NAME ...] [--jobs N] [--level LEVEL]
        height_maps.py [OUTPUT_DIR] --height X Y     print the height of a position from the files (no write)
-Default output: <SOULWARDEN_GAMEDATA_DIR>/heights
+Default output: <SOULWARDEN_GAMEDATA_DIR>/heights (with --level: <SOULWARDEN_GAMEDATA_DIR>/levels/LEVEL/heights; stage DG2)
 Environment: SOULWARDEN_GAME_DIR (default ~/Games/soulwarden/game),
              SOULWARDEN_GAMEDATA_DIR (default ~/.local/share/soulwarden/gamedata),
              SOULWARDEN_NAVIGATION_WORK (default ~/Games/soulwarden/work/navigation-build: the terrain after the cookies)
@@ -64,10 +64,24 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure, plain_stream  # noqa: E402
+from nav_assets import Failure as NavigationFailure  # noqa: E402
+from nav_terrain import MAIN_MOUNTAIN_HEIGHT, mountain_height, to_main_scale  # noqa: E402
 
 OUTPUT_FOLDER = "heights"
 WORLD = "newworld_vitaeeterna"
 REGIONS_FOLDER = f"sharedassets/coatlicue/{WORLD}/regions/"
+# Stage DG2: the level of the regions (None: the main world). The terrain after the cookies of a level is in its own work folder.
+LEVEL: str | None = None
+
+
+def use_level(level: str, terrain: str) -> None:
+    """Stage DG2: the regions of an own level (its terrain folder from its map row, game_modes.level_terrain)."""
+    global WORLD, REGIONS_FOLDER, LEVEL
+    if not terrain.startswith("coatlicue/") or terrain.count("/") != 1:
+        raise Failure(f"the terrain project {terrain!r} of the map row is not a folder coatlicue/NAME")
+    LEVEL = level
+    WORLD = terrain.split("/", 1)[1]
+    REGIONS_FOLDER = f"sharedassets/coatlicue/{WORLD}/regions/"
 HEIGHTMAP_NAME = "region.heightmap"
 REGION_SIZE = 2048
 TILE_SIZE = 64
@@ -180,9 +194,10 @@ def read_heightmap(data: bytes) -> array:
 
 
 def changed_terrain_folder() -> Path:
-    """@return The folder of the navigation tool with the terrain samples after the cookies."""
-    work = os.environ.get("SOULWARDEN_NAVIGATION_WORK") or Path.home() / "Games/soulwarden/work/navigation-build"
-    return Path(work) / "terrain"
+    """@return The folder of the navigation tool with the terrain samples after the cookies (stage DG2: of a level, in its own work folder
+    levels/LEVEL: the regions of a level have the names of the regions of the main world)."""
+    work = Path(os.environ.get("SOULWARDEN_NAVIGATION_WORK") or Path.home() / "Games/soulwarden/work/navigation-build")
+    return (work / "levels" / LEVEL if LEVEL else work) / "terrain"
 
 
 def region_names(sources) -> list[str]:
@@ -225,6 +240,14 @@ class Terrain:
         self.changed = changed if changed is not None else changed_terrain_folder()
         # The regions whose samples are the terrain after the cookies.
         self.with_cookies: set[str] = set()
+        # Stage DG2: the height of the sample 65535 of the terrain project (terrain.json: 2048 m in the main world, 256 m in most levels).
+        self.mountain = MAIN_MOUNTAIN_HEIGHT
+        terrain_file = f"sharedassets/coatlicue/{WORLD}/terrain.json"
+        if hasattr(sources, "has") and sources.has(terrain_file):
+            try:
+                self.mountain = mountain_height(sources.read(terrain_file), terrain_file)
+            except NavigationFailure as error:
+                raise Failure(str(error)) from error
 
     def load(self, names: list[str]) -> None:
         """Decodes the regions of the list that the object does not have, in more than one process."""
@@ -261,7 +284,9 @@ class Terrain:
             samples = array("H", raw)
             if sys.byteorder != "little":
                 samples.byteswap()
-            self.regions[name] = samples
+            # Stage DG2: a height map of a terrain whose sample 65535 is not 2048 m goes to the scale of the main world (the terrain
+            # after the cookies of the navigation tool has that scale already).
+            self.regions[name] = samples if name in self.with_cookies else to_main_scale(samples, self.mountain)
 
     def forget(self, name: str) -> None:
         self.regions.pop(name, None)
@@ -395,6 +420,9 @@ def main() -> int:
     parser.add_argument("--jobs", type=int, default=0, metavar="N", help="number of processes (default: 8 at most)")
     parser.add_argument("--height", nargs=2, type=float, metavar=("X", "Y"),
                         help="print the height of a position from the files of the folder, and write no file")
+    parser.add_argument("--level", metavar="LEVEL",
+                        help="stage DG2: the regions of an own level (a level or a map id of the map table; default output "
+                             "GAMEDATA/levels/LEVEL/heights; needs an Oodle source for the map table)")
     arguments = parser.parse_args()
     target = Path(arguments.output)
     if arguments.height is not None:
@@ -406,8 +434,15 @@ def main() -> int:
         print(f"{height:.3f}")
         return 0
     try:
-        from creature_data import Sources  # noqa: PLC0415
-        sources = Sources(game / "assets", wanted=(REGIONS_FOLDER,))
+        from creature_data import TABLES_FOLDER, Sources  # noqa: PLC0415
+        if arguments.level:
+            import game_modes  # noqa: PLC0415
+            level, terrain, _rows = game_modes.level_terrain(Sources(game / "assets", wanted=(TABLES_FOLDER, "localization/")),
+                                                             arguments.level)
+            use_level(level, terrain)
+            if arguments.output == parser.get_default("output"):
+                target = gamedata / "levels" / level / OUTPUT_FOLDER
+        sources = Sources(game / "assets", wanted=(REGIONS_FOLDER, f"sharedassets/coatlicue/{WORLD}/terrain.json"))
         names = region_names(sources)
         if not names:
             raise Failure(f"the game copy has no height map below {REGIONS_FOLDER}")

@@ -205,6 +205,10 @@ AREA_EXCEPTIONS: dict[tuple[str, str, str], str] = {
     ("slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_ghost_starved_20325.dynamicslice", "Spell_Plagued_Plague_Nova",
      "the damage row of the spell is not a row of the damage table of the slice"):
         "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    # Stage DG2: the frozen ghost of the dungeon affiliation (a spawn point of the level of Amrine, nw_dungeon_windsward_00).
+    ("slices/characters/wex_dungeon_affiliation/ghost_frozen_dg_aff.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
     # Stage QG5c3: the bodies of two encounter members (the Torment ghosts of 99A_MSQ_09, the boss ghost of the siphon fight of 09A_S18).
     ("slices/characters/wex_levelvariants/ghost_starved_22.dynamicslice", "Spell_Plagued_Plague_Nova",
      "the damage row of the spell is not a row of the damage table of the slice"):

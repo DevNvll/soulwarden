@@ -28,10 +28,11 @@ it then writes no file for that region, and navigation.json does not name the re
 that the tools leave out (a spawner that is off at the start of the game, a shape with no
 physics data) is counted in navigation.json with its cause.
 
-Usage: navigation_data.py [OUTPUT_DIR] [--region NAME ...] [--jobs N] [--force] [--no-heights] [--keep-raw]
+Usage: navigation_data.py [OUTPUT_DIR] [--region NAME ...] [--jobs N] [--force] [--no-heights] [--keep-raw] [--level LEVEL]
        navigation_data.py [OUTPUT_DIR] --spawn-points CREATURES.json [REPORT_DIR]
                           (which spawn points of the creature data are on a free floor of the data)
-Default output: <SOULWARDEN_GAMEDATA_DIR>/navigation
+Default output: <SOULWARDEN_GAMEDATA_DIR>/navigation (stage DG2, with --level: <SOULWARDEN_GAMEDATA_DIR>/levels/LEVEL/navigation; the
+                collision data and the grids of a level are in the work folder levels/LEVEL)
 Environment: SOULWARDEN_GAME_DIR (default ~/Games/soulwarden/game), SOULWARDEN_OODLE_LIB (an Oodle library of
              the computer; SOULWARDEN_OODLE_DLL with the helper is the second source),
              SOULWARDEN_GAMEDATA_DIR (default ~/.local/share/soulwarden/gamedata),
@@ -68,6 +69,21 @@ MANIFEST = "navigation.json"
 TOOL_VERSION = 2
 AGENT_VARIABLES = ("NAV_CELL", "NAV_FINE", "NAV_RADIUS", "NAV_HEIGHT", "NAV_STEP", "NAV_SLOPE", "NAV_WADE")
 _WORLD: collision_data.World | None = None
+
+
+def level_world(name: str) -> tuple[str, str]:
+    """Stage DG2: @return An own level and the folder of its terrain project, from its map row (game_modes.level_terrain)."""
+    from creature_data import TABLES_FOLDER, Sources  # noqa: PLC0415
+    import game_modes  # noqa: PLC0415
+    game = Path(os.environ.get("SOULWARDEN_GAME_DIR") or Path.home() / "Games/soulwarden/game")
+    import appearance_tables  # noqa: PLC0415
+    try:
+        level, terrain, _rows = game_modes.level_terrain(Sources(game / "assets", (TABLES_FOLDER, "localization/")), name)
+    except appearance_tables.Failure as error:
+        raise Failure(str(error)) from error
+    if not terrain.startswith("coatlicue/") or terrain.count("/") != 1:
+        raise Failure(f"the terrain project {terrain!r} of the map row is not a folder coatlicue/NAME")
+    return level, terrain.split("/", 1)[1]
 
 
 def compiler(variable: str, names: tuple[str, ...]) -> str:
@@ -143,13 +159,18 @@ def agent_environment() -> dict:
     return {name: os.environ[name] for name in AGENT_VARIABLES if os.environ.get(name)}
 
 
-def make(arguments: argparse.Namespace, output: Path, work: Path) -> int:
+def make(arguments: argparse.Namespace, output: Path, work: Path, level: str | None = None,
+         world_name: str = collision_data.DEFAULT_WORLD) -> int:
+    """@param level, world_name Stage DG2: an own level and the folder of its terrain project (from its map row); the collision data, the
+           grids, and the terrain after the cookies of a level are in the work folder levels/LEVEL (its regions have the names of the
+           regions of the main world)."""
     started = time.perf_counter()
     program = build_program(work)
     noise = work / "noise.f32"
     if not noise.is_file() or noise.stat().st_mtime < program.stat().st_mtime:
         run_program([str(program), "noise", str(noise)])
-    world = collision_data.World(collision_data.DEFAULT_WORLD, work / "cache", program, noise)
+    own = work / "levels" / level if level else work
+    world = collision_data.World(world_name, work / "cache", program, noise)
     known = world.regions()
     if not known:
         raise Failure("the game copy has no region with a height map")
@@ -158,7 +179,7 @@ def make(arguments: argparse.Namespace, output: Path, work: Path) -> int:
         if name not in known:
             raise Failure(f"the world has no region {name}")
     jobs = max(1, min(arguments.jobs, max(1, (os.cpu_count() or 2) // 2)))
-    collision = work / "collision"
+    collision = own / "collision"
     collision.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
     manifest_path = output / MANIFEST
@@ -172,6 +193,8 @@ def make(arguments: argparse.Namespace, output: Path, work: Path) -> int:
     if manifest.get("tool") != TOOL_VERSION or manifest.get("format") != nav_file.VERSION or manifest.get("agentVariables") != agent:
         manifest = {}
     manifest.update({"format": nav_file.VERSION, "tool": TOOL_VERSION, "agentVariables": agent})
+    if level:
+        manifest.update({"level": level, "world": world_name})
     regions: dict = manifest.setdefault("regions", {})
     # A region whose file is not the file of its entry is not complete.
     for name in list(regions):
@@ -188,7 +211,7 @@ def make(arguments: argparse.Namespace, output: Path, work: Path) -> int:
     if needed:
         work_list = [(name, str(collision), arguments.force and name in todo) for name in needed]
         with ProcessPoolExecutor(max_workers=min(jobs, len(work_list)), initializer=_start_worker,
-                                 initargs=(collision_data.DEFAULT_WORLD, str(work / "cache"))) as pool:
+                                 initargs=(world_name, str(work / "cache"))) as pool:
             for name, report, problem in pool.map(_collision, work_list):
                 if problem:
                     raise Failure(problem)
@@ -198,7 +221,7 @@ def make(arguments: argparse.Namespace, output: Path, work: Path) -> int:
     collision_seconds = time.perf_counter() - collision_seconds
 
     # Step 3: the grid of each region.
-    raw = work / "raw"
+    raw = own / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ)
     for name in todo:
@@ -229,7 +252,8 @@ def make(arguments: argparse.Namespace, output: Path, work: Path) -> int:
     heights_note = "not made (--no-heights)"
     if not arguments.no_heights:
         result = subprocess.run([sys.executable, "-B", str(HERE / "height_maps.py"), str(output.parent / "heights"),
-                                 "--jobs", str(jobs), "--region", *wanted], capture_output=True, text=True, check=False)
+                                 "--jobs", str(jobs), "--region", *wanted, *(["--level", level] if level else [])],
+                                capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise Failure(f"the terrain height tool failed: {result.stderr.strip()}")
         heights_note = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else "made"
@@ -369,11 +393,19 @@ def main() -> int:
     parser.add_argument("--keep-raw", action="store_true", help="keep the files of navcore in the work folder")
     parser.add_argument("--spawn-points", metavar="CREATURES.json",
                         help="say which spawn points of a creature data file are on a free floor, and write nothing else")
+    parser.add_argument("--level", metavar="LEVEL",
+                        help="stage DG2: the regions of an own level (a level or a map id of the map table; default output "
+                             "GAMEDATA/levels/LEVEL/navigation, and its heights beside it)")
     arguments = parser.parse_args()
     output = Path(arguments.output)
     try:
         if arguments.spawn_points:
             return spawn_points(output, Path(arguments.spawn_points), Path(arguments.report) if arguments.report else None)
+        if arguments.level:
+            level, world_name = level_world(arguments.level)
+            if arguments.output == parser.get_default("output"):
+                output = gamedata / "levels" / level / OUTPUT_FOLDER
+            return make(arguments, output, collision_data.work_folder(), level, world_name)
         return make(arguments, output, collision_data.work_folder())
     except (Failure, nav_file.Failure) as error:
         print(f"navigation: {error}. The data of the folder is not complete: {MANIFEST} names the regions that are.", file=sys.stderr)

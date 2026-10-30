@@ -125,6 +125,25 @@ from slice_ids import (COMPONENTS_FIELD, ENTITY_TYPE, ID_FIELD, LOCAL_TRANSFORM_
 OUTPUT_NAME = "creatures.json"
 WORLD = "newworld_vitaeeterna"
 REGIONS_FOLDER = f"sharedassets/coatlicue/{WORLD}/regions/"
+
+
+# Stage DG2: the folder of the data sets of the own levels in the game data folder (one folder for each level).
+LEVELS_FOLDER = "levels"
+
+
+def use_level_terrain(terrain: str) -> None:
+    """Stage DG2: reads the layers of the terrain folder of a map row (CoatlicueName: "coatlicue/NAME")."""
+    if not terrain.startswith("coatlicue/") or terrain.count("/") != 1:
+        raise Failure(f"the terrain project {terrain!r} of the map row is not a folder coatlicue/NAME")
+    use_world(terrain.split("/", 1)[1])
+
+
+def use_world(name: str) -> None:
+    """Stage DG2: the terrain project whose layers the tool reads (`--level`: an own level of a map row, game_modes.level_terrain). The
+    default is the main world. WANTED keeps each path below sharedassets/: the index of the pak files has the other terrain projects."""
+    global WORLD, REGIONS_FOLDER
+    WORLD = name
+    REGIONS_FOLDER = f"sharedassets/coatlicue/{name}/regions/"
 TABLES_FOLDER = "sharedassets/springboardentitites/datatables/"
 CATALOG_PATH = "assetcatalog.catalog"
 NAMES_PATH = "localization/en-us/javelindata_vitals.loc.xml"
@@ -2296,7 +2315,13 @@ def main() -> int:
     parser.add_argument("--report", metavar="FILE", help="write one line for each spawn entry that is left out")
     parser.add_argument("--no-attack", metavar="FILE", help="write one line for each kind that does not attack, with the cause")
     parser.add_argument("--find", nargs="+", metavar="TEXT", help="print the kinds with a text, and write no file")
+    parser.add_argument("--level", metavar="LEVEL",
+                        help="stage DG2: the spawn points of an own level (a level or a map id of the map table; default output "
+                             "GAMEDATA/levels/LEVEL/creatures.json)")
     arguments = parser.parse_args()
+    if arguments.level and (arguments.radius is not None or arguments.center is not None):
+        print("creatures: --level takes the whole terrain of the level: no --radius and no --center. No file was written.", file=sys.stderr)
+        return 1
     target = Path(arguments.output)
     if arguments.center is not None and arguments.radius is None:
         arguments.radius = DEFAULT_RADIUS
@@ -2308,8 +2333,22 @@ def main() -> int:
     quiet: list[dict] | None = [] if arguments.no_attack else None
     try:
         sources = Sources(game / "assets")
+        level = None
+        if arguments.level:
+            # Stage DG2: the terrain project of the level comes from its map row (game_modes.level_terrain).
+            import game_modes  # noqa: PLC0415 (the module imports this one)
+            level, terrain, _rows = game_modes.level_terrain(sources, arguments.level)
+            use_level_terrain(terrain)
+            # The terrain height of each spawn point: the height maps of the level (and its terrain after the cookies).
+            height_maps.use_level(level, terrain)
+            if arguments.output == parser.get_default("output"):
+                target = gamedata / LEVELS_FOLDER / level / OUTPUT_NAME
+        # Stage DG2: the member kinds of the encounter recipes are kinds of the main world file (encounter_recipes.py reads the main
+        # world); a file of a level has its spawn points only.
         document = build_document(sources, center, arguments.radius, arguments.all_slices, details,
-                                  arguments.spawn_all and arguments.all_slices, quiet, arguments.find is None)
+                                  arguments.spawn_all and arguments.all_slices, quiet, arguments.find is None, members=level is None)
+        if level is not None:
+            document["level"] = level
         if quiet is not None:
             listing = Path(arguments.no_attack)
             listing.parent.mkdir(parents=True, exist_ok=True)

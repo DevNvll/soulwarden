@@ -326,7 +326,18 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
             // mode.
             const std::optional<gamedata::BoundRef> ref = catalog->find(request.object.group, request.object.target);
             const gamedata::InteractionObject* level = ref ? &catalog->objects()[ref->object] : nullptr;
-            if (level == nullptr || level->exitMode.empty() || !m_world.instances().in_mode(character, level->exitMode)) {
+            // Stage DG2 (part 5, docs/systems/instances.md): a level object of the main world level in an instance of that level whose
+            // bound has the InteractTag of an active task of the character with the GameModeID of the mode of the instance (the statue of
+            // Taurus of 09A_M12_SaveTaurus in QuestMedusa: the client makes it from the level data, and the task of the mode names it).
+            const world::Instance* instance = level != nullptr && level->exitMode.empty() && m_world.main_level(character.space)
+                                           ? m_world.instances().instance_of_space(character.space)
+                                           : nullptr;
+            const std::string& tag = level != nullptr ? level->bounds[ref->bound].tag : std::string();
+            const bool modeObject = instance != nullptr && !tag.empty()
+                                    && m_world.quests().mode_task_active(character, instance->mode, {"t:" + gamedata::lower_text(tag)});
+            if (modeObject) {
+                ++m_counts.modeLevelObjects;
+            } else if (level == nullptr || level->exitMode.empty() || !m_world.instances().in_mode(character, level->exitMode)) {
                 return InteractionVerdict::unknownObject;
             }
         }
